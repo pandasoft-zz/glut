@@ -64,7 +64,9 @@ func ParseDir(dirPath string) ([]*TestFile, []error) {
 			errs = append(errs, err)
 			return nil
 		}
-		if !info.IsDir() && (filepath.Ext(path) == ".yml" || filepath.Ext(path) == ".yaml") {
+		
+		ext := filepath.Ext(path)
+		if !info.IsDir() && (ext == ".yml" || ext == ".yaml") {
 			tf, parseErr := Parse(path)
 			if parseErr != nil {
 				if parseErr.Error() != "file does not contain glut: key" {
