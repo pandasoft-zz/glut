@@ -1,0 +1,11 @@
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarchs: [amd64, arm64]
+    ldflags:
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+dockers:
+  - image_templates:
+      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}
+      - ghcr.io/pandasoft-zz/glut:latest
