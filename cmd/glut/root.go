@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pandasoft-zz/glut/internal/parser"
 	"github.com/spf13/cobra"
 )
 
@@ -42,10 +43,40 @@ var listCmd = &cobra.Command{
 }
 
 var lintCmd = &cobra.Command{
-	Use:   "lint",
+	Use:   "lint [dirs...]",
 	Short: "Lint tests",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("not implemented")
+		dirs := args
+		if len(dirs) == 0 {
+			dirs = []string{"./tests/"}
+		}
+
+		hasError := false
+		for _, dir := range dirs {
+			files, errs := parser.ParseDir(dir)
+			if len(errs) > 0 {
+				for _, err := range errs {
+					fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
+				}
+				hasError = true
+			}
+
+			for _, f := range files {
+				lints := parser.Lint(f.FilePath)
+				for _, l := range lints {
+					prefix := "WARNING"
+					if l.Level == parser.LevelError {
+						prefix = "ERROR"
+						hasError = true
+					}
+					fmt.Printf("[%s] %s: %s\n", prefix, l.File, l.Message)
+				}
+			}
+		}
+
+		if hasError {
+			os.Exit(ExitTestFail)
+		}
 		os.Exit(ExitOK)
 	},
 }
