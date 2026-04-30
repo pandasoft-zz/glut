@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,9 +10,13 @@ import (
 
 func createTempYAML(t *testing.T, content string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := ioutil.TempDir("", "parser-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	path := filepath.Join(dir, "test.yml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := ioutil.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return path

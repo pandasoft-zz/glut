@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -12,7 +13,7 @@ import (
 
 // Parse reads a YAML file, extracts the glut: section, and returns the TestFile.
 func Parse(filePath string) (*TestFile, error) {
-	data, err := os.ReadFile(filePath)
+	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +91,7 @@ func ParseDir(dirPath string) ([]*TestFile, []error) {
 func Lint(filePath string) []LintError {
 	var lints []LintError
 
-	data, err := os.ReadFile(filePath)
+	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		return []LintError{{File: filePath, Level: LevelError, Message: fmt.Sprintf("cannot read file: %v", err)}}
 	}

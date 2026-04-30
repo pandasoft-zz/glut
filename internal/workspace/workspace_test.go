@@ -1,5 +1,119 @@
 package workspace
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
 
-func TestWorkspace(t *testing.T) {}
+	"github.com/pandasoft-zz/glut/internal/parser"
+)
+
+func TestWorkspace_NewAndDestroy(t *testing.T) {
+	cfg := parser.SetupConfig{}
+	w, err := New(cfg, false, ".")
+	if err != nil {
+		t.Fatalf("failed to create workspace: %v", err)
+	}
+
+	if _, err := os.Stat(w.Dir); os.IsNotExist(err) {
+		t.Errorf("workspace dir %s does not exist", w.Dir)
+	}
+
+	if _, err := os.Stat(w.OriginRepo); os.IsNotExist(err) {
+		t.Errorf("origin repo %s does not exist", w.OriginRepo)
+	}
+
+	if _, err := os.Stat(filepath.Join(w.WorkspaceDir, ".git")); os.IsNotExist(err) {
+		t.Errorf("cloned workspace %s is not a git repo", w.WorkspaceDir)
+	}
+
+	err = w.Destroy()
+	if err != nil {
+		t.Errorf("failed to destroy workspace: %v", err)
+	}
+
+	if _, err := os.Stat(w.Dir); !os.IsNotExist(err) {
+		t.Errorf("workspace dir %s still exists after destroy", w.Dir)
+	}
+}
+
+func TestEnvVars(t *testing.T) {
+	w := &Workspace{
+		Dir:        "/tmp/work",
+		OriginRepo: "/tmp/work/.glut-origin.git",
+	}
+
+	t.Run("push branch", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			Branch: "feature/abc",
+		}
+		env := w.EnvVars(cfg, 8080, "sha123", "sha", "my-test")
+		if env["CI_PIPELINE_SOURCE"] != "push" {
+			t.Errorf("expected push source")
+		}
+		if env["CI_COMMIT_BRANCH"] != "feature/abc" {
+			t.Errorf("expected branch feature/abc")
+		}
+		if env["CI_COMMIT_REF_SLUG"] != "feature-abc" {
+			t.Errorf("expected slug feature-abc, got %s", env["CI_COMMIT_REF_SLUG"])
+		}
+		if _, ok := env["CI_COMMIT_TAG"]; ok {
+			t.Errorf("did not expect CI_COMMIT_TAG")
+		}
+	})
+
+	t.Run("tag push", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			Tag: "v1.0.0",
+		}
+		env := w.EnvVars(cfg, 8080, "sha123", "sha", "my-test")
+		if env["CI_COMMIT_TAG"] != "v1.0.0" {
+			t.Errorf("expected tag v1.0.0")
+		}
+		if _, ok := env["CI_COMMIT_BRANCH"]; ok {
+			t.Errorf("did not expect CI_COMMIT_BRANCH")
+		}
+	})
+
+	t.Run("merge_request_event", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			PipelineSource: "merge_request_event",
+			Branch:         "feature-branch",
+			MergeRequest: &parser.MRConfig{
+				IID:          42,
+				Title:        "My MR",
+				TargetBranch: "main",
+			},
+		}
+		env := w.EnvVars(cfg, 8080, "sha123", "sha", "my-test")
+		if env["CI_MERGE_REQUEST_IID"] != "42" {
+			t.Errorf("expected MR IID 42")
+		}
+		if env["CI_COMMIT_REF_NAME"] != "feature-branch" {
+			t.Errorf("expected ref name feature-branch")
+		}
+		if _, ok := env["CI_COMMIT_BRANCH"]; ok {
+			t.Errorf("did not expect CI_COMMIT_BRANCH")
+		}
+	})
+
+	t.Run("api project override", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			API: &parser.APISetupConfig{
+				Project: &parser.ProjectConfig{
+					Path: "custom-group/subgroup/project",
+				},
+			},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "short", "test")
+		if env["CI_PROJECT_PATH"] != "custom-group/subgroup/project" {
+			t.Errorf("unexpected project path")
+		}
+		if env["CI_PROJECT_NAME"] != "project" {
+			t.Errorf("unexpected project name")
+		}
+		if env["CI_PROJECT_NAMESPACE"] != "custom-group/subgroup" {
+			t.Errorf("unexpected project namespace: %s", env["CI_PROJECT_NAMESPACE"])
+		}
+	})
+}
