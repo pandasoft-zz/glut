@@ -1,8 +1,11 @@
 package workspace
 
 import (
+	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pandasoft-zz/glut/internal/parser"
@@ -116,4 +119,54 @@ func TestEnvVars(t *testing.T) {
 			t.Errorf("unexpected project namespace: %s", env["CI_PROJECT_NAMESPACE"])
 		}
 	})
+}
+
+func TestGitOriginFilesAndCommands(t *testing.T) {
+	cfg := parser.SetupConfig{
+		Git: &parser.GitSetupConfig{
+			Origin: &parser.GitOriginConfig{
+				Files: map[string]string{
+					"hello.txt": "world",
+				},
+				Commands: []string{
+					"git tag v1.0.0 HEAD",
+					"git checkout -b feature-test",
+				},
+			},
+		},
+	}
+	w, err := New(cfg, false, ".")
+	if err != nil {
+		t.Fatalf("failed to create workspace: %v", err)
+	}
+	defer w.Destroy()
+
+	// Verify that hello.txt exists in the cloned workspace on the default branch (main)
+	content, err := ioutil.ReadFile(filepath.Join(w.WorkspaceDir, "hello.txt"))
+	if err == nil && string(content) == "world" {
+		// Found it
+	} else {
+		// It might be that the workspace has the snapshot instead, but the origin has the initial commit.
+		// Wait, New clones from origin, so it should have it unless snapshot overwrites.
+		// Actually, New pushes the snapshot to origin main, which has everything.
+		// Let's verify by querying the origin repo directly via git ls-tree
+		cmd := exec.Command("git", "--git-dir="+w.OriginRepo, "ls-tree", "-r", "main")
+		out, _ := cmd.CombinedOutput()
+		if !strings.Contains(string(out), "hello.txt") {
+			t.Errorf("expected hello.txt in origin repo main branch")
+		}
+	}
+
+	// Verify commands (tag v1.0.0 and branch feature-test)
+	cmd := exec.Command("git", "--git-dir="+w.OriginRepo, "tag")
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), "v1.0.0") {
+		t.Errorf("expected tag v1.0.0 in origin repo")
+	}
+
+	cmd = exec.Command("git", "--git-dir="+w.OriginRepo, "branch")
+	out, _ = cmd.CombinedOutput()
+	if !strings.Contains(string(out), "feature-test") {
+		t.Errorf("expected branch feature-test in origin repo")
+	}
 }

@@ -79,6 +79,7 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 			env["CI_MERGE_REQUEST_ASSIGNEES"] = setup.MergeRequest.Assignees
 		}
 		env["CI_COMMIT_REF_NAME"] = setup.Branch
+		env["CI_COMMIT_REF_SLUG"] = slugify(setup.Branch)
 		env["CI_MERGE_REQUEST_PROJECT_ID"] = "1"
 		env["CI_MERGE_REQUEST_PROJECT_PATH"] = env["CI_PROJECT_PATH"]
 	case "schedule":

@@ -48,17 +48,33 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 	runCmd(stagingDir, "git", "init")
 
 	// Configure git to avoid author missing errors in the copied repo
-	runCmd(stagingDir, "git", "config", "user.email", "test@example.com")
-	runCmd(stagingDir, "git", "config", "user.name", "Test User")
+	userName := "Test User"
+	userEmail := "test@example.com"
+	if cfg.Git != nil && cfg.Git.User.Name != "" {
+		userName = cfg.Git.User.Name
+	}
+	if cfg.Git != nil && cfg.Git.User.Email != "" {
+		userEmail = cfg.Git.User.Email
+	}
+	runCmd(stagingDir, "git", "config", "user.email", userEmail)
+	runCmd(stagingDir, "git", "config", "user.name", userName)
 
 	// 4. Snapshot commit
 	runCmd(stagingDir, "git", "add", "-A")
 	runCmd(stagingDir, "git", "commit", "-m", "glut: workspace snapshot")
 
-	// 5. Set origin remote
+	// 5. Set origin remote and push snapshot to bare repo FIRST
 	runCmd(stagingDir, "git", "remote", "remove", "origin")
 	if err := runCmd(stagingDir, "git", "remote", "add", "origin", originRepo); err != nil {
 		return nil, fmt.Errorf("failed to add origin remote: %v", err)
+	}
+	branch := getCurrentBranch(stagingDir)
+	if cfg.Git != nil && cfg.Git.Origin != nil && cfg.Git.Origin.Branch != "" {
+		branch = cfg.Git.Origin.Branch
+	}
+	runCmd(stagingDir, "git", "checkout", "-b", branch)
+	if err := runCmd(stagingDir, "git", "push", "-f", "origin", branch); err != nil {
+		return nil, fmt.Errorf("failed to push snapshot to bare origin: %v", err)
 	}
 
 	w := &Workspace{
@@ -68,23 +84,11 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 		KeepWorkspace: keepWorkspace,
 	}
 
-	// 6. Process setup.git.origin
+	// 6. Process setup.git.origin ON TOP of the snapshot
 	if cfg.Git != nil && cfg.Git.Origin != nil {
-		if err := w.setupGitOrigin(tmpWork, originRepo, cfg.Git.Origin); err != nil {
+		if err := w.setupGitOrigin(tmpWork, originRepo, cfg.Git); err != nil {
 			return nil, err
 		}
-	}
-
-	// 6c. Push snapshot to bare repo
-	branch := getCurrentBranch(stagingDir)
-	if cfg.Git != nil && cfg.Git.Origin != nil && cfg.Git.Origin.Branch != "" {
-		branch = cfg.Git.Origin.Branch
-	}
-	
-	// Ensure we checkout the branch first so we push the correct ref
-	runCmd(stagingDir, "git", "checkout", "-b", branch)
-	if err := runCmd(stagingDir, "git", "push", "-f", "origin", branch); err != nil {
-		return nil, fmt.Errorf("failed to push snapshot to bare origin: %v", err)
 	}
 
 	// 7. Clone workspace from bare repo
@@ -98,22 +102,28 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 	return w, nil
 }
 
-func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, origin *parser.GitOriginConfig) error {
+func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, gitCfg *parser.GitSetupConfig) error {
+	origin := gitCfg.Origin
 	if len(origin.Files) == 0 && len(origin.Commands) == 0 {
 		return nil
 	}
 
 	worktree := filepath.Join(tmpWork, "origin-worktree")
-	if err := os.MkdirAll(worktree, 0755); err != nil {
-		return err
+	if err := runCmd(tmpWork, "git", "clone", originRepo, worktree); err != nil {
+		return fmt.Errorf("failed to clone worktree: %v", err)
 	}
 	defer os.RemoveAll(worktree)
 
-	if err := runCmd(worktree, "git", "init"); err != nil {
-		return err
+	userName := "Test User"
+	userEmail := "test@example.com"
+	if gitCfg.User.Name != "" {
+		userName = gitCfg.User.Name
 	}
-	runCmd(worktree, "git", "config", "user.email", "test@example.com")
-	runCmd(worktree, "git", "config", "user.name", "Test User")
+	if gitCfg.User.Email != "" {
+		userEmail = gitCfg.User.Email
+	}
+	runCmd(worktree, "git", "config", "user.email", userEmail)
+	runCmd(worktree, "git", "config", "user.name", userName)
 	runCmd(worktree, "git", "remote", "add", "origin", originRepo)
 
 	if len(origin.Files) > 0 {
@@ -127,8 +137,13 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, origin *pa
 			}
 		}
 		runCmd(worktree, "git", "add", "-A")
-		runCmd(worktree, "git", "commit", "-m", "initial commit from setup.git.origin.files")
-		runCmd(worktree, "git", "push", "origin", "HEAD:main")
+		runCmd(worktree, "git", "commit", "-m", "seed commit from setup.git.origin.files")
+
+		branch := "main"
+		if gitCfg.Origin.Branch != "" {
+			branch = gitCfg.Origin.Branch
+		}
+		runCmd(worktree, "git", "branch", "-M", branch)
 	}
 
 	if len(origin.Commands) > 0 {
@@ -147,6 +162,10 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, origin *pa
 			}
 		}
 	}
+
+	// Push everything to the bare origin repo
+	runCmd(worktree, "git", "push", "--all", "origin")
+	runCmd(worktree, "git", "push", "--tags", "origin")
 
 	return nil
 }
