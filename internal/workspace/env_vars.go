@@ -7,13 +7,28 @@ import (
 	"github.com/pandasoft-zz/glut/internal/parser"
 )
 
+const (
+	DefaultBranchName = "main"
+	DetachedHead      = "HEAD"
+	DefaultUserName   = "Test User"
+	DefaultUserEmail  = "test@example.com"
+	PipelineSourcePush     = "push"
+	PipelineSourceWeb      = "web"
+	PipelineSourceMR       = "merge_request_event"
+	PipelineSourceSchedule = "schedule"
+	PipelineSourceTrigger  = "trigger"
+	PipelineSourceAPI      = "api"
+	PipelineSourceParent   = "parent_pipeline"
+	PipelineSourceChat     = "chat"
+)
+
 func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shortSha string, glutName string) map[string]string {
-	defaultBranch := "main"
+	defaultBranch := DefaultBranchName
 	if setup.API != nil && setup.API.Project != nil && setup.API.Project.DefaultBranch != "" {
 		defaultBranch = setup.API.Project.DefaultBranch
 	} else {
-		detected := getCurrentBranch(w.WorkspaceDir)
-		if detected != "" && detected != "HEAD" {
+		detected := getDefaultBranch(w.WorkspaceDir)
+		if detected != "" && detected != DetachedHead {
 			defaultBranch = detected
 		}
 	}
@@ -29,13 +44,13 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 		"CI_COMMIT_SHA":       sha,
 		"CI_COMMIT_SHORT_SHA": shortSha,
 		"CI_DEFAULT_BRANCH":   defaultBranch,
-		"CI_PIPELINE_SOURCE":  "push", // default, may be overridden
+		"CI_PIPELINE_SOURCE":  PipelineSourcePush, // default, may be overridden
 		"CI_PIPELINE_ID":      "1",
 		"CI_JOB_TOKEN":        "mock-job-token",
 		"CI_REGISTRY":         "registry.example.com",
 		"CI_REGISTRY_IMAGE":   "registry.example.com/test-group/test-project",
-		"GITLAB_USER_NAME":    "Test User",
-		"GITLAB_USER_EMAIL":   "test@example.com",
+		"GITLAB_USER_NAME":    DefaultUserName,
+		"GITLAB_USER_EMAIL":   DefaultUserEmail,
 		"GITLAB_USER_LOGIN":   "test-user",
 		"GLUT_WORKSPACE":      w.Dir,
 		"GLUT_TEST_NAME":      glutName,
@@ -53,14 +68,14 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 		env["CI_REGISTRY_IMAGE"] = "registry.example.com/" + path
 	}
 
-	source := "push"
+	source := PipelineSourcePush
 	if setup.PipelineSource != "" {
 		source = setup.PipelineSource
 	}
 	env["CI_PIPELINE_SOURCE"] = source
 
 	switch source {
-	case "push", "web":
+	case PipelineSourcePush, PipelineSourceWeb:
 		if setup.Tag != "" {
 			env["CI_COMMIT_TAG"] = setup.Tag
 			env["CI_COMMIT_REF_NAME"] = setup.Tag
@@ -76,7 +91,7 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 			env["CI_COMMIT_REF_PROTECTED"] = "false"
 			env["CI_COMMIT_BEFORE_SHA"] = "0000000000000000000000000000000000000000"
 		}
-	case "merge_request_event":
+	case PipelineSourceMR:
 		if setup.MergeRequest != nil {
 			env["CI_MERGE_REQUEST_IID"] = fmt.Sprintf("%d", setup.MergeRequest.IID)
 			env["CI_MERGE_REQUEST_TITLE"] = setup.MergeRequest.Title
@@ -90,23 +105,23 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 		env["CI_COMMIT_REF_SLUG"] = slugify(setup.Branch)
 		env["CI_MERGE_REQUEST_PROJECT_ID"] = "1"
 		env["CI_MERGE_REQUEST_PROJECT_PATH"] = env["CI_PROJECT_PATH"]
-	case "schedule":
+	case PipelineSourceSchedule:
 		env["CI_PIPELINE_SCHEDULE"] = "true"
 		if setup.Schedule != nil {
 			env["CI_SCHEDULE_DESCRIPTION"] = setup.Schedule.Description
 		}
-	case "trigger":
+	case PipelineSourceTrigger:
 		env["CI_PIPELINE_TRIGGERED"] = "true"
 		env["CI_TRIGGER_SHORT_TOKEN"] = "glut"
-	case "api":
+	case PipelineSourceAPI:
 		// nothing extra
-	case "parent_pipeline":
+	case PipelineSourceParent:
 		if setup.Upstream != nil {
 			env["CI_UPSTREAM_PIPELINE_ID"] = fmt.Sprintf("%d", setup.Upstream.PipelineID)
 			env["CI_UPSTREAM_PROJECT_ID"] = fmt.Sprintf("%d", setup.Upstream.ProjectID)
 			env["CI_UPSTREAM_JOB_ID"] = fmt.Sprintf("%d", setup.Upstream.JobID)
 		}
-	case "chat":
+	case PipelineSourceChat:
 		if setup.Chat != nil {
 			env["CI_CHAT_INPUT"] = setup.Chat.Input
 			env["CI_CHAT_CHANNEL"] = setup.Chat.Channel

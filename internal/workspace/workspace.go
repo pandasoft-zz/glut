@@ -48,8 +48,8 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 	runCmd(stagingDir, "git", "init")
 
 	// Configure git to avoid author missing errors in the copied repo
-	userName := "Test User"
-	userEmail := "test@example.com"
+	userName := DefaultUserName
+	userEmail := DefaultUserEmail
 	if cfg.Git != nil && cfg.Git.User.Name != "" {
 		userName = cfg.Git.User.Name
 	}
@@ -69,6 +69,10 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 		return nil, fmt.Errorf("failed to add origin remote: %v", err)
 	}
 	branch := getCurrentBranch(stagingDir)
+	if branch == "" || branch == DetachedHead {
+		branch = getDefaultBranch(stagingDir)
+	}
+
 	if cfg.Git != nil && cfg.Git.Origin != nil && cfg.Git.Origin.Branch != "" {
 		branch = cfg.Git.Origin.Branch
 	}
@@ -114,8 +118,8 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	}
 	defer os.RemoveAll(worktree)
 
-	userName := "Test User"
-	userEmail := "test@example.com"
+	userName := DefaultUserName
+	userEmail := DefaultUserEmail
 	if gitCfg.User.Name != "" {
 		userName = gitCfg.User.Name
 	}
@@ -198,37 +202,39 @@ func getCurrentBranch(dir string) string {
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()
-	branch := ""
 	if err == nil {
-		branch = strings.TrimSpace(string(out))
+		branch := strings.TrimSpace(string(out))
+		if branch != "" {
+			return branch
+		}
+	}
+	return DetachedHead
+}
+
+func getDefaultBranch(dir string) string {
+	// Try to detect default branch from origin/HEAD
+	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err == nil {
+		ref := strings.TrimSpace(string(out))
+		if strings.HasPrefix(ref, "refs/remotes/origin/") {
+			return strings.TrimPrefix(ref, "refs/remotes/origin/")
+		}
 	}
 
-	if branch == "" || branch == "HEAD" {
-		// Try to detect default branch from origin/HEAD
-		cmd = exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
-		cmd.Dir = dir
-		out, err = cmd.Output()
-		if err == nil {
-			ref := strings.TrimSpace(string(out))
-			if strings.HasPrefix(ref, "refs/remotes/origin/") {
-				return strings.TrimPrefix(ref, "refs/remotes/origin/")
-			}
+	// Try to get default branch from git config
+	cmd = exec.Command("git", "config", "--get", "init.defaultBranch")
+	cmd.Dir = dir
+	out, err = cmd.Output()
+	if err == nil {
+		cfgBranch := strings.TrimSpace(string(out))
+		if cfgBranch != "" {
+			return cfgBranch
 		}
-
-		// Try to get default branch from git config
-		cmd = exec.Command("git", "config", "--get", "init.defaultBranch")
-		cmd.Dir = dir
-		out, err = cmd.Output()
-		if err == nil {
-			cfgBranch := strings.TrimSpace(string(out))
-			if cfgBranch != "" {
-				return cfgBranch
-			}
-		}
-
-		return "main"
 	}
-	return branch
+
+	return DefaultBranchName
 }
 
 func copyDir(src string, dst string) error {
