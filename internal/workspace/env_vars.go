@@ -8,7 +8,15 @@ import (
 )
 
 func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shortSha string, glutName string) map[string]string {
-	defaultBranch := getCurrentBranch(w.WorkspaceDir)
+	defaultBranch := "main"
+	if setup.API != nil && setup.API.Project != nil && setup.API.Project.DefaultBranch != "" {
+		defaultBranch = setup.API.Project.DefaultBranch
+	} else {
+		detected := getCurrentBranch(w.WorkspaceDir)
+		if detected != "" && detected != "HEAD" {
+			defaultBranch = detected
+		}
+	}
 
 	env := map[string]string{
 		"CI":                  "true",

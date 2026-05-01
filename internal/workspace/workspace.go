@@ -86,7 +86,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 
 	// 6. Process setup.git.origin ON TOP of the snapshot
 	if cfg.Git != nil && cfg.Git.Origin != nil {
-		if err := w.setupGitOrigin(tmpWork, originRepo, cfg.Git); err != nil {
+		if err := w.setupGitOrigin(tmpWork, originRepo, branch, cfg.Git); err != nil {
 			return nil, err
 		}
 	}
@@ -102,7 +102,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 	return w, nil
 }
 
-func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, gitCfg *parser.GitSetupConfig) error {
+func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBranch string, gitCfg *parser.GitSetupConfig) error {
 	origin := gitCfg.Origin
 	if len(origin.Files) == 0 && len(origin.Commands) == 0 {
 		return nil
@@ -139,7 +139,7 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, gitCfg *pa
 		runCmd(worktree, "git", "add", "-A")
 		runCmd(worktree, "git", "commit", "-m", "seed commit from setup.git.origin.files")
 
-		branch := "main"
+		branch := defaultBranch
 		if gitCfg.Origin.Branch != "" {
 			branch = gitCfg.Origin.Branch
 		}
@@ -198,11 +198,34 @@ func getCurrentBranch(dir string) string {
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()
-	if err != nil {
-		return "main"
+	branch := ""
+	if err == nil {
+		branch = strings.TrimSpace(string(out))
 	}
-	branch := strings.TrimSpace(string(out))
+
 	if branch == "" || branch == "HEAD" {
+		// Try to detect default branch from origin/HEAD
+		cmd = exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+		cmd.Dir = dir
+		out, err = cmd.Output()
+		if err == nil {
+			ref := strings.TrimSpace(string(out))
+			if strings.HasPrefix(ref, "refs/remotes/origin/") {
+				return strings.TrimPrefix(ref, "refs/remotes/origin/")
+			}
+		}
+
+		// Try to get default branch from git config
+		cmd = exec.Command("git", "config", "--get", "init.defaultBranch")
+		cmd.Dir = dir
+		out, err = cmd.Output()
+		if err == nil {
+			cfgBranch := strings.TrimSpace(string(out))
+			if cfgBranch != "" {
+				return cfgBranch
+			}
+		}
+
 		return "main"
 	}
 	return branch
