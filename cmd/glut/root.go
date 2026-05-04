@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/pandasoft-zz/glut/internal/parser"
 	"github.com/spf13/cobra"
@@ -19,6 +20,20 @@ const (
 	ExitError    = 2
 )
 
+var (
+	runPattern       string
+	runFailFast      bool
+	runMaxFail       int
+	runVerbose       bool
+	runQuiet         bool
+	runFormat        string
+	runReports       []string
+	runTimeout       time.Duration
+	runDebug         bool
+	runKeepWorkspace bool
+	runDebugPause    string
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "glut",
 	Short: "GLUT is a test runner",
@@ -28,8 +43,10 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run tests",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("not implemented")
-		os.Exit(ExitOK)
+		opts := runOptionsFromCommand(args)
+		_ = opts
+		fmt.Fprintln(os.Stderr, "glut run is not implemented yet")
+		os.Exit(ExitError)
 	},
 }
 
@@ -37,8 +54,8 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tests",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("not implemented")
-		os.Exit(ExitOK)
+		fmt.Fprintln(os.Stderr, "glut list is not implemented yet")
+		os.Exit(ExitError)
 	},
 }
 
@@ -46,13 +63,10 @@ var lintCmd = &cobra.Command{
 	Use:   "lint [dirs...]",
 	Short: "Lint tests",
 	Run: func(cmd *cobra.Command, args []string) {
-		dirs := args
-		if len(dirs) == 0 {
-			dirs = []string{"./tests/"}
-		}
+		opts := lintOptionsFromCommand(args)
 
 		hasError := false
-		for _, dir := range dirs {
+		for _, dir := range opts.Paths {
 			files, errs := parser.ParseDir(dir)
 			if len(errs) > 0 {
 				for _, err := range errs {
@@ -97,35 +111,44 @@ func Execute() {
 }
 
 func init() {
-	runCmd.Flags().StringP("run", "k", "", "Run specific tests")
-	runCmd.Flags().BoolP("fail-fast", "x", false, "Stop after first failure")
-	runCmd.Flags().Int("maxfail", 0, "Stop after N failures")
-	runCmd.Flags().BoolP("verbose", "v", false, "Verbose output")
-	runCmd.Flags().BoolP("quiet", "q", false, "Quiet output")
-	runCmd.Flags().String("format", "", "Output format")
-	runCmd.Flags().String("report", "", "Report format")
-	runCmd.Flags().Duration("timeout", 0, "Global timeout")
-	runCmd.Flags().Bool("debug", false, "Enable debug mode")
-	runCmd.Flags().Bool("keep-workspace", false, "Keep workspace after run")
-	runCmd.Flags().Bool("debug-pause", false, "Pause on failure for debugging")
+	runFormat = os.Getenv("GLUT_FORMAT")
+	runReports = envList("GLUT_REPORT")
 
-	setEnvDefault := func(flagName, envVar string) {
-		if val := os.Getenv(envVar); val != "" {
-			runCmd.Flags().Lookup(flagName).DefValue = val
-			_ = runCmd.Flags().Set(flagName, val)
-		}
-	}
-
-	setEnvDefault("format", "GLUT_FORMAT")
-	setEnvDefault("report", "GLUT_REPORT")
-	setEnvDefault("timeout", "GLUT_TIMEOUT")
-	setEnvDefault("verbose", "GLUT_VERBOSE")
-	setEnvDefault("fail-fast", "GLUT_FAIL_FAST")
-	setEnvDefault("debug", "GLUT_DEBUG")
-	setEnvDefault("keep-workspace", "GLUT_KEEP_WORKSPACE")
+	runCmd.Flags().StringVarP(&runPattern, "run", "k", "", "Run tests matching substring or regex")
+	runCmd.Flags().BoolVarP(&runFailFast, "fail-fast", "x", envBool("GLUT_FAIL_FAST"), "Stop after first failure")
+	runCmd.Flags().IntVar(&runMaxFail, "maxfail", 0, "Stop after N failures")
+	runCmd.Flags().BoolVarP(&runVerbose, "verbose", "v", envBool("GLUT_VERBOSE"), "Verbose output")
+	runCmd.Flags().BoolVarP(&runQuiet, "quiet", "q", false, "Quiet output")
+	runCmd.Flags().StringVar(&runFormat, "format", runFormat, "Console output format")
+	runCmd.Flags().StringArrayVar(&runReports, "report", runReports, "Report output as <format>:<path>, repeatable")
+	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration("GLUT_TIMEOUT"), "Timeout for one test")
+	runCmd.Flags().BoolVar(&runDebug, "debug", envBool("GLUT_DEBUG"), "Enable debug mode")
+	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool("GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
+	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, after-pipeline, or on-fail")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(lintCmd)
 	rootCmd.AddCommand(versionCmd)
+}
+
+func envBool(name string) bool {
+	switch os.Getenv(name) {
+	case "1", "true", "TRUE", "yes", "YES":
+		return true
+	default:
+		return false
+	}
+}
+
+func envDuration(name string) time.Duration {
+	value := os.Getenv(name)
+	if value == "" {
+		return 0
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0
+	}
+	return duration
 }

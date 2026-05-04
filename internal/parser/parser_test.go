@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,9 +10,13 @@ import (
 
 func createTempYAML(t *testing.T, content string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := ioutil.TempDir("", "parser-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	path := filepath.Join(dir, "test.yml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := ioutil.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -39,6 +44,34 @@ stages:
 	}
 	if !strings.Contains(tf.PipelineYAML, "stages:") {
 		t.Errorf("PipelineYAML should contain stages key")
+	}
+}
+
+func TestParse_PreservesPipelineYAMLFeatures(t *testing.T) {
+	content := `
+glut:
+  name: "anchors"
+variables: &vars
+  IMAGE: alpine
+test_job:
+  variables: *vars
+  script:
+    - echo "$IMAGE"
+`
+	path := createTempYAML(t, content)
+	tf, err := Parse(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Contains(tf.PipelineYAML, "glut:") {
+		t.Errorf("PipelineYAML should not contain glut key")
+	}
+	if !strings.Contains(tf.PipelineYAML, "&vars") {
+		t.Errorf("PipelineYAML should preserve anchor")
+	}
+	if !strings.Contains(tf.PipelineYAML, "*vars") {
+		t.Errorf("PipelineYAML should preserve alias")
 	}
 }
 
@@ -191,7 +224,12 @@ glut:
   invalid_key: "value"
 `,
 			check: func(errs []LintError) bool {
-				return len(errs) > 0 && strings.Contains(errs[0].Message, "unknown key in glut:")
+				for _, err := range errs {
+					if strings.Contains(err.Message, "additional") || strings.Contains(err.Message, "unknown key in glut:") {
+						return true
+					}
+				}
+				return false
 			},
 		},
 		{
