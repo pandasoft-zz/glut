@@ -47,6 +47,34 @@ stages:
 	}
 }
 
+func TestParse_PreservesPipelineYAMLFeatures(t *testing.T) {
+	content := `
+glut:
+  name: "anchors"
+variables: &vars
+  IMAGE: alpine
+test_job:
+  variables: *vars
+  script:
+    - echo "$IMAGE"
+`
+	path := createTempYAML(t, content)
+	tf, err := Parse(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if strings.Contains(tf.PipelineYAML, "glut:") {
+		t.Errorf("PipelineYAML should not contain glut key")
+	}
+	if !strings.Contains(tf.PipelineYAML, "&vars") {
+		t.Errorf("PipelineYAML should preserve anchor")
+	}
+	if !strings.Contains(tf.PipelineYAML, "*vars") {
+		t.Errorf("PipelineYAML should preserve alias")
+	}
+}
+
 func TestParse_PushOnBranch(t *testing.T) {
 	content := `
 glut:
@@ -196,7 +224,12 @@ glut:
   invalid_key: "value"
 `,
 			check: func(errs []LintError) bool {
-				return len(errs) > 0 && strings.Contains(errs[0].Message, "unknown key in glut:")
+				for _, err := range errs {
+					if strings.Contains(err.Message, "additional") || strings.Contains(err.Message, "unknown key in glut:") {
+						return true
+					}
+				}
+				return false
 			},
 		},
 		{

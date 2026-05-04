@@ -15,39 +15,58 @@ func Parse(filePath string) (*TestFile, error) {
 		return nil, err
 	}
 
-	var root map[string]interface{}
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
 		return nil, fmt.Errorf("failed to parse yaml: %w", err)
 	}
 
-	glutVal, ok := root["glut"]
+	root := documentRoot(&document)
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("yaml root must be a mapping")
+	}
+
+	glutNode, ok := removeTopLevelKey(root, "glut")
 	if !ok {
 		return nil, errMissingGlut
 	}
 
-	glutBytes, err := yaml.Marshal(glutVal)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal glut section: %w", err)
-	}
-
 	var glutSection GlutSection
-	if err := yaml.Unmarshal(glutBytes, &glutSection); err != nil {
+	if err := glutNode.Decode(&glutSection); err != nil {
 		return nil, fmt.Errorf("failed to parse glut section: %w", err)
 	}
-
-	delete(root, "glut")
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(root); err != nil {
+	if err := enc.Encode(&document); err != nil {
 		return nil, fmt.Errorf("failed to encode pipeline yaml: %w", err)
 	}
-	enc.Close()
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close pipeline yaml encoder: %w", err)
+	}
 
 	return &TestFile{
 		FilePath:     filePath,
 		Glut:         glutSection,
 		PipelineYAML: buf.String(),
 	}, nil
+}
+
+func documentRoot(document *yaml.Node) *yaml.Node {
+	if document.Kind == yaml.DocumentNode && len(document.Content) > 0 {
+		return document.Content[0]
+	}
+	return document
+}
+
+func removeTopLevelKey(root *yaml.Node, key string) (*yaml.Node, bool) {
+	for i := 0; i < len(root.Content)-1; i += 2 {
+		keyNode := root.Content[i]
+		valueNode := root.Content[i+1]
+		if keyNode.Value == key {
+			root.Content = append(root.Content[:i], root.Content[i+2:]...)
+			return valueNode, true
+		}
+	}
+	return nil, false
 }

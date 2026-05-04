@@ -1,1 +1,291 @@
-{}
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "$id": "https://github.com/pandasoft-zz/glut/schema/glut.schema.json",
+  "title": "GLUT test section",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "setup": {
+      "$ref": "#/definitions/setup"
+    },
+    "assert": {
+      "$ref": "#/definitions/assert"
+    }
+  },
+  "definitions": {
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pipeline_source": {
+          "type": "string",
+          "enum": [
+            "push",
+            "web",
+            "merge_request_event",
+            "schedule",
+            "trigger",
+            "api",
+            "parent_pipeline",
+            "chat"
+          ]
+        },
+        "merge_request": {
+          "$ref": "#/definitions/merge_request"
+        },
+        "upstream": {
+          "$ref": "#/definitions/upstream"
+        },
+        "schedule": {
+          "$ref": "#/definitions/schedule"
+        },
+        "chat": {
+          "$ref": "#/definitions/chat"
+        },
+        "git": {
+          "$ref": "#/definitions/git"
+        },
+        "api": {
+          "$ref": "#/definitions/api"
+        },
+        "mocks": {
+          "$ref": "#/definitions/mocks"
+        }
+      },
+      "not": {
+        "required": [
+          "branch",
+          "tag"
+        ]
+      }
+    },
+    "merge_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "target_branch": {
+          "type": "string"
+        },
+        "iid": {
+          "type": "integer"
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "labels": {
+          "type": "string"
+        },
+        "assignees": {
+          "type": "string"
+        }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pipeline_id": {
+          "type": "integer"
+        },
+        "project_id": {
+          "type": "integer"
+        },
+        "job_id": {
+          "type": "integer"
+        }
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "chat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "user_id": {
+          "type": "string"
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/git_user"
+        },
+        "origin": {
+          "$ref": "#/definitions/git_origin"
+        }
+      }
+    },
+    "git_user": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      }
+    },
+    "git_origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "$ref": "#/definitions/token"
+        },
+        "project": {
+          "$ref": "#/definitions/project"
+        },
+        "seed": {
+          "$ref": "#/definitions/api_seed"
+        }
+      }
+    },
+    "token": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "expires_at": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_branch": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "api_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "releases": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "merge_requests": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "mocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binaries": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/binary_mock"
+          }
+        }
+      }
+    },
+    "binary_mock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "executable": {
+          "type": "string"
+        }
+      }
+    },
+    "assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job": {
+          "type": "object"
+        },
+        "artifacts": {
+          "type": "object"
+        },
+        "git": {
+          "type": "object"
+        },
+        "api": {
+          "type": "object"
+        },
+        "binary": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

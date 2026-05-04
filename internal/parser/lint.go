@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 
+	glutschema "github.com/pandasoft-zz/glut/schema"
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,11 +40,29 @@ func Lint(filePath string) []LintError {
 		return []LintError{{File: filePath, Level: LevelError, Message: "glut: section is not a map"}}
 	}
 
+	lints = append(lints, lintSchema(filePath, glutMap)...)
 	lints = append(lints, lintGlutKeys(filePath, glutMap)...)
 	lints = append(lints, lintGlutName(filePath, glutMap)...)
 	lints = append(lints, lintAssertSection(filePath, root, glutMap)...)
 	lints = append(lints, lintStages(filePath, root)...)
 	lints = append(lints, lintSetup(filePath, glutMap)...)
+	return lints
+}
+
+func lintSchema(filePath string, glutMap map[string]interface{}) []LintError {
+	validationErrors, err := glutschema.ValidateGlut(glutMap)
+	if err != nil {
+		return []LintError{{File: filePath, Level: LevelError, Message: err.Error()}}
+	}
+
+	lints := make([]LintError, 0, len(validationErrors))
+	for _, validationErr := range validationErrors {
+		lints = append(lints, LintError{
+			File:    filePath,
+			Level:   LevelError,
+			Message: "glut schema: " + glutschema.FormatValidationError(validationErr),
+		})
+	}
 	return lints
 }
 
