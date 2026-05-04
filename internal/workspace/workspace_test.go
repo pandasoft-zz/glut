@@ -42,8 +42,9 @@ func TestWorkspace_NewAndDestroy(t *testing.T) {
 
 func TestEnvVars(t *testing.T) {
 	w := &Workspace{
-		Dir:        "/tmp/work",
-		OriginRepo: "/tmp/work/.glut-origin.git",
+		Dir:          "/tmp/work",
+		WorkspaceDir: "/tmp/work/workspace",
+		OriginRepo:   "/tmp/work/.glut-origin.git",
 	}
 
 	t.Run("push branch", func(t *testing.T) {
@@ -62,6 +63,9 @@ func TestEnvVars(t *testing.T) {
 		}
 		if _, ok := env["CI_COMMIT_TAG"]; ok {
 			t.Errorf("did not expect CI_COMMIT_TAG")
+		}
+		if env["GLUT_WORKSPACE"] != "/tmp/work/workspace" {
+			t.Errorf("expected GLUT_WORKSPACE to point to checkout, got %s", env["GLUT_WORKSPACE"])
 		}
 	})
 
@@ -117,6 +121,35 @@ func TestEnvVars(t *testing.T) {
 		}
 		if env["CI_PROJECT_NAMESPACE"] != "custom-group/subgroup" {
 			t.Errorf("unexpected project namespace: %s", env["CI_PROJECT_NAMESPACE"])
+		}
+	})
+
+	t.Run("branch variables for non-push sources", func(t *testing.T) {
+		tests := []string{
+			"schedule",
+			"trigger",
+			"api",
+			"parent_pipeline",
+			"chat",
+		}
+
+		for _, source := range tests {
+			t.Run(source, func(t *testing.T) {
+				cfg := parser.SetupConfig{
+					Branch:         "release/1",
+					PipelineSource: source,
+				}
+				env := w.EnvVars(cfg, 8080, "sha123", "sha", "my-test")
+				if env["CI_COMMIT_BRANCH"] != "release/1" {
+					t.Errorf("expected branch variable for %s", source)
+				}
+				if env["CI_COMMIT_REF_NAME"] != "release/1" {
+					t.Errorf("expected ref name for %s", source)
+				}
+				if env["CI_COMMIT_REF_SLUG"] != "release-1" {
+					t.Errorf("expected ref slug for %s", source)
+				}
+			})
 		}
 	})
 }

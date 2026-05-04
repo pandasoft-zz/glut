@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pandasoft-zz/glut/internal/config"
 	"github.com/pandasoft-zz/glut/internal/parser"
 )
 
@@ -44,41 +45,50 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 		return nil, fmt.Errorf("failed to init bare origin: %v", err)
 	}
 
-	// Ensure staging is a git repo if not already
-	runCmd(stagingDir, "git", "init")
+	if err := runCmd(stagingDir, "git", "init"); err != nil {
+		return nil, fmt.Errorf("failed to init staging repo: %v", err)
+	}
 
 	// Configure git to avoid author missing errors in the copied repo
-	userName := DefaultUserName
-	userEmail := DefaultUserEmail
+	userName := config.DefaultUserName
+	userEmail := config.DefaultUserEmail
 	if cfg.Git != nil && cfg.Git.User.Name != "" {
 		userName = cfg.Git.User.Name
 	}
 	if cfg.Git != nil && cfg.Git.User.Email != "" {
 		userEmail = cfg.Git.User.Email
 	}
-	runCmd(stagingDir, "git", "config", "user.email", userEmail)
-	runCmd(stagingDir, "git", "config", "user.name", userName)
+	if err := runCmd(stagingDir, "git", "config", "user.email", userEmail); err != nil {
+		return nil, fmt.Errorf("failed to configure staging git email: %v", err)
+	}
+	if err := runCmd(stagingDir, "git", "config", "user.name", userName); err != nil {
+		return nil, fmt.Errorf("failed to configure staging git user: %v", err)
+	}
 
 	// 4. Snapshot commit
-	runCmd(stagingDir, "git", "add", "-A")
-	runCmd(stagingDir, "git", "commit", "-m", "glut: workspace snapshot")
+	if err := commitIfStaged(stagingDir, "glut: workspace snapshot"); err != nil {
+		return nil, fmt.Errorf("failed to create workspace snapshot: %v", err)
+	}
 
 	// 5. Set origin remote and push snapshot to bare repo FIRST
-	runCmd(stagingDir, "git", "remote", "remove", "origin")
+	if err := removeRemoteIfExists(stagingDir, "origin"); err != nil {
+		return nil, fmt.Errorf("failed to remove existing origin remote: %v", err)
+	}
 	if err := runCmd(stagingDir, "git", "remote", "add", "origin", originRepo); err != nil {
 		return nil, fmt.Errorf("failed to add origin remote: %v", err)
 	}
-	branch := getCurrentBranch(stagingDir)
-	if branch == "" || branch == DetachedHead {
-		branch = getDefaultBranch(stagingDir)
-	}
-
+	branch := config.DefaultBranchName
 	if cfg.Git != nil && cfg.Git.Origin != nil && cfg.Git.Origin.Branch != "" {
 		branch = cfg.Git.Origin.Branch
 	}
-	runCmd(stagingDir, "git", "checkout", "-b", branch)
+	if err := runCmd(stagingDir, "git", "checkout", "-B", branch); err != nil {
+		return nil, fmt.Errorf("failed to checkout origin branch %q: %v", branch, err)
+	}
 	if err := runCmd(stagingDir, "git", "push", "-f", "origin", branch); err != nil {
 		return nil, fmt.Errorf("failed to push snapshot to bare origin: %v", err)
+	}
+	if err := runCmd(tmpWork, "git", "--git-dir", originRepo, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
+		return nil, fmt.Errorf("failed to set bare origin HEAD: %v", err)
 	}
 
 	w := &Workspace{
@@ -118,17 +128,23 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	}
 	defer os.RemoveAll(worktree)
 
-	userName := DefaultUserName
-	userEmail := DefaultUserEmail
+	userName := config.DefaultUserName
+	userEmail := config.DefaultUserEmail
 	if gitCfg.User.Name != "" {
 		userName = gitCfg.User.Name
 	}
 	if gitCfg.User.Email != "" {
 		userEmail = gitCfg.User.Email
 	}
-	runCmd(worktree, "git", "config", "user.email", userEmail)
-	runCmd(worktree, "git", "config", "user.name", userName)
-	runCmd(worktree, "git", "remote", "add", "origin", originRepo)
+	if err := runCmd(worktree, "git", "config", "user.email", userEmail); err != nil {
+		return fmt.Errorf("failed to configure origin worktree git email: %v", err)
+	}
+	if err := runCmd(worktree, "git", "config", "user.name", userName); err != nil {
+		return fmt.Errorf("failed to configure origin worktree git user: %v", err)
+	}
+	if err := runCmd(worktree, "git", "remote", "set-url", "origin", originRepo); err != nil {
+		return fmt.Errorf("failed to set origin worktree remote: %v", err)
+	}
 
 	if len(origin.Files) > 0 {
 		for name, content := range origin.Files {
@@ -140,14 +156,17 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 				return err
 			}
 		}
-		runCmd(worktree, "git", "add", "-A")
-		runCmd(worktree, "git", "commit", "-m", "seed commit from setup.git.origin.files")
+		if err := commitIfStaged(worktree, "seed commit from setup.git.origin.files"); err != nil {
+			return fmt.Errorf("failed to commit setup.git.origin.files: %v", err)
+		}
 
 		branch := defaultBranch
 		if gitCfg.Origin.Branch != "" {
 			branch = gitCfg.Origin.Branch
 		}
-		runCmd(worktree, "git", "branch", "-M", branch)
+		if err := runCmd(worktree, "git", "branch", "-M", branch); err != nil {
+			return fmt.Errorf("failed to rename origin worktree branch: %v", err)
+		}
 	}
 
 	if len(origin.Commands) > 0 {
@@ -168,8 +187,12 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	}
 
 	// Push everything to the bare origin repo
-	runCmd(worktree, "git", "push", "--all", "origin")
-	runCmd(worktree, "git", "push", "--tags", "origin")
+	if err := runCmd(worktree, "git", "push", "--all", "origin"); err != nil {
+		return fmt.Errorf("failed to push origin branches: %v", err)
+	}
+	if err := runCmd(worktree, "git", "push", "--tags", "origin"); err != nil {
+		return fmt.Errorf("failed to push origin tags: %v", err)
+	}
 
 	return nil
 }
@@ -234,7 +257,30 @@ func getDefaultBranch(dir string) string {
 		}
 	}
 
-	return DefaultBranchName
+	return config.DefaultBranchName
+}
+
+func commitIfStaged(dir string, message string) error {
+	if err := runCmd(dir, "git", "add", "-A"); err != nil {
+		return err
+	}
+
+	cmd := exec.Command("git", "diff", "--cached", "--quiet")
+	cmd.Dir = dir
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+
+	return runCmd(dir, "git", "commit", "-m", message)
+}
+
+func removeRemoteIfExists(dir string, name string) error {
+	cmd := exec.Command("git", "remote", "get-url", name)
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+	return runCmd(dir, "git", "remote", "remove", name)
 }
 
 func copyDir(src string, dst string) error {
