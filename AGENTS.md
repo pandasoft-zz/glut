@@ -30,7 +30,8 @@ Also read the decision records:
 - Keep Cobra handlers thin. Use typed options and delegate real work.
 - Keep parsing, schema validation, linting, orchestration, and execution
   separate.
-- Use JSON Schema as the structural validator for the `glut:` section.
+- Use JSON Schema as the structural validator for the `.glut:` metadata
+  document.
 - Embed runtime schema assets into the final binary.
 - Do not rewrite GitLab CI YAML through a generic map marshal/unmarshal cycle.
 - Check and wrap errors from shell, git, filesystem, and process operations.

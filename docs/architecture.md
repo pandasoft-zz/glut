@@ -10,7 +10,7 @@ GLUT is a single-binary CLI tool for testing GitLab CI components locally.
 It orchestrates these pieces:
 
 - Parse a GLUT test file.
-- Extract the `glut:` section.
+- Extract the `.glut:` metadata document.
 - Pass the remaining GitLab CI YAML to `gitlab-ci-local`.
 - Create an isolated workspace and fake git origin.
 - Start a mock GitLab API server.
@@ -87,7 +87,7 @@ objects and avoid reaching back into runner internals.
 ## Execution Flow
 
 1. CLI parses options and selects input paths.
-2. Parser discovers test files and extracts `glut:` config.
+2. Parser discovers test files and extracts `.glut:` config from the second YAML document.
 3. Schema validation checks structural correctness.
 4. Lint rules check semantic and GitLab-specific mistakes.
 5. Runner creates an isolated workspace.
@@ -107,4 +107,3 @@ objects and avoid reaching back into runner internals.
 - Use mature libraries for complex formats and validation.
 - Treat shell and git command execution as boundary code with strong errors.
 - Make tests assert behavior, not just package existence.
-

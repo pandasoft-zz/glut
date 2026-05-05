@@ -51,14 +51,15 @@ The repository should contain these implementation guidance documents:
 ### Parser
 
 - Parsing must be split from linting.
-- `glut:` extraction must avoid generic full-file map marshal/unmarshal.
+- `.glut:` extraction must avoid generic full-file map marshal/unmarshal.
 - The parser must expose typed config for GLUT-owned syntax.
 - The pipeline YAML must remain suitable for `gitlab-ci-local`.
 - Parser tests must include YAML features that are common in GitLab CI files.
 
 ### Schema Validation
 
-- `schema/glut.schema.json` must become a real schema for the `glut:` section.
+- `schema/glut.schema.json` must become a real schema for the `.glut:` metadata
+  document.
 - The schema must be embedded into the binary.
 - Structural validation should use the schema.
 - Semantic validation should remain in Go lint rules.
@@ -92,4 +93,3 @@ The repository should contain these implementation guidance documents:
 - No new empty passing tests are introduced.
 - Any new dependency added for YAML or schema validation is documented in the
   relevant decision record.
-

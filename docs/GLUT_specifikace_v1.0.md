@@ -105,9 +105,9 @@ We explain specific env vars in the sections below. Summary table:
 
 ### 4.1 Basic Idea
 
-**One file = one test = one pipeline.** A test is a normal GitLab CI YAML file. It has one added section: `glut:`. Before running, GLUT cuts out the `glut:` section. It gives the rest to `gitlab-ci-local` without changes.
+**One file = one test = one pipeline.** A test file has two YAML documents. The first document is normal GitLab CI YAML. The second document is GLUT metadata and has one top-level key: `.glut:`. GLUT reads the second document and gives only the first document to `gitlab-ci-local`.
 
-The pipeline part is pure GitLab CI syntax. The user can use any features (include, extends, rules, needs, multiple components). The tested component does not know it is being tested.
+The first document is pure GitLab CI syntax. The user can use any features (include, extends, rules, needs, multiple components). The tested component does not know it is being tested.
 
 ### 4.2 Test Organization
 
@@ -128,6 +128,10 @@ tests/
 
 ### 4.3 File Structure
 
+Full test files use YAML multi-document syntax. The first document is the
+GitLab CI pipeline. The second document starts after `---` and contains `.glut:`.
+Later examples often show only the `.glut:` metadata document for brevity.
+
 ```yaml
 # Normal GitLab CI pipeline — given to gitlab-ci-local without changes
 stages: [build]
@@ -142,8 +146,10 @@ include:
   before_script:
     - echo "test-specific setup"
 
-# GLUT section — cut out before giving to gitlab-ci-local
-glut:
+---
+
+# GLUT metadata document
+.glut:
   name: "build on default branch produces :latest tag"
 
   setup:
@@ -194,7 +200,7 @@ These rules are true for every test:
 
 ## 5. Setup Section — CI Context
 
-`setup:` in the `glut:` section defines the context for the test. CI variables do not come from the environment or git. They are part of the test definition. This is because they are key triggers for component behavior (rules, workflow rules).
+`setup:` in the `.glut:` document defines the context for the test. CI variables do not come from the environment or git. They are part of the test definition. This is because they are key triggers for component behavior (rules, workflow rules).
 
 GLUT looks at the declaration and automatically injects all needed CI variables. The user only declares the logical goal of the test. GLUT makes sure the variables match real GitLab behavior for that trigger.
 
@@ -205,7 +211,7 @@ GLUT looks at the declaration and automatically injects all needed CI variables.
 A commit pushed to a branch. The most common trigger.
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: main
     # pipeline_source: push  ← default, no need to write
@@ -228,7 +234,7 @@ These must NOT be set: `CI_COMMIT_TAG`, `CI_MERGE_REQUEST_*`
 Manual start from the GitLab UI.
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: main
     pipeline_source: web
@@ -241,7 +247,7 @@ Same as `push`, but `CI_PIPELINE_SOURCE = web`.
 Started by a scheduled pipeline (cron job in GitLab).
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: main
     pipeline_source: schedule
@@ -253,7 +259,7 @@ glut:
 Tag push is not a separate `CI_PIPELINE_SOURCE` value. GitLab uses `push`. The presence of `CI_COMMIT_TAG` is the difference.
 
 ```yaml
-glut:
+.glut:
   setup:
     tag: "1.2.0"
     # pipeline_source: push  ← automatic for tag:, no need to write
@@ -276,7 +282,7 @@ Pipeline started by a merge request event. The most complex trigger.
 **Important detail:** `CI_COMMIT_BRANCH` is not available in MR pipelines. This is the same in real GitLab. Components that check `$CI_COMMIT_BRANCH` will get an empty value. GLUT respects this.
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: feature/my-feature      # MR source branch
     pipeline_source: merge_request_event
@@ -296,7 +302,7 @@ GLUT sets all `CI_MERGE_REQUEST_*` variables (around 25 variables). `CI_COMMIT_B
 Pipeline started by a trigger token via API.
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: main
     pipeline_source: trigger
@@ -309,7 +315,7 @@ Sets `CI_PIPELINE_TRIGGERED = true`, `CI_TRIGGER_SHORT_TOKEN = glut`.
 Pipeline started via GitLab API.
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: main
     pipeline_source: api
@@ -320,7 +326,7 @@ glut:
 Downstream pipeline started by a parent pipeline via `trigger:` keyword.
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: main
     pipeline_source: parent_pipeline
@@ -337,7 +343,7 @@ Sets `CI_UPSTREAM_*` variables.
 ChatOps trigger (Slack/Teams integration).
 
 ```yaml
-glut:
+.glut:
   setup:
     branch: main
     pipeline_source: chat
@@ -391,7 +397,7 @@ GLUT automatically sets standard CI variables. The user does not need to repeat 
 
 ```yaml
 # setup: = CI context
-glut:
+.glut:
   setup:
     branch: main
     pipeline_source: merge_request_event
@@ -419,7 +425,7 @@ The component does not know it talks to a fake origin. To the component, it is a
 You configure the origin remote in `setup.git.origin`. We use a hybrid approach: declarative `files:` for normal cases, and `commands:` as an escape hatch for complex git operations.
 
 ```yaml
-glut:
+.glut:
   setup:
     git:
       user: { name: "test", email: "test@test.com" }   # default author for commits
@@ -521,7 +527,7 @@ The component does not know it talks to a mock. It gets `CI_API_V4_URL` pointing
 The user only configures things when the default is not enough:
 
 ```yaml
-glut:
+.glut:
   setup:
     api:
       token:
@@ -598,7 +604,7 @@ Endpoints not in Tier 1 or 2 return a standard 404 (just like real GitLab for a 
 You can explicitly assert this:
 
 ```yaml
-glut:
+.glut:
   assert:
     api:
       "POST /api/v4/projects/*/some_unsupported":
@@ -655,7 +661,7 @@ A mock binary is a simple shell script in `setup.mocks.binaries`. GLUT wraps eve
 ### 8.2 Configuration
 
 ```yaml
-glut:
+.glut:
   setup:
     mocks:
       binaries:
@@ -750,7 +756,7 @@ Record in JSONL:
 ### 8.5 Asserts for Mock Binaries
 
 ```yaml
-glut:
+.glut:
   assert:
     binary:
       release-cli:
@@ -1090,7 +1096,7 @@ include:
       strategy: branch
 
 # GLUT section
-glut:
+.glut:
   name: "build on default branch produces :latest tag"
 
   setup:
@@ -1147,7 +1153,7 @@ variables:
   GITLAB_USER_EMAIL: "alice@example.com"
   VERSION: "3.0.0"
 
-glut:
+.glut:
   name: "version update creates commit with correct author"
 
   setup:
@@ -1200,7 +1206,7 @@ include:
     inputs:
       job_when: always
 
-glut:
+.glut:
   name: "release flow creates GitLab release with semantic version"
 
   setup:
@@ -1435,7 +1441,7 @@ GLUT uses [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`.
 
 | Change | Version |
 |---|---|
-| Backwards incompatible change of `glut:` syntax or CLI | MAJOR |
+| Backwards incompatible change of `.glut:` syntax or CLI | MAJOR |
 | New feature, new assert resource, new trigger source | MINOR |
 | Bug fix, performance improvement, documentation | PATCH |
 
@@ -1513,11 +1519,11 @@ glut list ./tests/release/  # tests in a specific suite
 
 #### `glut lint` — static analysis of tests
 
-Checks YAML syntax and the `glut:` section:
+Checks YAML syntax and the `.glut:` metadata document:
 - Missing `.post` in `stages:` when an assert job exists.
 - A job in `assert:` that does not exist in the pipeline part.
 - Empty `assert:` section.
-- Unknown keys in the `glut:` section.
+- Unknown keys in the `.glut:` metadata document.
 
 ```bash
 glut lint ./tests/
@@ -1603,7 +1609,7 @@ glut/
 │   │   ├── workspace.go
 │   │   └── workspace_test.go
 │   ├── parser/                  # parsing GLUT YAML files
-│   │   ├── parser.go            # read + cut out glut: section
+│   │   ├── parser.go            # read .glut: metadata document
 │   │   └── parser_test.go
 │   ├── executor/                # running gitlab-ci-local
 │   │   ├── executor.go
@@ -1643,7 +1649,7 @@ glut/
 │   └── mock-api.md              # reference of mock API endpoints
 │
 ├── schema/
-│   └── glut.schema.json         # JSON schema for glut: section
+│   └── glut.schema.json         # JSON schema for .glut: metadata
 │
 ├── skill/
 │   └── SKILL.md                 # AI skill for writing GLUT tests
@@ -1816,10 +1822,10 @@ GitHub Actions workflow `docs.yml` on every push to `main` with changes in `docs
 
 The GLUT YAML format will be fully covered by a JSON schema. The schema has two purposes:
 
-**Lint** — `glut lint` uses the schema internally to validate tests. Errors like unknown keys in the `glut:` section, wrong value types, or missing required attributes are caught statically before running.
+**Lint** — `glut lint` uses the schema internally to validate tests. Errors like unknown keys in the `.glut:` metadata document, wrong value types, or missing required attributes are caught statically before running.
 
 **IDE Support** — the schema will be published on [SchemaStore](https://www.schemastore.org/). Editors download it automatically from there. VS Code, IntelliJ, Neovim, and others will offer:
-- Autocomplete for keys in the `glut:` section.
+- Autocomplete for keys in the `.glut:` metadata document.
 - Inline validation with error descriptions.
 - Hover documentation for every attribute.
 
@@ -1834,7 +1840,7 @@ There will be a separate skill file (`SKILL.md`) for AI assistants. Purpose: a d
 ### 20.1 Skill Content
 
 - Short description of what GLUT is and how it works.
-- Complete format of the `glut:` section with examples.
+- Complete format of the `.glut:` metadata document with examples.
 - All assert resource types (`job`, `artifacts`, `git`, `api`, `binary`) with examples.
 - Pattern matching syntax (`/regex/`, `!negation`).
 - Mock API configuration (`token`, available endpoints).
