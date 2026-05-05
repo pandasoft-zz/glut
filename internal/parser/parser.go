@@ -3,14 +3,14 @@ package parser
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"os"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Parse reads a YAML file, extracts the glut: section, and returns the TestFile.
 func Parse(filePath string) (*TestFile, error) {
-	data, err := ioutil.ReadFile(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}

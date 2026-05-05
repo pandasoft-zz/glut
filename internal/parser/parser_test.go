@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,13 +9,17 @@ import (
 
 func createTempYAML(t *testing.T, content string) string {
 	t.Helper()
-	dir, err := ioutil.TempDir("", "parser-test")
+	dir, err := os.MkdirTemp("", "parser-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatalf("failed to remove temp dir: %v", err)
+		}
+	})
 	path := filepath.Join(dir, "test.yml")
-	if err := ioutil.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 	return path

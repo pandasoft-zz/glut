@@ -17,7 +17,7 @@ func TestServerStartsAndServesVersion(t *testing.T) {
 	server := startTestServer(t, config.APISetupConfig{})
 
 	resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/version"), "", nil)
-	defer resp.Body.Close()
+	defer closeBody(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -34,7 +34,7 @@ func TestTokenAuthSuccessAndFailure(t *testing.T) {
 		server := startTestServer(t, config.APISetupConfig{})
 
 		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1"), "test-token", nil)
-		defer resp.Body.Close()
+		defer closeBody(t, resp.Body)
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -45,7 +45,7 @@ func TestTokenAuthSuccessAndFailure(t *testing.T) {
 		server := startTestServer(t, config.APISetupConfig{})
 
 		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1"), "", nil)
-		defer resp.Body.Close()
+		defer closeBody(t, resp.Body)
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d", resp.StatusCode)
@@ -58,7 +58,7 @@ func TestTokenAuthSuccessAndFailure(t *testing.T) {
 		})
 
 		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1"), "test-token", nil)
-		defer resp.Body.Close()
+		defer closeBody(t, resp.Body)
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d", resp.StatusCode)
@@ -73,7 +73,7 @@ func TestTokenAuthSuccessAndFailure(t *testing.T) {
 		resp := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/releases"), "test-token", map[string]any{
 			"tag_name": "v1.0.0",
 		})
-		defer resp.Body.Close()
+		defer closeBody(t, resp.Body)
 
 		if resp.StatusCode != http.StatusForbidden {
 			t.Fatalf("expected 403, got %d", resp.StatusCode)
@@ -91,7 +91,7 @@ func TestPersonalAccessTokenResponse(t *testing.T) {
 	})
 
 	resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/personal_access_tokens/self"), "test-token", nil)
-	defer resp.Body.Close()
+	defer closeBody(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -112,7 +112,7 @@ func TestProjectLookupByIDAndPath(t *testing.T) {
 	for _, projectID := range []string{"1", url.PathEscape("test-group/test-project")} {
 		t.Run(projectID, func(t *testing.T) {
 			resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/"+projectID), "test-token", nil)
-			defer resp.Body.Close()
+			defer closeBody(t, resp.Body)
 
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -133,13 +133,13 @@ func TestReleaseCRUD(t *testing.T) {
 		"tag_name": "v1.0.0",
 		"name":     "Release 1.0.0",
 	})
-	defer createResp.Body.Close()
+	defer closeBody(t, createResp.Body)
 	if createResp.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createResp.StatusCode)
 	}
 
 	getResp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/releases/v1.0.0"), "test-token", nil)
-	defer getResp.Body.Close()
+	defer closeBody(t, getResp.Body)
 	if getResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", getResp.StatusCode)
 	}
@@ -152,7 +152,7 @@ func TestReleaseCRUD(t *testing.T) {
 	updateResp := doRequest(t, http.MethodPut, serverURL(server, "/api/v4/projects/1/releases/v1.0.0"), "test-token", map[string]any{
 		"name": "Release 1.0.1",
 	})
-	defer updateResp.Body.Close()
+	defer closeBody(t, updateResp.Body)
 	if updateResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", updateResp.StatusCode)
 	}
@@ -163,13 +163,13 @@ func TestReleaseCRUD(t *testing.T) {
 	}
 
 	deleteResp := doRequest(t, http.MethodDelete, serverURL(server, "/api/v4/projects/1/releases/v1.0.0"), "test-token", nil)
-	defer deleteResp.Body.Close()
+	defer closeBody(t, deleteResp.Body)
 	if deleteResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", deleteResp.StatusCode)
 	}
 
 	missingResp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/releases/v1.0.0"), "test-token", nil)
-	defer missingResp.Body.Close()
+	defer closeBody(t, missingResp.Body)
 	if missingResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", missingResp.StatusCode)
 	}
@@ -188,7 +188,7 @@ func TestSeedDataIsAvailableBeforeFirstRequest(t *testing.T) {
 	})
 
 	resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/releases/v1.2.3"), "test-token", nil)
-	defer resp.Body.Close()
+	defer closeBody(t, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -227,7 +227,7 @@ func TestUnknownEndpointReturnsNotFound(t *testing.T) {
 	server := startTestServer(t, config.APISetupConfig{})
 
 	resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/unknown"), "test-token", nil)
-	defer resp.Body.Close()
+	defer closeBody(t, resp.Body)
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
@@ -251,7 +251,7 @@ func TestConcurrentRequestsAreSafe(t *testing.T) {
 				"tag_name": fmt.Sprintf("v1.0.%d", i),
 				"name":     fmt.Sprintf("Release %d", i),
 			})
-			defer resp.Body.Close()
+			defer closeBody(t, resp.Body)
 			if resp.StatusCode != http.StatusCreated {
 				t.Errorf("expected 201, got %d", resp.StatusCode)
 			}
@@ -260,7 +260,7 @@ func TestConcurrentRequestsAreSafe(t *testing.T) {
 	wg.Wait()
 
 	resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/releases"), "test-token", nil)
-	defer resp.Body.Close()
+	defer closeBody(t, resp.Body)
 
 	var releases []map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
@@ -334,4 +334,12 @@ func decodeObject(t *testing.T, body io.Reader) map[string]any {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	return obj
+}
+
+func closeBody(t *testing.T, body io.Closer) {
+	t.Helper()
+
+	if err := body.Close(); err != nil {
+		t.Fatalf("failed to close response body: %v", err)
+	}
 }

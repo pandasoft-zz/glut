@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +19,7 @@ type Workspace struct {
 }
 
 func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace, error) {
-	tmpWork, err := ioutil.TempDir("", "glut-*")
+	tmpWork, err := os.MkdirTemp("", "glut-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
 	}
@@ -34,7 +33,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 	stagingDirSlash := filepath.ToSlash(stagingDir)
 	rsyncCmd := exec.Command("sh", "-c", fmt.Sprintf("rsync -a '%s/' '%s/'", srcDirSlash, stagingDirSlash))
 	if err := rsyncCmd.Run(); err != nil {
-		// Fallback to native Go copy to support running tests on Windows
+		// Fallback to native Go copy when rsync is not present.
 		if cpErr := copyDir(srcDir, stagingDir); cpErr != nil {
 			return nil, fmt.Errorf("failed to copy repository natively after rsync failed: %v", cpErr)
 		}
@@ -111,7 +110,9 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 	}
 
 	// Clean up staging directory
-	os.RemoveAll(stagingDir)
+	if err := os.RemoveAll(stagingDir); err != nil {
+		return nil, fmt.Errorf("failed to remove staging directory: %v", err)
+	}
 
 	return w, nil
 }
@@ -126,7 +127,11 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	if err := runCmd(tmpWork, "git", "clone", originRepo, worktree); err != nil {
 		return fmt.Errorf("failed to clone worktree: %v", err)
 	}
-	defer os.RemoveAll(worktree)
+	defer func() {
+		if err := os.RemoveAll(worktree); err != nil {
+			fmt.Printf("Failed to remove origin worktree: %v\n", err)
+		}
+	}()
 
 	userName := config.DefaultUserName
 	userEmail := config.DefaultUserEmail
@@ -152,7 +157,7 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				return err
 			}
-			if err := ioutil.WriteFile(path, []byte(content), 0644); err != nil {
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 				return err
 			}
 		}
@@ -219,19 +224,6 @@ func runCmd(dir string, name string, args ...string) error {
 		return fmt.Errorf("command %s %v failed: %v, output: %s", name, args, err, string(out))
 	}
 	return nil
-}
-
-func getCurrentBranch(dir string) string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err == nil {
-		branch := strings.TrimSpace(string(out))
-		if branch != "" {
-			return branch
-		}
-	}
-	return DetachedHead
 }
 
 func getDefaultBranch(dir string) string {
@@ -306,11 +298,11 @@ func copyDir(src string, dst string) error {
 			return filepath.SkipDir
 		}
 
-		data, err := ioutil.ReadFile(path)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
 
-		return ioutil.WriteFile(dstPath, data, info.Mode())
+		return os.WriteFile(dstPath, data, info.Mode())
 	})
 }
