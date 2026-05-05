@@ -1,1 +1,12 @@
-name: bad-assert
+stages: [test]
+
+bad-assert:
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: bad-assert
+  assert:
+    job:
+      missing-job: {}

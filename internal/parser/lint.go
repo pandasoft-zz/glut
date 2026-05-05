@@ -5,11 +5,9 @@ import (
 	"os"
 
 	glutschema "github.com/pandasoft-zz/glut/schema"
-	"gopkg.in/yaml.v3"
 )
 
 var gitlabTopLevelKeywords = map[string]bool{
-	"glut":          true,
 	"stages":        true,
 	"variables":     true,
 	"image":         true,
@@ -25,26 +23,16 @@ var gitlabTopLevelKeywords = map[string]bool{
 
 // Lint runs static analysis on a GLUT test file.
 func Lint(filePath string) []LintError {
-	root, lints := readLintRoot(filePath)
+	pipelineRoot, glutMap, lints := readLintInput(filePath)
 	if len(lints) > 0 {
 		return lints
-	}
-
-	glutVal, ok := root["glut"]
-	if !ok {
-		return nil
-	}
-
-	glutMap, ok := glutVal.(map[string]interface{})
-	if !ok {
-		return []LintError{{File: filePath, Level: LevelError, Message: "glut: section is not a map"}}
 	}
 
 	lints = append(lints, lintSchema(filePath, glutMap)...)
 	lints = append(lints, lintGlutKeys(filePath, glutMap)...)
 	lints = append(lints, lintGlutName(filePath, glutMap)...)
-	lints = append(lints, lintAssertSection(filePath, root, glutMap)...)
-	lints = append(lints, lintStages(filePath, root)...)
+	lints = append(lints, lintAssertSection(filePath, pipelineRoot, glutMap)...)
+	lints = append(lints, lintStages(filePath, pipelineRoot)...)
 	lints = append(lints, lintSetup(filePath, glutMap)...)
 	return lints
 }
@@ -66,24 +54,43 @@ func lintSchema(filePath string, glutMap map[string]interface{}) []LintError {
 	return lints
 }
 
-func readLintRoot(filePath string) (map[string]interface{}, []LintError) {
+func readLintInput(filePath string) (map[string]interface{}, map[string]interface{}, []LintError) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, []LintError{{File: filePath, Level: LevelError, Message: fmt.Sprintf("cannot read file: %v", err)}}
+		return nil, nil, []LintError{{File: filePath, Level: LevelError, Message: fmt.Sprintf("cannot read file: %v", err)}}
 	}
 
-	var root map[string]interface{}
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil, []LintError{{File: filePath, Level: LevelError, Message: fmt.Sprintf("invalid yaml: %v", err)}}
+	pipelineDoc, glutDoc, err := splitTestDocuments(data)
+	if err != nil {
+		if err == errMissingGlut {
+			return nil, nil, nil
+		}
+		return nil, nil, []LintError{{File: filePath, Level: LevelError, Message: fmt.Sprintf("invalid yaml: %v", err)}}
 	}
-	return root, nil
+
+	pipelineRoot, err := nodeToMap(documentRoot(pipelineDoc))
+	if err != nil {
+		return nil, nil, []LintError{{File: filePath, Level: LevelError, Message: fmt.Sprintf("invalid pipeline yaml: %v", err)}}
+	}
+
+	glutNode, ok := topLevelValue(documentRoot(glutDoc), ".glut")
+	if !ok {
+		return nil, nil, nil
+	}
+
+	glutMap, err := nodeToMap(glutNode)
+	if err != nil {
+		return nil, nil, []LintError{{File: filePath, Level: LevelError, Message: ".glut metadata is not a map"}}
+	}
+
+	return pipelineRoot, glutMap, nil
 }
 
 func lintGlutKeys(filePath string, glutMap map[string]interface{}) []LintError {
 	var lints []LintError
 	for key := range glutMap {
 		if key != "name" && key != "setup" && key != "assert" {
-			lints = append(lints, LintError{File: filePath, Level: LevelError, Message: fmt.Sprintf("unknown key in glut: section: %s", key)})
+			lints = append(lints, LintError{File: filePath, Level: LevelError, Message: fmt.Sprintf("unknown key in .glut metadata: %s", key)})
 		}
 	}
 	return lints
@@ -92,7 +99,7 @@ func lintGlutKeys(filePath string, glutMap map[string]interface{}) []LintError {
 func lintGlutName(filePath string, glutMap map[string]interface{}) []LintError {
 	name, hasName := glutMap["name"]
 	if !hasName || name == "" {
-		return []LintError{{File: filePath, Level: LevelWarning, Message: "missing glut.name"}}
+		return []LintError{{File: filePath, Level: LevelWarning, Message: "missing .glut.name"}}
 	}
 	return nil
 }
@@ -101,12 +108,12 @@ func lintAssertSection(filePath string, root map[string]interface{}, glutMap map
 	var lints []LintError
 	assertVal, hasAssert := glutMap["assert"]
 	if !hasAssert {
-		return []LintError{{File: filePath, Level: LevelWarning, Message: "glut.assert is empty"}}
+		return []LintError{{File: filePath, Level: LevelWarning, Message: ".glut.assert is empty"}}
 	}
 
 	assertMap, ok := assertVal.(map[string]interface{})
 	if ok && len(assertMap) == 0 {
-		lints = append(lints, LintError{File: filePath, Level: LevelWarning, Message: "glut.assert is empty"})
+		lints = append(lints, LintError{File: filePath, Level: LevelWarning, Message: ".glut.assert is empty"})
 	}
 	if !ok {
 		return lints

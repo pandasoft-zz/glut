@@ -7,15 +7,17 @@ mind during future tasks.
 
 GitLab CI files may contain anchors, aliases, custom-looking keys, includes,
 extends, and syntax that users expect GitLab tooling to handle. GLUT should avoid
-normalizing the pipeline YAML just because it needs to read the `glut:` section.
+normalizing the pipeline YAML just because it needs to read the `.glut:`
+metadata document.
 
 Do not parse the whole file into `map[string]interface{}` and marshal it back as
 the pipeline input unless the consequences are explicitly accepted.
 
-## The `glut:` Section Is GLUT Syntax
+## The `.glut:` Document Is GLUT Syntax
 
-Only the `glut:` section is owned by GLUT. The rest of the YAML is GitLab CI
-syntax and should be treated as pass-through content for `gitlab-ci-local`.
+Only the second YAML document with `.glut:` is owned by GLUT. The first YAML
+document is GitLab CI syntax and should be treated as pass-through content for
+`gitlab-ci-local`.
 
 This distinction is central to the product.
 
@@ -74,4 +76,3 @@ an empty passing test.
 The product targets POSIX systems. Windows support through Docker or WSL2 may be
 useful for development, but implementation choices should not compromise the
 POSIX contract described in the specification.
-

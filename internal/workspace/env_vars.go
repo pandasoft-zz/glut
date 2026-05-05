@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/pandasoft-zz/glut/internal/config"
@@ -17,6 +18,10 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 	env := w.baseEnv(port, sha, shortSha, glutName, defaultBranch)
 	applyProjectEnv(env, setup)
 	applyPipelineEnv(env, setup, defaultBranch)
+	if setup.Mocks != nil && len(setup.Mocks.Binaries) > 0 {
+		env["PATH"] = os.Getenv("PATH")
+		AddMockBinaryEnv(env, w.Dir)
+	}
 	return env
 }
 

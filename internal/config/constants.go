@@ -13,4 +13,7 @@ const (
 	PipelineSourceAPI      = "api"
 	PipelineSourceParent   = "parent_pipeline"
 	PipelineSourceChat     = "chat"
+
+	EnvMockLogDir  = "GLUT_MOCK_LOG_DIR"
+	EnvMockBinReal = "GLUT_MOCK_BIN_REAL"
 )
