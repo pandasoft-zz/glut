@@ -2,7 +2,7 @@ package parser
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 
 	glutschema "github.com/pandasoft-zz/glut/schema"
 )
@@ -55,7 +55,7 @@ func lintSchema(filePath string, glutMap map[string]interface{}) []LintError {
 }
 
 func readLintInput(filePath string) (map[string]interface{}, map[string]interface{}, []LintError) {
-	data, err := ioutil.ReadFile(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, nil, []LintError{{File: filePath, Level: LevelError, Message: fmt.Sprintf("cannot read file: %v", err)}}
 	}

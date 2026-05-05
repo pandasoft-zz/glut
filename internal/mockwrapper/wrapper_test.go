@@ -193,8 +193,12 @@ func TestHelperProcess(t *testing.T) {
 	switch args[0] {
 	case "echo":
 		data, _ := io.ReadAll(os.Stdin)
-		fmt.Fprintf(os.Stdout, "stdout:%s", string(data))
-		fmt.Fprintf(os.Stderr, "stderr:%s", string(data))
+		if _, err := fmt.Fprintf(os.Stdout, "stdout:%s", string(data)); err != nil {
+			os.Exit(2)
+		}
+		if _, err := fmt.Fprintf(os.Stderr, "stderr:%s", string(data)); err != nil {
+			os.Exit(2)
+		}
 		os.Exit(0)
 	case "exit":
 		if args[1] == "7" {

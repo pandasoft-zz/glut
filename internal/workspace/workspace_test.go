@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -172,10 +171,14 @@ func TestGitOriginFilesAndCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create workspace: %v", err)
 	}
-	defer w.Destroy()
+	defer func() {
+		if err := w.Destroy(); err != nil {
+			t.Fatalf("failed to destroy workspace: %v", err)
+		}
+	}()
 
 	// Verify that hello.txt exists in the cloned workspace on the default branch (main)
-	content, err := ioutil.ReadFile(filepath.Join(w.WorkspaceDir, "hello.txt"))
+	content, err := os.ReadFile(filepath.Join(w.WorkspaceDir, "hello.txt"))
 	if err == nil && string(content) == "world" {
 		// Found it
 	} else {

@@ -119,20 +119,29 @@ func linkMockBinary(linkPath string, targetPath string) error {
 	return copyExecutable(targetPath, linkPath)
 }
 
-func copyExecutable(src string, dst string) error {
+func copyExecutable(src string, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() {
+		if closeErr := in.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := out.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
 		return err
 	}
-	return out.Close()
+	return nil
 }

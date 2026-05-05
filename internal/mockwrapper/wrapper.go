@@ -49,14 +49,14 @@ func Run() {
 func RunWithOptions(opts RunOptions) int {
 	opts = opts.withDefaults()
 	if len(opts.Args) == 0 {
-		fmt.Fprintln(opts.Stderr, "mock wrapper failed: missing argv[0]")
+		writeError(opts.Stderr, "mock wrapper failed: missing argv[0]\n")
 		return 127
 	}
 
 	name := filepath.Base(opts.Args[0])
 	stdinContent, stdin, err := readStdin(opts.Stdin)
 	if err != nil {
-		fmt.Fprintf(opts.Stderr, "mock wrapper failed to read stdin: %v\n", err)
+		writeError(opts.Stderr, "mock wrapper failed to read stdin: %v\n", err)
 		return 127
 	}
 
@@ -73,13 +73,13 @@ func RunWithOptions(opts RunOptions) int {
 	env := envMap(opts.Environ)
 	if logDir := env[config.EnvMockLogDir]; logDir != "" {
 		if err := appendBinaryCall(logDir, call); err != nil {
-			fmt.Fprintf(opts.Stderr, "mock wrapper log failed: %v\n", err)
+			writeError(opts.Stderr, "mock wrapper log failed: %v\n", err)
 		}
 	}
 
 	realDir := env[config.EnvMockBinReal]
 	if realDir == "" {
-		fmt.Fprintf(opts.Stderr, "mock wrapper failed: %s is not set\n", config.EnvMockBinReal)
+		writeError(opts.Stderr, "mock wrapper failed: %s is not set\n", config.EnvMockBinReal)
 		return 127
 	}
 
@@ -94,7 +94,7 @@ func RunWithOptions(opts RunOptions) int {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
 		}
-		fmt.Fprintf(opts.Stderr, "mock wrapper failed to run %s: %v\n", realPath, err)
+		writeError(opts.Stderr, "mock wrapper failed to run %s: %v\n", realPath, err)
 		return 127
 	}
 	if cmd.ProcessState != nil {
@@ -128,13 +128,17 @@ func ReadBinaryLogs(logDir string) (map[string][]BinaryCall, error) {
 			line++
 			var call BinaryCall
 			if err := json.Unmarshal(scanner.Bytes(), &call); err != nil {
-				file.Close()
+				if closeErr := file.Close(); closeErr != nil {
+					return nil, fmt.Errorf("parse mock log %s line %d: %w; close mock log: %v", path, line, err, closeErr)
+				}
 				return nil, fmt.Errorf("parse mock log %s line %d: %w", path, line, err)
 			}
 			calls[name] = append(calls[name], call)
 		}
 		if err := scanner.Err(); err != nil {
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				return nil, fmt.Errorf("scan mock log %s: %w; close mock log: %v", path, err, closeErr)
+			}
 			return nil, fmt.Errorf("scan mock log %s: %w", path, err)
 		}
 		if err := file.Close(); err != nil {
@@ -167,6 +171,12 @@ func (opts RunOptions) withDefaults() RunOptions {
 	return opts
 }
 
+func writeError(stderr io.Writer, format string, args ...any) {
+	if _, err := fmt.Fprintf(stderr, format, args...); err != nil {
+		return
+	}
+}
+
 func readStdin(stdin io.Reader) (string, io.Reader, error) {
 	if file, ok := stdin.(*os.File); ok {
 		info, err := file.Stat()
@@ -185,7 +195,7 @@ func readStdin(stdin io.Reader) (string, io.Reader, error) {
 	return string(data), bytes.NewReader(data), nil
 }
 
-func appendBinaryCall(logDir string, call BinaryCall) error {
+func appendBinaryCall(logDir string, call BinaryCall) (err error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create mock log directory %s: %w", logDir, err)
 	}
@@ -195,12 +205,20 @@ func appendBinaryCall(logDir string, call BinaryCall) error {
 	if err != nil {
 		return fmt.Errorf("open mock log %s: %w", path, err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close mock log %s: %w", path, closeErr)
+		}
+	}()
 
 	locked := false
 	if err := lockFile(file); err == nil {
 		locked = true
-		defer unlockFile(file)
+		defer func() {
+			if unlockErr := unlockFile(file); err == nil && unlockErr != nil {
+				err = fmt.Errorf("unlock mock log %s: %w", path, unlockErr)
+			}
+		}()
 	}
 
 	data, err := json.Marshal(call)
