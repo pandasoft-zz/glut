@@ -1,1 +1,12 @@
-name: simple-job
+stages: [test]
+
+simple-job:
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: simple-job
+  assert:
+    job:
+      simple-job: {}

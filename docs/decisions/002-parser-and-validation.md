@@ -9,13 +9,14 @@ Accepted
 GLUT should use mature libraries for YAML parsing and JSON Schema validation.
 It should not implement a custom YAML grammar.
 
-The parser should operate on a YAML syntax tree, extract the top-level `glut:`
-section, decode that section into typed Go config, and preserve the remaining
-pipeline YAML for `gitlab-ci-local`.
+The parser should operate on a YAML syntax tree. The first YAML document is the
+GitLab CI pipeline. The second YAML document contains a top-level `.glut:` key.
+The parser decodes only `.glut:` into typed Go config and preserves the first
+document for `gitlab-ci-local`.
 
-JSON Schema is the authoritative structural validator for the `glut:` section.
-Go lint rules remain responsible for semantic checks that require cross-field or
-cross-document knowledge.
+JSON Schema is the authoritative structural validator for the `.glut:` metadata
+document. Go lint rules remain responsible for semantic checks that require
+cross-field or cross-document knowledge.
 
 The schema must be embedded into the compiled binary.
 
@@ -46,4 +47,3 @@ Embedding the schema preserves GLUT's single-binary distribution model.
 - Runtime validation must not depend on schema files existing next to the binary.
 - Adding schema validation may introduce a dependency on a maintained JSON Schema
   library.
-
