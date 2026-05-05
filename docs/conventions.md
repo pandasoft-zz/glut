@@ -66,12 +66,13 @@ must not be rewritten through a generic map marshal/unmarshal cycle.
 The parser should:
 
 - Read YAML into an AST.
-- Extract the top-level `glut:` node.
-- Decode only the `glut:` node into typed config.
+- Extract the top-level `.glut:` node from the second YAML document.
+- Decode only the `.glut:` node into typed config.
 - Preserve or faithfully re-render the remaining pipeline YAML.
 - Report useful file and line information where possible.
 
-JSON Schema is the authoritative structural validator for the `glut:` section.
+JSON Schema is the authoritative structural validator for the `.glut:` metadata
+document.
 Additional Go lint rules should cover semantic checks that JSON Schema cannot
 express clearly, such as references between pipeline jobs and assertions.
 
