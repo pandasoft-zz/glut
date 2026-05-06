@@ -45,3 +45,25 @@ func TestRunAPIAsserts(t *testing.T) {
 		}
 	}
 }
+
+func TestRunAPIAssertsFailWhenBodyDoesNotMatch(t *testing.T) {
+	asserts := config.AssertConfig{
+		API: map[string]config.APICallAssert{
+			"POST /api/v4/projects/*/releases": {
+				Body: map[string]any{
+					"name": "expected",
+				},
+			},
+		},
+	}
+
+	results := Run(asserts, AssertContext{
+		APICalls: []mockserver.APICall{
+			{Method: "POST", Path: "/api/v4/projects/1/releases", Body: `{"name":"actual"}`},
+		},
+	})
+
+	if len(results) != 1 || results[0].Passed {
+		t.Fatalf("expected one failed result, got %+v", results)
+	}
+}

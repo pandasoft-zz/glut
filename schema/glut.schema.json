@@ -260,6 +260,9 @@
     "binary_mock": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "executable"
+      ],
       "properties": {
         "executable": {
           "type": "string"
@@ -271,21 +274,491 @@
       "additionalProperties": false,
       "properties": {
         "job": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/job_assert"
+          }
         },
         "artifacts": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/artifact_assert"
+          }
         },
         "git": {
-          "type": "object"
+          "$ref": "#/definitions/git_assert"
         },
         "api": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/api_call_assert"
+          }
         },
         "binary": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/binary_assert"
+          }
         }
       }
+    },
+    "job_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exit-status": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "present": {
+          "type": "boolean"
+        },
+        "stdout": {
+          "$ref": "#/definitions/text_or_matcher"
+        },
+        "stderr": {
+          "$ref": "#/definitions/text_or_matcher"
+        }
+      }
+    },
+    "artifact_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exists": {
+          "type": "boolean"
+        },
+        "contents": {
+          "$ref": "#/definitions/text_or_matcher"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "md5": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "filetype": {
+          "type": "string",
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "socket"
+          ]
+        }
+      }
+    },
+    "git_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "$ref": "#/definitions/git_repo_assert"
+        },
+        "workspace": {
+          "$ref": "#/definitions/git_repo_assert"
+        }
+      }
+    },
+    "git_repo_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commits": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "last-commit": {
+          "$ref": "#/definitions/git_last_commit_assert"
+        },
+        "file": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/artifact_assert"
+          }
+        },
+        "branch": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "clean": {
+          "type": "boolean"
+        }
+      }
+    },
+    "git_last_commit_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "author-name": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "author-email": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "message": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "sha": {
+          "$ref": "#/definitions/value_or_matcher"
+        }
+      }
+    },
+    "api_call_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "called": {
+          "type": "boolean"
+        },
+        "times": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "body": {
+          "$ref": "#/definitions/api_body_assert"
+        }
+      }
+    },
+    "api_body_assert": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/value_or_matcher"
+      },
+      "properties": {
+        "gjson": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/value_or_matcher"
+          }
+        }
+      }
+    },
+    "binary_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "called": {
+          "type": "boolean"
+        },
+        "times": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "calls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/binary_call_assert"
+          }
+        },
+        "never-called-with": {
+          "$ref": "#/definitions/binary_call_assert"
+        }
+      }
+    },
+    "binary_call_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "cwd": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "stdin": {
+          "$ref": "#/definitions/value_or_matcher"
+        }
+      }
+    },
+    "text_or_matcher": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/definitions/value_or_matcher"
+        }
+      ]
+    },
+    "value_or_matcher": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/value_or_matcher"
+          }
+        },
+        {
+          "$ref": "#/definitions/matcher_object"
+        }
+      ]
+    },
+    "matcher_object": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "equal"
+          ],
+          "properties": {
+            "equal": {
+              "$ref": "#/definitions/value_or_matcher"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "have-prefix"
+          ],
+          "properties": {
+            "have-prefix": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "have-suffix"
+          ],
+          "properties": {
+            "have-suffix": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contain-substring"
+          ],
+          "properties": {
+            "contain-substring": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "match-regexp"
+          ],
+          "properties": {
+            "match-regexp": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "gt"
+          ],
+          "properties": {
+            "gt": {
+              "type": "number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ge"
+          ],
+          "properties": {
+            "ge": {
+              "type": "number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lt"
+          ],
+          "properties": {
+            "lt": {
+              "type": "number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "le"
+          ],
+          "properties": {
+            "le": {
+              "type": "number"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contain-element"
+          ],
+          "properties": {
+            "contain-element": {
+              "$ref": "#/definitions/value_or_matcher"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contain-elements"
+          ],
+          "properties": {
+            "contain-elements": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/value_or_matcher"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "consist-of"
+          ],
+          "properties": {
+            "consist-of": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/value_or_matcher"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "have-len"
+          ],
+          "properties": {
+            "have-len": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "have-key"
+          ],
+          "properties": {
+            "have-key": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "semver-constraint"
+          ],
+          "properties": {
+            "semver-constraint": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "gjson"
+          ],
+          "properties": {
+            "gjson": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/definitions/value_or_matcher"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "and"
+          ],
+          "properties": {
+            "and": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/definitions/value_or_matcher"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "or"
+          ],
+          "properties": {
+            "or": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/definitions/value_or_matcher"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "not"
+          ],
+          "properties": {
+            "not": {
+              "$ref": "#/definitions/value_or_matcher"
+            }
+          }
+        }
+      ]
     }
   }
 }

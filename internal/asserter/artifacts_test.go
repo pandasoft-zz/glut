@@ -37,3 +37,22 @@ func TestRunArtifactAsserts(t *testing.T) {
 		}
 	}
 }
+
+func TestRunArtifactAssertsRejectsPathEscape(t *testing.T) {
+	root := t.TempDir()
+	asserts := config.AssertConfig{
+		Artifacts: map[string]config.ArtifactAssert{
+			"../secret.txt": {
+				Exists: boolPtr(true),
+			},
+		},
+	}
+
+	results := Run(asserts, AssertContext{WorkspacePath: root})
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Passed {
+		t.Fatalf("expected path escape to fail, got %+v", results[0])
+	}
+}

@@ -29,6 +29,7 @@ func TestRunGitAsserts(t *testing.T) {
 	mustRunGit(t, source, "remote", "add", "origin", origin)
 	mustRunGit(t, source, "branch", "-M", "main")
 	mustRunGit(t, source, "push", "-u", "origin", "main")
+	mustRunGit(t, root, "--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/main")
 
 	mustRunGit(t, root, "clone", origin, workspace)
 	mustRunGit(t, workspace, "checkout", "-b", "feature/new-version")

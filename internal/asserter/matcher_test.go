@@ -48,3 +48,10 @@ func TestMatchTextPatterns(t *testing.T) {
 		t.Fatal("negated regex should fail")
 	}
 }
+
+func TestMatchValueDirectArraySubset(t *testing.T) {
+	got := matchValue([]any{"a", "c"}, []string{"a", "b", "c"})
+	if !got.Passed {
+		t.Fatalf("expected subset match to pass, got %+v", got)
+	}
+}
