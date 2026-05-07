@@ -161,7 +161,11 @@ func TestHelperFunctions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer file.Close()
+		defer func() {
+			if closeErr := file.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+		}()
 
 		sum, err := checksumFile(file, md5.New())
 		if err != nil {

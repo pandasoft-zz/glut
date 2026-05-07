@@ -29,7 +29,9 @@ func TestWorkspaceHelpers(t *testing.T) {
 		if err := w.Destroy(); err != nil {
 			t.Fatal(err)
 		}
-		writer.Close()
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
 
 		var out bytes.Buffer
 		if _, err := out.ReadFrom(reader); err != nil {

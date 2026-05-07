@@ -352,7 +352,11 @@ func TestReadStdinHelpers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer file.Close()
+		defer func() {
+			if closeErr := file.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+		}()
 
 		info, err := file.Stat()
 		if err != nil {
@@ -446,7 +450,9 @@ func TestCurrentDirReturnsEmptyWhenCWDIsGone(t *testing.T) {
 
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_RUN_FUNCTION") == "1" {
-		os.Unsetenv("GO_WANT_RUN_FUNCTION")
+		if err := os.Unsetenv("GO_WANT_RUN_FUNCTION"); err != nil {
+			t.Fatal(err)
+		}
 		Run()
 		return
 	}

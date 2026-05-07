@@ -63,7 +63,11 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 		if openErr != nil {
 			results = append(results, failResult(basePath, "open file", openErr))
 		} else {
-			defer file.Close()
+			defer func() {
+				if closeErr := file.Close(); closeErr != nil {
+					results = append(results, failResult(basePath, "close file", closeErr))
+				}
+			}()
 			if assert.MD5 != "" {
 				sum, sumErr := checksumFile(file, md5.New())
 				if sumErr != nil {
