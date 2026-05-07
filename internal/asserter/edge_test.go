@@ -85,7 +85,7 @@ func TestAPIHelpersAndBodyFailures(t *testing.T) {
 	if parts := splitPath("/"); parts != nil {
 		t.Fatalf("splitPath(root) = %#v", parts)
 	}
-	if apiBodyMatches("{bad json", map[string]any{"name": "x"}) {
+	if apiBodyMatches([]byte("{bad json"), map[string]any{"name": "x"}) {
 		t.Fatal("invalid JSON body should fail")
 	}
 

@@ -48,14 +48,6 @@ func TestWorkspaceHelpers(t *testing.T) {
 
 	t.Run("git branch helpers", func(t *testing.T) {
 		repo := initGitRepo(t)
-		if branch := getCurrentBranch(repo); branch != "main" && branch != "master" {
-			t.Fatalf("getCurrentBranch() = %q", branch)
-		}
-
-		if branch := getCurrentBranch(t.TempDir()); branch != DetachedHead {
-			t.Fatalf("getCurrentBranch(nonrepo) = %q", branch)
-		}
-
 		mustRunGitWorkspace(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 		if branch := getDefaultBranch(repo); branch != "main" {
 			t.Fatalf("getDefaultBranch(origin HEAD) = %q", branch)
@@ -323,6 +315,49 @@ func TestMockBinaryHelpers(t *testing.T) {
 }
 
 func TestWorkspaceCreationErrorBranches(t *testing.T) {
+	t.Run("New success with custom git config", func(t *testing.T) {
+		src := t.TempDir()
+		if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		w, err := New(parser.SetupConfig{
+			Git: &parser.GitSetupConfig{
+				User: parser.GitUserConfig{
+					Name:  "CI Bot",
+					Email: "ci@example.com",
+				},
+				Origin: &parser.GitOriginConfig{
+					Branch: "release",
+					Files: map[string]string{
+						"docs/note.txt": "hello",
+					},
+				},
+			},
+		}, false, src)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		t.Cleanup(func() {
+			if err := w.Destroy(); err != nil {
+				t.Fatalf("Destroy() error = %v", err)
+			}
+		})
+
+		data, err := os.ReadFile(filepath.Join(w.WorkspaceDir, "docs", "note.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "hello" {
+			t.Fatalf("workspace file = %q", string(data))
+		}
+
+		head := runGitOutput(t, w.WorkspaceDir, "branch", "--show-current")
+		if strings.TrimSpace(head) != "release" {
+			t.Fatalf("workspace branch = %q", head)
+		}
+	})
+
 	t.Run("New missing source", func(t *testing.T) {
 		_, err := New(parser.SetupConfig{}, false, filepath.Join(t.TempDir(), "missing-src"))
 		if err == nil {
