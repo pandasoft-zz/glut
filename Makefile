@@ -12,6 +12,10 @@ test-cover:
 	go test ./internal/... ./schema -covermode=atomic -coverprofile=coverage.out
 	go tool cover -func=coverage.out
 
+test-cover-check:
+	go test ./internal/... ./schema -covermode=atomic -coverprofile=coverage.out
+	sh ./scripts/check-coverage.sh coverage.out 90
+
 test-cover-html:
 	go test ./internal/... ./schema -covermode=atomic -coverprofile=coverage.out
 	go tool cover -html=coverage.out

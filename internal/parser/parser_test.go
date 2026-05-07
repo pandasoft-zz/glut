@@ -1,10 +1,13 @@
 package parser
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func createTempYAML(t *testing.T, content string) string {
@@ -230,6 +233,283 @@ test_job:
 	_, err := Parse(path)
 	if err == nil {
 		t.Fatal("expected missing .glut error")
+	}
+}
+
+func TestParse_ErrorCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name: "invalid yaml",
+			content: `
+test_job:
+  script: [broken
+---
+.glut:
+  name: bad
+`,
+			want: "failed to parse yaml",
+		},
+		{
+			name: "too many documents",
+			content: `
+test_job:
+  script: echo ok
+---
+.glut:
+  name: bad
+---
+extra: true
+`,
+			want: "exactly two YAML documents",
+		},
+		{
+			name: "glut not mapping",
+			content: `
+test_job:
+  script: echo ok
+---
+.glut:
+  - bad
+`,
+			want: "failed to parse .glut metadata",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := createTempYAML(t, tt.content)
+			_, err := Parse(path)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Parse() error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitTestDocumentsAndDecodeHelpers(t *testing.T) {
+	t.Run("split missing glut", func(t *testing.T) {
+		_, _, err := splitTestDocuments([]byte("job:\n  script: echo ok\n"))
+		if !errors.Is(err, errMissingGlut) {
+			t.Fatalf("splitTestDocuments() error = %v, want errMissingGlut", err)
+		}
+	})
+
+	t.Run("decode invalid yaml", func(t *testing.T) {
+		_, err := decodeDocuments([]byte("job: [broken"))
+		if err == nil {
+			t.Fatal("expected decodeDocuments to fail")
+		}
+	})
+
+	t.Run("decode reads multiple docs", func(t *testing.T) {
+		docs, err := decodeDocuments([]byte("---\n---\nkey: value\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(docs) != 2 {
+			t.Fatalf("decodeDocuments() len = %d, want 2", len(docs))
+		}
+	})
+}
+
+func TestYAMLNodeHelpers(t *testing.T) {
+	t.Run("documentRoot", func(t *testing.T) {
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte("key: value\n"), &doc); err != nil {
+			t.Fatal(err)
+		}
+		root := documentRoot(&doc)
+		if root == nil || root.Kind != yaml.MappingNode {
+			t.Fatalf("documentRoot() = %#v", root)
+		}
+
+		plain := &yaml.Node{Kind: yaml.ScalarNode, Value: "value"}
+		if got := documentRoot(plain); got != plain {
+			t.Fatal("documentRoot should return plain node unchanged")
+		}
+	})
+
+	t.Run("topLevelValue", func(t *testing.T) {
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte(".glut:\n  name: ok\n"), &doc); err != nil {
+			t.Fatal(err)
+		}
+		value, ok := topLevelValue(documentRoot(&doc), ".glut")
+		if !ok || value == nil {
+			t.Fatal("expected topLevelValue to find .glut")
+		}
+		if _, ok := topLevelValue(nil, ".glut"); ok {
+			t.Fatal("nil root should not match")
+		}
+		if _, ok := topLevelValue(&yaml.Node{Kind: yaml.SequenceNode}, ".glut"); ok {
+			t.Fatal("non-mapping root should not match")
+		}
+	})
+
+	t.Run("nodeToMap", func(t *testing.T) {
+		if _, err := nodeToMap(nil); err == nil {
+			t.Fatal("expected nodeToMap(nil) to fail")
+		}
+
+		var doc yaml.Node
+		if err := yaml.Unmarshal([]byte("name: ok\n"), &doc); err != nil {
+			t.Fatal(err)
+		}
+		mapped, err := nodeToMap(documentRoot(&doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mapped["name"] != "ok" {
+			t.Fatalf("nodeToMap() = %#v", mapped)
+		}
+	})
+}
+
+func TestParseDir(t *testing.T) {
+	root := t.TempDir()
+	validDir := filepath.Join(root, "valid")
+	badDir := filepath.Join(root, "bad")
+	txtDir := filepath.Join(root, "txt")
+	if err := os.MkdirAll(validDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(badDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(txtDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	validPath := filepath.Join(validDir, "ok.yml")
+	if err := os.WriteFile(validPath, []byte(testFile("job:\n  script: echo ok\n", "\nname: ok\n")), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badDir, "bad.yaml"), []byte("job: [broken"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(txtDir, "skip.txt"), []byte("ignore"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "noglut.yml"), []byte("job:\n  script: echo ok\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, errs := ParseDir(root)
+	if len(files) != 1 {
+		t.Fatalf("ParseDir() files len = %d, want 1", len(files))
+	}
+	if len(errs) != 1 {
+		t.Fatalf("ParseDir() errs len = %d, want 1", len(errs))
+	}
+	if !strings.Contains(errs[0].Error(), "failed to parse yaml") {
+		t.Fatalf("ParseDir() error = %v", errs[0])
+	}
+}
+
+func TestLint_HelperBranches(t *testing.T) {
+	t.Run("missing file", func(t *testing.T) {
+		errs := Lint(filepath.Join(t.TempDir(), "missing.yml"))
+		if len(errs) != 1 || errs[0].Level != LevelError {
+			t.Fatalf("Lint missing file = %+v", errs)
+		}
+	})
+
+	t.Run("invalid pipeline yaml", func(t *testing.T) {
+		path := createTempYAML(t, `
+- invalid
+---
+.glut:
+  name: bad
+`)
+		errs := Lint(path)
+		found := false
+		for _, err := range errs {
+			if strings.Contains(err.Message, "invalid pipeline yaml") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected invalid pipeline yaml error, got %+v", errs)
+		}
+	})
+
+	t.Run("glut metadata not map", func(t *testing.T) {
+		path := createTempYAML(t, `
+job:
+  script: echo ok
+---
+.glut:
+  - bad
+`)
+		errs := Lint(path)
+		found := false
+		for _, err := range errs {
+			if strings.Contains(err.Message, ".glut metadata is not a map") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected .glut metadata map error, got %+v", errs)
+		}
+	})
+
+	t.Run("assert not map and stages not array", func(t *testing.T) {
+		path := createTempYAML(t, testFile(`
+stages: build
+job:
+  stage: build
+  script: echo ok
+`, `
+name: "test"
+assert: "oops"
+`))
+		errs := Lint(path)
+		for _, err := range errs {
+			if strings.Contains(err.Message, ".glut.assert is empty") {
+				t.Fatal("string assert should not be treated as empty map")
+			}
+		}
+	})
+
+	t.Run("setup not map", func(t *testing.T) {
+		path := createTempYAML(t, testFile(`
+job:
+  script: echo ok
+`, `
+name: "test"
+setup: "oops"
+`))
+		errs := Lint(path)
+		if len(errs) != 0 {
+			for _, err := range errs {
+				if strings.Contains(err.Message, "setup.") {
+					t.Fatalf("unexpected setup lint for non-map setup: %+v", errs)
+				}
+			}
+		}
+	})
+}
+
+func TestReadStagesAndContainsString(t *testing.T) {
+	if _, ok := readStages(map[string]interface{}{}); ok {
+		t.Fatal("readStages without stages should report false")
+	}
+
+	stages, ok := readStages(map[string]interface{}{
+		"stages": []interface{}{"build", 1, "test"},
+	})
+	if !ok || len(stages) != 2 || stages[1] != "test" {
+		t.Fatalf("readStages() = %#v, %v", stages, ok)
+	}
+
+	if containsString([]string{"a", "b"}, "c") {
+		t.Fatal("containsString should be false")
 	}
 }
 

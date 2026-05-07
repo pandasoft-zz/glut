@@ -59,7 +59,7 @@ func TestRunAPIAssertsFailWhenBodyDoesNotMatch(t *testing.T) {
 
 	results := Run(asserts, AssertContext{
 		APICalls: []mockserver.APICall{
-			{Method: "POST", Path: "/api/v4/projects/1/releases", Body: `{"name":"actual"}`},
+			{Method: "POST", Path: "/api/v4/projects/1/releases", RequestBody: []byte(`{"name":"actual"}`)},
 		},
 	})
 
