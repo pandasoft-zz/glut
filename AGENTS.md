@@ -26,8 +26,8 @@ Also read the decision records:
 
 ## Implementation Rules
 
-- Use the devcontainer for build, test, lint, and release checks.
-- Do not use native Windows as proof that the project works.
+- Use the devcontainer for all repository operations. Never use the native
+  Windows host as proof that the project works.
 - Run devcontainer commands with this strict prefix:
   `npx --yes @devcontainers/cli exec --workspace-folder .`
 - Follow the package boundaries from `docs/architecture.md`.
