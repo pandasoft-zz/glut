@@ -17,8 +17,42 @@ jobs:
       with:
         go-version-file: go.mod
 
+    - name: Install test tools
+      run: go install gotest.tools/gotestsum@latest
+
     - name: Test
-      run: go test ./...
+      run: |
+        mkdir -p .artifacts
+        "$(go env GOPATH)/bin/gotestsum" --junitfile .artifacts/test-results.xml --format standard-verbose -- ./...
+
+    - name: Publish test report
+      if: always()
+      uses: mikepenz/action-junit-report@v5
+      with:
+        report_paths: .artifacts/test-results.xml
+        detailed_summary: true
+        include_passed: true
+
+    - name: Coverage
+      run: |
+        mkdir -p .artifacts
+        make test-cover-check | tee .artifacts/coverage-summary.txt
+        {
+          echo '## Coverage'
+          echo
+          echo '```text'
+          cat .artifacts/coverage-summary.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload coverage artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: |
+          coverage.out
+          .artifacts/coverage-summary.txt
 
     - name: Lint
       uses: golangci/golangci-lint-action@v9
