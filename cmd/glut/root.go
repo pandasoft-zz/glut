@@ -49,7 +49,11 @@ var runCmd = &cobra.Command{
 	Short: "Run tests",
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := runOptionsFromCommand(args)
-		console := reporter.NewConsole(opts.Verbose, opts.Quiet)
+		sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
+		if err != nil {
+			fmt.Fprintln(stderrWriter(), err)
+			os.Exit(ExitError)
+		}
 		result, exitCode := runner.Run(context.Background(), opts.Paths, runner.RunOptions{
 			RunPattern:     opts.Pattern,
 			FailFast:       opts.FailFast,
@@ -61,9 +65,13 @@ var runCmd = &cobra.Command{
 			KeepWorkspace:  opts.KeepWorkspace,
 			DebugPause:     opts.DebugPause,
 			KeepLastFailed: opts.KeepLastFailed,
-			Progress:       []runner.ProgressSink{console},
+			Progress:       sinks,
 		})
 		_ = result
+		if err := writeFileReports(fileReports); err != nil {
+			fmt.Fprintln(stderrWriter(), err)
+			os.Exit(ExitError)
+		}
 		os.Exit(int(exitCode))
 	},
 }
