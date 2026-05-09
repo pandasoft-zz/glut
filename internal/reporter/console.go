@@ -19,23 +19,22 @@ type ConsoleOptions struct {
 	Format  string
 	Quiet   bool
 	Verbose bool
+	Debug   bool
 	Writer  io.Writer
-}
-
-type consoleReporter interface {
-	runner.ProgressSink
 }
 
 type prettyConsole struct {
 	writer  io.Writer
 	quiet   bool
 	verbose bool
+	debug   bool
 }
 
 type dotsConsole struct {
 	writer      io.Writer
 	quiet       bool
 	verbose     bool
+	debug       bool
 	wroteStatus bool
 }
 
@@ -59,6 +58,12 @@ type jsonResult struct {
 	Error      string        `json:"error,omitempty"`
 }
 
+type jsonSummary struct {
+	Passed     int   `json:"passed"`
+	Failed     int   `json:"failed"`
+	DurationMS int64 `json:"duration_ms"`
+}
+
 func NewConsole(opts ConsoleOptions) (runner.ProgressSink, error) {
 	writer := opts.Writer
 	if writer == nil {
@@ -76,12 +81,14 @@ func NewConsole(opts ConsoleOptions) (runner.ProgressSink, error) {
 			writer:  writer,
 			quiet:   opts.Quiet,
 			verbose: opts.Verbose,
+			debug:   opts.Debug,
 		}, nil
 	case "dots":
 		return &dotsConsole{
 			writer:  writer,
 			quiet:   opts.Quiet,
 			verbose: opts.Verbose,
+			debug:   opts.Debug,
 		}, nil
 	case "json":
 		return &jsonConsole{
@@ -107,7 +114,7 @@ func (c *prettyConsole) TestDone(result runner.TestResult) {
 	}
 
 	if !result.Passed {
-		writePrettyFailure(c.writer, result)
+		writePrettyFailure(c.writer, result, c.debug)
 		return
 	}
 
@@ -143,7 +150,7 @@ func (c *dotsConsole) TestDone(result runner.TestResult) {
 			writef(c.writer, "\n")
 			c.wroteStatus = false
 		}
-		writePrettyFailure(c.writer, result)
+		writePrettyFailure(c.writer, result, c.debug)
 		return
 	}
 
@@ -187,7 +194,11 @@ func (c *jsonConsole) TestDone(result runner.TestResult) {
 }
 
 func (c *jsonConsole) Summary(result runner.RunResult) {
-	writef(c.writer, "%s\n", summaryLine(result))
+	writeJSON(c.writer, jsonSummary{
+		Passed:     result.Passed,
+		Failed:     result.Failed,
+		DurationMS: result.Duration.Milliseconds(),
+	})
 }
 
 func PrintList(writer io.Writer, tests []runner.ListedTest) {
@@ -200,7 +211,7 @@ func PrintList(writer io.Writer, tests []runner.ListedTest) {
 	}
 }
 
-func writePrettyFailure(writer io.Writer, result runner.TestResult) {
+func writePrettyFailure(writer io.Writer, result runner.TestResult, debug bool) {
 	writef(writer, "\nFAILED  %s\n", result.FilePath)
 	if result.TestName != "" {
 		writef(writer, "  Test: %q\n", result.TestName)
@@ -216,13 +227,69 @@ func writePrettyFailure(writer io.Writer, result runner.TestResult) {
 		writef(writer, "\n  Error: %s\n", result.Error.Error())
 	}
 
-	writeJobLogs(writer, result.JobOutputs, true)
+	writeJobLogs(writer, result.JobOutputs, !debug)
+	if debug && result.Debug != nil {
+		writeDebugData(writer, *result.Debug)
+	}
 
 	if result.PreservedWorkspace && result.WorkspacePath != "" {
 		writef(writer, "\n  Workspace kept: %s\n", result.WorkspacePath)
-	} else {
+	} else if !debug {
 		writef(writer, "\n  Hint: run with --debug for full job logs and mock call history\n")
 		writef(writer, "  Hint: run with --keep-workspace to keep the workspace\n")
+	}
+}
+
+func writeDebugData(writer io.Writer, debug runner.DebugData) {
+	writeRawDebugBlock(writer, "Raw gitlab-ci-local stdout", debug.RawStdout)
+	writeRawDebugBlock(writer, "Raw gitlab-ci-local stderr", debug.RawStderr)
+	writeJSONDebugBlock(writer, "Mock binary calls", debug.BinaryLogs)
+	writeJSONDebugBlock(writer, "Mock API calls", debug.APICalls)
+	writeRawDebugBlock(writer, "Workspace git log", debug.WorkspaceGitLog)
+	writeRawDebugBlock(writer, "Origin git log", debug.OriginGitLog)
+	writePhaseTimings(writer, debug.PhaseTimings)
+	writeStringListBlock(writer, "Cleanup errors", debug.CleanupErrors)
+}
+
+func writeRawDebugBlock(writer io.Writer, title string, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	writef(writer, "\n  %s:\n", title)
+	writeIndentedBlock(writer, value, "  ")
+}
+
+func writeJSONDebugBlock(writer io.Writer, title string, value any) {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil || strings.TrimSpace(string(data)) == "null" || strings.TrimSpace(string(data)) == "{}" || strings.TrimSpace(string(data)) == "[]" {
+		return
+	}
+	writef(writer, "\n  %s:\n", title)
+	writeIndentedBlock(writer, string(data), "  ")
+}
+
+func writePhaseTimings(writer io.Writer, timings map[string]time.Duration) {
+	if len(timings) == 0 {
+		return
+	}
+	names := make([]string, 0, len(timings))
+	for name := range timings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	writef(writer, "\n  Phase timings:\n")
+	for _, name := range names {
+		writef(writer, "  %s: %s\n", name, formatDuration(timings[name]))
+	}
+}
+
+func writeStringListBlock(writer io.Writer, title string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	writef(writer, "\n  %s:\n", title)
+	for _, value := range values {
+		writef(writer, "  - %s\n", value)
 	}
 }
 

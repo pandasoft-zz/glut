@@ -247,6 +247,29 @@ func TestRecorderHelperCoverage(t *testing.T) {
 	}
 }
 
+func TestStoreIdentifierBranches(t *testing.T) {
+	store := NewInMemoryStore()
+
+	withID := store.Create("releases", map[string]any{"id": 99, "name": "v1"})
+	if withID["id"] != 99 {
+		t.Fatalf("existing id should be kept, got %#v", withID)
+	}
+
+	branch := store.Create("repository/branches", map[string]any{"name": "main"})
+	if _, ok := branch["id"]; ok {
+		t.Fatalf("branch should not receive numeric id: %#v", branch)
+	}
+	if branch["name"] != "main" {
+		t.Fatalf("branch name = %#v", branch)
+	}
+
+	obj := map[string]any{"url": "https://example.test"}
+	store.setDefaultIdentifierLocked("hooks", obj)
+	if obj["id"] != 1 {
+		t.Fatalf("default id = %#v", obj)
+	}
+}
+
 func TestWriteJSONWithFailingWriter(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeJSON(failingResponseWriter{ResponseWriter: rec}, http.StatusOK, map[string]any{

@@ -206,3 +206,63 @@ func TestGitOriginFilesAndCommands(t *testing.T) {
 		t.Errorf("expected branch feature-test in origin repo")
 	}
 }
+
+func TestDestroyKeepsWorkspaceWhenRequested(t *testing.T) {
+	dir := t.TempDir()
+	w := &Workspace{Dir: dir, KeepWorkspace: true}
+	if err := w.Destroy(); err != nil {
+		t.Fatalf("Destroy() error = %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("workspace should still exist: %v", err)
+	}
+}
+
+func TestGitHelpersNoopBranches(t *testing.T) {
+	dir := t.TempDir()
+	if err := runCmd(dir, "git", "init"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	if err := runCmd(dir, "git", "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("git config email: %v", err)
+	}
+	if err := runCmd(dir, "git", "config", "user.name", "Test User"); err != nil {
+		t.Fatalf("git config name: %v", err)
+	}
+
+	if err := commitIfStaged(dir, "empty"); err != nil {
+		t.Fatalf("commitIfStaged empty repo error = %v", err)
+	}
+	if err := removeRemoteIfExists(dir, "origin"); err != nil {
+		t.Fatalf("remove missing remote error = %v", err)
+	}
+	if err := runCmd(dir, "git", "remote", "add", "origin", "/tmp/origin.git"); err != nil {
+		t.Fatalf("add remote: %v", err)
+	}
+	if err := removeRemoteIfExists(dir, "origin"); err != nil {
+		t.Fatalf("remove remote error = %v", err)
+	}
+}
+
+func TestCopyDirCopiesFiles(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(filepath.Join(src, "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "nested", "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "nested", "file.txt"))
+	if err != nil {
+		t.Fatalf("read copied file: %v", err)
+	}
+	if string(data) != "data" {
+		t.Fatalf("copied data = %q", string(data))
+	}
+}

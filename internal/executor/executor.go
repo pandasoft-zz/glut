@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +23,12 @@ const (
 	defaultSystemPATH  = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	jobMarkerPrefix    = "GLUT_JOB|"
 	dependencyOptional = "optional"
+)
+
+var (
+	gitlabOutputLineRE   = regexp.MustCompile(`^(.+?) > (.*)$`)
+	gitlabFinishedLineRE = regexp.MustCompile(`^(.+?) finished in .*\s+(PASS|FAIL)(?:\s+([0-9]+))?\s*$`)
+	gitlabSummaryLineRE  = regexp.MustCompile(`^\s*(PASS|FAIL)\s+(.+?)\s*$`)
 )
 
 type ExecutorConfig struct {
@@ -66,6 +73,9 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	if err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return result, fmt.Errorf("run gitlab-ci-local: test timeout after %s", cfg.Timeout)
+		}
+		if len(result.Jobs) > 0 {
+			return result, nil
 		}
 		return result, fmt.Errorf("run gitlab-ci-local: %w", err)
 	}
@@ -211,7 +221,7 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 }
 
 func baseArgs() []string {
-	return []string{"--force-shell-executor", "--no-color", "--file", pipelineFileName}
+	return []string{"--shell-executor-no-image", "--no-color", "--file", pipelineFileName}
 }
 
 func envArgs(envVars map[string]string) []string {
@@ -223,7 +233,7 @@ func envArgs(envVars map[string]string) []string {
 
 	args := make([]string, 0, len(keys)*2)
 	for _, key := range keys {
-		args = append(args, "--env", key+"="+envVars[key])
+		args = append(args, "--variable", key+"="+envVars[key])
 	}
 	return args
 }
@@ -232,11 +242,13 @@ func parseJobOutputs(stdout string, stderr string) map[string]JobOutput {
 	jobs := make(map[string]JobOutput)
 	parseJobMarkers(jobs, stdout)
 	parseJobMarkers(jobs, stderr)
+	parseGitLabOutput(jobs, stdout, "stdout")
+	parseGitLabOutput(jobs, stderr, "stderr")
 	return jobs
 }
 
 func parseJobMarkers(jobs map[string]JobOutput, raw string) {
-	scanner := bufio.NewScanner(strings.NewReader(raw))
+	scanner := newLineScanner(raw)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, jobMarkerPrefix) {
@@ -279,27 +291,104 @@ func parseJobMarker(line string) (JobOutput, bool) {
 	return job, true
 }
 
-func parseJobList(stdout string, stderr string) []string {
-	seen := make(map[string]struct{})
-	var jobs []string
-	for _, raw := range []string{stdout, stderr} {
-		scanner := bufio.NewScanner(strings.NewReader(raw))
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, "GLUT_JOB|") {
+func parseGitLabOutput(jobs map[string]JobOutput, raw string, stream string) {
+	scanner := newLineScanner(raw)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, jobMarkerPrefix) {
+			continue
+		}
+
+		if matches := gitlabFinishedLineRE.FindStringSubmatch(line); len(matches) == 4 {
+			job := ensureJob(jobs, strings.TrimSpace(matches[1]))
+			job.ExitStatus = statusFromGitLab(matches[2], matches[3])
+			jobs[job.Name] = job
+			continue
+		}
+
+		if matches := gitlabSummaryLineRE.FindStringSubmatch(line); len(matches) == 3 {
+			jobName := strings.TrimSpace(matches[2])
+			if strings.Contains(jobName, " ") {
 				continue
 			}
-			if strings.HasPrefix(line, "- ") {
-				line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+			job := ensureJob(jobs, jobName)
+			if matches[1] == "PASS" {
+				job.ExitStatus = 0
+			} else if job.ExitStatus == 0 {
+				job.ExitStatus = 1
 			}
-			if _, ok := seen[line]; ok {
+			jobs[job.Name] = job
+			continue
+		}
+
+		if matches := gitlabOutputLineRE.FindStringSubmatch(line); len(matches) == 3 {
+			jobName := strings.TrimSpace(matches[1])
+			if strings.HasPrefix(jobName, ">") || strings.Contains(jobName, " ") {
 				continue
 			}
-			seen[line] = struct{}{}
-			jobs = append(jobs, line)
+			job := ensureJob(jobs, jobName)
+			switch stream {
+			case "stderr":
+				job.Stderr = appendOutputLine(job.Stderr, matches[2])
+			default:
+				job.Stdout = appendOutputLine(job.Stdout, matches[2])
+			}
+			jobs[job.Name] = job
 		}
 	}
+}
+
+func ensureJob(jobs map[string]JobOutput, name string) JobOutput {
+	job := jobs[name]
+	job.Name = name
+	job.Present = true
+	return job
+}
+
+func statusFromGitLab(status string, rawExit string) int {
+	if status == "PASS" {
+		return 0
+	}
+	exitStatus, err := strconv.Atoi(strings.TrimSpace(rawExit))
+	if err != nil || exitStatus == 0 {
+		return 1
+	}
+	return exitStatus
+}
+
+func appendOutputLine(current string, line string) string {
+	if current == "" {
+		return line
+	}
+	return current + "\n" + line
+}
+
+func parseJobList(stdout string, stderr string) []string {
+	_ = stderr
+	seen := make(map[string]struct{})
+	var jobs []string
+	scanner := newLineScanner(stdout)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "GLUT_JOB|") {
+			continue
+		}
+		if strings.HasPrefix(line, "- ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		}
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		jobs = append(jobs, line)
+	}
 	return jobs
+}
+
+func newLineScanner(raw string) *bufio.Scanner {
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	return scanner
 }
 
 func tailForError(raw string) string {

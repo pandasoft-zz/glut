@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pandasoft-zz/glut/internal/runner"
@@ -162,7 +163,9 @@ func sumSuiteDuration(cases []junitTestCase) int64 {
 		seconds := int64(0)
 		fraction := int64(0)
 		if len(parts) > 0 && parts[0] != "" {
-			fmt.Sscanf(parts[0], "%d", &seconds)
+			if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+				seconds = parsed
+			}
 		}
 		if len(parts) == 2 && parts[1] != "" {
 			padded := parts[1]
@@ -172,7 +175,9 @@ func sumSuiteDuration(cases []junitTestCase) int64 {
 			if len(padded) > 3 {
 				padded = padded[:3]
 			}
-			fmt.Sscanf(padded, "%d", &fraction)
+			if parsed, err := strconv.ParseInt(padded, 10, 64); err == nil {
+				fraction = parsed
+			}
 		}
 		total += seconds*1000 + fraction
 	}

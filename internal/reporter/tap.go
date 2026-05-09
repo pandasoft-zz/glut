@@ -39,7 +39,7 @@ func (r *tapReport) Summary(result runner.RunResult) {
 func (r *tapReport) WriteFile(path string) error {
 	var builder strings.Builder
 	builder.WriteString("TAP version 14\n")
-	builder.WriteString(fmt.Sprintf("1..%d\n", len(r.results.Tests)))
+	fmt.Fprintf(&builder, "1..%d\n", len(r.results.Tests))
 
 	for index, testResult := range r.results.Tests {
 		status := "ok"
@@ -47,7 +47,7 @@ func (r *tapReport) WriteFile(path string) error {
 			status = "not ok"
 		}
 
-		builder.WriteString(fmt.Sprintf("%s %d - %s: %s\n", status, index+1, testResult.FilePath, testDisplayName(testResult)))
+		fmt.Fprintf(&builder, "%s %d - %s: %s\n", status, index+1, testResult.FilePath, testDisplayName(testResult))
 		if testResult.Passed {
 			continue
 		}
@@ -57,7 +57,7 @@ func (r *tapReport) WriteFile(path string) error {
 			message = "test failed"
 		}
 		builder.WriteString("  ---\n")
-		builder.WriteString(fmt.Sprintf("  message: %s\n", message))
+		fmt.Fprintf(&builder, "  message: %s\n", message)
 		builder.WriteString("  ...\n")
 	}
 

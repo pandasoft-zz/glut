@@ -13,6 +13,8 @@ import (
 
 	"github.com/pandasoft-zz/glut/internal/asserter"
 	"github.com/pandasoft-zz/glut/internal/executor"
+	"github.com/pandasoft-zz/glut/internal/mockserver"
+	"github.com/pandasoft-zz/glut/internal/mockwrapper"
 	"github.com/pandasoft-zz/glut/internal/runner"
 )
 
@@ -82,11 +84,44 @@ func TestJSONConsoleOutputsJSONLines(t *testing.T) {
 		t.Fatalf("json output lines = %d, want at least 3: %q", len(lines), buffer.String())
 	}
 
-	for _, line := range lines[:2] {
+	for _, line := range lines {
 		var decoded map[string]any
 		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
 			t.Fatalf("json line %q did not parse: %v", line, err)
 		}
+	}
+}
+
+func TestDebugModeShowsCapturedDebugData(t *testing.T) {
+	var buffer bytes.Buffer
+	console, err := NewConsole(ConsoleOptions{Debug: true, Writer: &buffer})
+	if err != nil {
+		t.Fatalf("NewConsole() error = %v", err)
+	}
+
+	result := sampleFailResult()
+	result.Debug = &runner.DebugData{
+		RawStdout:       "full stdout",
+		RawStderr:       "full stderr",
+		BinaryLogs:      map[string][]mockwrapper.BinaryCall{"release-cli": {{Name: "release-cli", Args: []string{"create"}}}},
+		APICalls:        []mockserver.APICall{{Method: "POST", Path: "/api/v4/projects/1/releases"}},
+		WorkspaceGitLog: "abc123 main",
+		OriginGitLog:    "def456 origin/main",
+		PhaseTimings: map[string]time.Duration{
+			"pipeline": time.Second,
+		},
+		CleanupErrors: []string{"remove workspace failed"},
+	}
+	console.TestDone(result)
+
+	output := buffer.String()
+	for _, want := range []string{"Raw gitlab-ci-local stdout", "full stdout", "Mock binary calls", "Mock API calls", "Workspace git log", "Origin git log", "Phase timings", "remove workspace failed"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("debug output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "Hint: run with --debug") {
+		t.Fatalf("debug output should not include debug hint: %s", output)
 	}
 }
 
@@ -218,9 +253,98 @@ func TestVerboseModeShowsPassingJobOutput(t *testing.T) {
 	}
 }
 
+func TestPrintListUsesFallbackName(t *testing.T) {
+	var buffer bytes.Buffer
+	PrintList(&buffer, []runner.ListedTest{
+		{FilePath: "tests/unnamed.yml"},
+		{FilePath: "tests/named.yml", TestName: "named"},
+	})
+
+	output := buffer.String()
+	if !strings.Contains(output, "tests/unnamed.yml\t(unnamed)") {
+		t.Fatalf("list output missing fallback name: %s", output)
+	}
+	if !strings.Contains(output, "tests/named.yml\tnamed") {
+		t.Fatalf("list output missing test name: %s", output)
+	}
+}
+
+func TestDotsVerboseWritesFullPassingOutput(t *testing.T) {
+	var buffer bytes.Buffer
+	console, err := NewConsole(ConsoleOptions{Format: "dots", Verbose: true, Writer: &buffer})
+	if err != nil {
+		t.Fatalf("NewConsole() error = %v", err)
+	}
+
+	console.TestDone(samplePassResult())
+	console.Summary(runner.RunResult{Passed: 1, Duration: time.Second})
+
+	output := buffer.String()
+	if !strings.Contains(output, `Stdout of "pass-job"`) || !strings.Contains(output, "all good") {
+		t.Fatalf("dots verbose output missing job logs: %s", output)
+	}
+}
+
 func TestWriteFileReturnsPathContextOnError(t *testing.T) {
 	report := NewJUnit()
 	path := filepath.Join(t.TempDir(), "missing", "report.xml")
+
+	err := report.WriteFile(path)
+	if err == nil {
+		t.Fatal("WriteFile() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("WriteFile() error missing path context: %v", err)
+	}
+}
+
+func TestReporterHelperErrorBranches(t *testing.T) {
+	if _, err := NewConsole(ConsoleOptions{Format: "bad"}); err == nil {
+		t.Fatal("NewConsole() error = nil, want unsupported format")
+	}
+
+	var buffer bytes.Buffer
+	writeJSON(&buffer, make(chan int))
+	if !strings.Contains(buffer.String(), "error") {
+		t.Fatalf("writeJSON error output = %q", buffer.String())
+	}
+
+	buffer.Reset()
+	writeJSONDebugBlock(&buffer, "Bad JSON", make(chan int))
+	if buffer.Len() != 0 {
+		t.Fatalf("bad debug JSON should be skipped: %q", buffer.String())
+	}
+
+	if formatDuration(-time.Second) != "0s" {
+		t.Fatalf("negative duration should format as 0s")
+	}
+	message := failureMessage(runner.TestResult{Error: errors.New("boom")})
+	if message != "boom" {
+		t.Fatalf("failureMessage() = %q", message)
+	}
+}
+
+func TestReporterStartMethods(t *testing.T) {
+	var buffer bytes.Buffer
+	dots, err := NewConsole(ConsoleOptions{Format: "dots", Writer: &buffer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dots.Start(2)
+
+	jsonConsole, err := NewConsole(ConsoleOptions{Format: "json", Writer: &buffer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jsonConsole.Start(2)
+
+	NewJUnit().Start(2)
+	NewTAP().Start(2)
+}
+
+func TestTAPWriteFileReturnsPathContextOnError(t *testing.T) {
+	report := NewTAP()
+	path := filepath.Join(t.TempDir(), "missing", "report.tap")
 
 	err := report.WriteFile(path)
 	if err == nil {

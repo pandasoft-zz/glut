@@ -25,6 +25,7 @@ func buildProgressSinks(opts RunOptions, writer io.Writer) ([]runner.ProgressSin
 		Format:  opts.Format,
 		Quiet:   opts.Quiet,
 		Verbose: opts.Verbose,
+		Debug:   opts.Debug,
 		Writer:  writer,
 	})
 	if err != nil {

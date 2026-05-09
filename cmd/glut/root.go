@@ -21,6 +21,8 @@ const (
 	ExitOK       = 0
 	ExitTestFail = 1
 	ExitError    = 2
+
+	defaultRunTimeout = 10 * time.Minute
 )
 
 var (
@@ -51,7 +53,7 @@ var runCmd = &cobra.Command{
 		opts := runOptionsFromCommand(args)
 		sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
 		if err != nil {
-			fmt.Fprintln(stderrWriter(), err)
+			writeError(err)
 			os.Exit(ExitError)
 		}
 		result, exitCode := runner.Run(context.Background(), opts.Paths, runner.RunOptions{
@@ -67,9 +69,11 @@ var runCmd = &cobra.Command{
 			KeepLastFailed: opts.KeepLastFailed,
 			Progress:       sinks,
 		})
-		_ = result
+		if result.Error != nil {
+			writeError(result.Error)
+		}
 		if err := writeFileReports(fileReports); err != nil {
-			fmt.Fprintln(stderrWriter(), err)
+			writeError(err)
 			os.Exit(ExitError)
 		}
 		os.Exit(int(exitCode))
@@ -154,7 +158,7 @@ func init() {
 	runCmd.Flags().BoolVarP(&runQuiet, "quiet", "q", false, "Quiet output")
 	runCmd.Flags().StringVar(&runFormat, "format", runFormat, "Console output format")
 	runCmd.Flags().StringArrayVar(&runReports, "report", runReports, "Report output as <format>:<path>, repeatable")
-	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration("GLUT_TIMEOUT"), "Timeout for one test")
+	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration("GLUT_TIMEOUT", defaultRunTimeout), "Timeout for one test")
 	runCmd.Flags().BoolVar(&runDebug, "debug", envBool("GLUT_DEBUG"), "Enable debug mode")
 	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool("GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
 	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, after-pipeline, or on-fail")
@@ -177,14 +181,18 @@ func envBool(name string) bool {
 	}
 }
 
-func envDuration(name string) time.Duration {
+func envDuration(name string, fallback time.Duration) time.Duration {
 	value := os.Getenv(name)
 	if value == "" {
-		return 0
+		return fallback
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil {
-		return 0
+		return fallback
 	}
 	return duration
+}
+
+func writeError(err error) {
+	_, _ = fmt.Fprintln(stderrWriter(), err)
 }

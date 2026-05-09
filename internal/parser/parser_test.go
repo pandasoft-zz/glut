@@ -234,6 +234,19 @@ test_job:
 	if err == nil {
 		t.Fatal("expected missing .glut error")
 	}
+	if !IsMissingGlut(err) {
+		t.Fatalf("IsMissingGlut() = false for %v", err)
+	}
+	if IsMissingGlut(errors.New("other")) {
+		t.Fatal("IsMissingGlut() should reject unrelated errors")
+	}
+}
+
+func TestParseReportsReadFileError(t *testing.T) {
+	_, err := Parse(filepath.Join(t.TempDir(), "missing.yml"))
+	if err == nil {
+		t.Fatal("expected read file error")
+	}
 }
 
 func TestParse_ErrorCases(t *testing.T) {
@@ -650,5 +663,39 @@ setup:
 				t.Errorf("Lint did not return expected errors for %s. Got: %v", tt.name, errs)
 			}
 		})
+	}
+}
+
+func TestSemanticLintUsesParsedTestFile(t *testing.T) {
+	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
+name: "semantic"
+assert:
+  job:
+    missing_job: {}
+`))
+	testFile, err := Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lints := SemanticLint(*testFile)
+	if len(lints) == 0 {
+		t.Fatal("SemanticLint() returned no lints")
+	}
+	if lints[0].Level != LevelError || !strings.Contains(lints[0].Message, "missing_job") {
+		t.Fatalf("SemanticLint() = %#v", lints)
+	}
+}
+
+func TestSemanticLintReportsInvalidPipelineYAML(t *testing.T) {
+	lints := SemanticLint(TestFile{
+		FilePath:     "bad.yml",
+		PipelineYAML: "job: [broken",
+		GlutRaw: map[string]interface{}{
+			"name": "bad",
+		},
+	})
+	if len(lints) != 1 || lints[0].Level != LevelError || !strings.Contains(lints[0].Message, "invalid pipeline yaml") {
+		t.Fatalf("SemanticLint() = %#v", lints)
 	}
 }

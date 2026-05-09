@@ -56,3 +56,48 @@ func TestRunArtifactAssertsRejectsPathEscape(t *testing.T) {
 		t.Fatalf("expected path escape to fail, got %+v", results[0])
 	}
 }
+
+func TestRunArtifactAssertsFileTypesAndChecksumFailures(t *testing.T) {
+	root := t.TempDir()
+	dirPath := filepath.Join(root, "dir")
+	if err := os.Mkdir(dirPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(root, "link")
+	if err := os.Symlink("dir", linkPath); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation needs extra permissions on windows")
+		}
+		t.Fatal(err)
+	}
+
+	results := Run(config.AssertConfig{
+		Artifacts: map[string]config.ArtifactAssert{
+			"dir": {
+				Exists:   boolPtr(true),
+				Filetype: "directory",
+			},
+			"link": {
+				Exists:   boolPtr(true),
+				Filetype: "symlink",
+			},
+		},
+	}, AssertContext{WorkspacePath: root})
+
+	for _, result := range results {
+		if !result.Passed {
+			t.Fatalf("unexpected filetype failure: %+v", result)
+		}
+	}
+
+	checksumResults := runArtifactAssert("assert.artifacts.\"dir\"", dirPath, config.ArtifactAssert{MD5: "bad"})
+	foundFailure := false
+	for _, result := range checksumResults {
+		if !result.Passed && result.Path == "assert.artifacts.\"dir\".md5" {
+			foundFailure = true
+		}
+	}
+	if !foundFailure {
+		t.Fatalf("expected checksum failure for directory, got %+v", checksumResults)
+	}
+}
