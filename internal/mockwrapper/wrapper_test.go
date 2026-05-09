@@ -320,6 +320,20 @@ func TestReadBinaryLogsErrors(t *testing.T) {
 			t.Fatalf("ReadBinaryLogs() logs = %#v", logs)
 		}
 	})
+
+	t.Run("open log error", func(t *testing.T) {
+		logDir := t.TempDir()
+		if err := os.Symlink(filepath.Join(logDir, "missing"), filepath.Join(logDir, "broken.jsonl")); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skip("symlink creation needs extra permissions on windows")
+			}
+			t.Fatal(err)
+		}
+		_, err := ReadBinaryLogs(logDir)
+		if err == nil || !strings.Contains(err.Error(), "read mock log") {
+			t.Fatalf("ReadBinaryLogs() error = %v", err)
+		}
+	})
 }
 
 func TestRunOptionsWithDefaults(t *testing.T) {
@@ -411,6 +425,10 @@ func TestHelperUtilities(t *testing.T) {
 	}
 }
 
+func TestWriteErrorIgnoresWriterFailure(t *testing.T) {
+	writeError(errWriter{}, "message: %s", "boom")
+}
+
 func TestAppendBinaryCallMkdirError(t *testing.T) {
 	parent := t.TempDir()
 	filePath := filepath.Join(parent, "not-dir")
@@ -419,6 +437,13 @@ func TestAppendBinaryCallMkdirError(t *testing.T) {
 	}
 	err := appendBinaryCall(filePath, BinaryCall{Name: "tool"})
 	if err == nil || !strings.Contains(err.Error(), "create mock log directory") {
+		t.Fatalf("appendBinaryCall() error = %v", err)
+	}
+}
+
+func TestAppendBinaryCallOpenError(t *testing.T) {
+	err := appendBinaryCall(t.TempDir(), BinaryCall{Name: filepath.Join("missing", "tool")})
+	if err == nil || !strings.Contains(err.Error(), "open mock log") {
 		t.Fatalf("appendBinaryCall() error = %v", err)
 	}
 }
@@ -493,6 +518,12 @@ func TestHelperProcess(t *testing.T) {
 type errReader struct{}
 
 func (errReader) Read(_ []byte) (int, error) {
+	return 0, errors.New("boom")
+}
+
+type errWriter struct{}
+
+func (errWriter) Write(_ []byte) (int, error) {
 	return 0, errors.New("boom")
 }
 

@@ -63,6 +63,7 @@ type RunResult struct {
 	Passed   int
 	Failed   int
 	Duration time.Duration
+	Error    error
 }
 
 type TestResult struct {
@@ -97,17 +98,17 @@ type ListedTest struct {
 func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitCode) {
 	opts = normalizeRunOptions(opts)
 	if err := validateDebugPause(opts.DebugPause); err != nil {
-		return RunResult{}, ExitRunnerError
+		return RunResult{Error: err}, ExitRunnerError
 	}
 
 	tests, err := discoverTests(paths, opts.RunPattern)
 	if err != nil {
-		return RunResult{}, ExitRunnerError
+		return RunResult{Error: err}, ExitRunnerError
 	}
 
 	repoRoot, err := os.Getwd()
 	if err != nil {
-		return RunResult{}, ExitRunnerError
+		return RunResult{Error: fmt.Errorf("read current directory: %w", err)}, ExitRunnerError
 	}
 
 	for _, sink := range opts.Progress {
