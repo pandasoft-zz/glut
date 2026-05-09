@@ -5,6 +5,7 @@ import (
 	"os"
 
 	glutschema "github.com/pandasoft-zz/glut/schema"
+	"gopkg.in/yaml.v3"
 )
 
 var gitlabTopLevelKeywords = map[string]bool{
@@ -35,6 +36,34 @@ func Lint(filePath string) []LintError {
 	lints = append(lints, lintStages(filePath, pipelineRoot)...)
 	lints = append(lints, lintSetup(filePath, glutMap)...)
 	return lints
+}
+
+func SemanticLint(testFile TestFile) []LintError {
+	pipelineRoot, err := decodePipelineMap(testFile.PipelineYAML)
+	if err != nil {
+		return []LintError{{
+			File:    testFile.FilePath,
+			Level:   LevelError,
+			Message: fmt.Sprintf("invalid pipeline yaml: %v", err),
+		}}
+	}
+
+	lints := append([]LintError(nil), lintGlutName(testFile.FilePath, testFile.GlutRaw)...)
+	lints = append(lints, lintAssertSection(testFile.FilePath, pipelineRoot, testFile.GlutRaw)...)
+	lints = append(lints, lintStages(testFile.FilePath, pipelineRoot)...)
+	lints = append(lints, lintSetup(testFile.FilePath, testFile.GlutRaw)...)
+	return lints
+}
+
+func decodePipelineMap(pipelineYAML string) (map[string]interface{}, error) {
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(pipelineYAML), &root); err != nil {
+		return nil, err
+	}
+	if root == nil {
+		root = map[string]interface{}{}
+	}
+	return root, nil
 }
 
 func lintSchema(filePath string, glutMap map[string]interface{}) []LintError {

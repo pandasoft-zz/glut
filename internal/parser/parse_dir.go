@@ -9,6 +9,10 @@ import (
 
 var errMissingGlut = errors.New("file does not contain .glut metadata document")
 
+func IsMissingGlut(err error) bool {
+	return errors.Is(err, errMissingGlut)
+}
+
 // ParseDir recursively finds all *.yml and *.yaml files and parses them.
 func ParseDir(dirPath string) ([]*TestFile, []error) {
 	var files []*TestFile

@@ -30,6 +30,10 @@ func Parse(filePath string) (*TestFile, error) {
 	if err := glutNode.Decode(&glutSection); err != nil {
 		return nil, fmt.Errorf("failed to parse .glut metadata: %w", err)
 	}
+	glutRaw, err := nodeToMap(glutNode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read .glut metadata map: %w", err)
+	}
 
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -44,6 +48,7 @@ func Parse(filePath string) (*TestFile, error) {
 	return &TestFile{
 		FilePath:     filePath,
 		Glut:         glutSection,
+		GlutRaw:      glutRaw,
 		PipelineYAML: buf.String(),
 	}, nil
 }
