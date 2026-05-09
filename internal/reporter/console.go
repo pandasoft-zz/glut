@@ -27,7 +27,7 @@ func (c *Console) Start(totalTests int) {
 	if c.quiet {
 		return
 	}
-	fmt.Fprintf(c.writer, "Found %d test(s)\n", totalTests)
+	writef(c.writer, "Found %d test(s)\n", totalTests)
 }
 
 func (c *Console) TestDone(result runner.TestResult) {
@@ -39,15 +39,15 @@ func (c *Console) TestDone(result runner.TestResult) {
 	if !result.Passed {
 		status = "FAIL"
 	}
-	fmt.Fprintf(c.writer, "%s  %s (%s)\n", status, displayName(result), formatDuration(result.Duration))
+	writef(c.writer, "%s  %s (%s)\n", status, displayName(result), formatDuration(result.Duration))
 
 	if result.Error != nil {
-		fmt.Fprintf(c.writer, "  error: %v\n", result.Error)
+		writef(c.writer, "  error: %v\n", result.Error)
 	}
 	for _, failure := range result.Failures {
-		fmt.Fprintf(c.writer, "  assert: %s\n", failure.Path)
-		fmt.Fprintf(c.writer, "  expected: %s\n", failure.Expected)
-		fmt.Fprintf(c.writer, "  actual: %s\n", failure.Actual)
+		writef(c.writer, "  assert: %s\n", failure.Path)
+		writef(c.writer, "  expected: %s\n", failure.Expected)
+		writef(c.writer, "  actual: %s\n", failure.Actual)
 	}
 
 	if c.verbose {
@@ -55,17 +55,17 @@ func (c *Console) TestDone(result runner.TestResult) {
 			if !job.Present {
 				continue
 			}
-			fmt.Fprintf(c.writer, "  job %s exit=%d\n", job.Name, job.ExitStatus)
+			writef(c.writer, "  job %s exit=%d\n", job.Name, job.ExitStatus)
 		}
 	}
 
 	if result.PreservedWorkspace {
-		fmt.Fprintf(c.writer, "  workspace kept: %s\n", result.WorkspacePath)
+		writef(c.writer, "  workspace kept: %s\n", result.WorkspacePath)
 	}
 }
 
 func (c *Console) Summary(result runner.RunResult) {
-	fmt.Fprintf(c.writer, "%d passed, %d failed in %s\n", result.Passed, result.Failed, formatDuration(result.Duration))
+	writef(c.writer, "%d passed, %d failed in %s\n", result.Passed, result.Failed, formatDuration(result.Duration))
 }
 
 func PrintList(writer io.Writer, tests []runner.ListedTest) {
@@ -74,8 +74,12 @@ func PrintList(writer io.Writer, tests []runner.ListedTest) {
 		if name == "" {
 			name = "(unnamed)"
 		}
-		fmt.Fprintf(writer, "%s\t%s\n", test.FilePath, name)
+		writef(writer, "%s\t%s\n", test.FilePath, name)
 	}
+}
+
+func writef(writer io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(writer, format, args...)
 }
 
 func displayName(result runner.TestResult) string {
