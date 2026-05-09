@@ -5,6 +5,7 @@ import "github.com/pandasoft-zz/glut/internal/config"
 type TestFile struct {
 	FilePath     string
 	Glut         GlutSection
+	GlutRaw      map[string]interface{}
 	PipelineYAML string
 }
 

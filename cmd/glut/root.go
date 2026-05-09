@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/pandasoft-zz/glut/internal/parser"
+	"github.com/pandasoft-zz/glut/internal/reporter"
+	"github.com/pandasoft-zz/glut/internal/runner"
 	"github.com/spf13/cobra"
 )
 
@@ -21,17 +24,19 @@ const (
 )
 
 var (
-	runPattern       string
-	runFailFast      bool
-	runMaxFail       int
-	runVerbose       bool
-	runQuiet         bool
-	runFormat        string
-	runReports       []string
-	runTimeout       time.Duration
-	runDebug         bool
-	runKeepWorkspace bool
-	runDebugPause    string
+	runPattern        string
+	runFailFast       bool
+	runMaxFail        int
+	runVerbose        bool
+	runQuiet          bool
+	runFormat         string
+	runReports        []string
+	runTimeout        time.Duration
+	runDebug          bool
+	runKeepWorkspace  bool
+	runDebugPause     string
+	runKeepLastFailed int
+	listPattern       string
 )
 
 var rootCmd = &cobra.Command{
@@ -44,9 +49,22 @@ var runCmd = &cobra.Command{
 	Short: "Run tests",
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := runOptionsFromCommand(args)
-		_ = opts
-		fmt.Fprintln(os.Stderr, "glut run is not implemented yet")
-		os.Exit(ExitError)
+		console := reporter.NewConsole(opts.Verbose, opts.Quiet)
+		result, exitCode := runner.Run(context.Background(), opts.Paths, runner.RunOptions{
+			RunPattern:     opts.Pattern,
+			FailFast:       opts.FailFast,
+			MaxFail:        opts.MaxFail,
+			Verbose:        opts.Verbose,
+			Quiet:          opts.Quiet,
+			Timeout:        opts.Timeout,
+			Debug:          opts.Debug,
+			KeepWorkspace:  opts.KeepWorkspace,
+			DebugPause:     opts.DebugPause,
+			KeepLastFailed: opts.KeepLastFailed,
+			Progress:       []runner.ProgressSink{console},
+		})
+		_ = result
+		os.Exit(int(exitCode))
 	},
 }
 
@@ -54,8 +72,15 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tests",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Fprintln(os.Stderr, "glut list is not implemented yet")
-		os.Exit(ExitError)
+		opts := listOptionsFromCommand(args)
+		tests, err := runner.List(context.Background(), opts.Paths, runner.ListOptions{
+			RunPattern: opts.Pattern,
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(ExitError)
+		}
+		reporter.PrintList(os.Stdout, tests)
 	},
 }
 
@@ -125,6 +150,9 @@ func init() {
 	runCmd.Flags().BoolVar(&runDebug, "debug", envBool("GLUT_DEBUG"), "Enable debug mode")
 	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool("GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
 	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, after-pipeline, or on-fail")
+	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
+
+	listCmd.Flags().StringVarP(&listPattern, "run", "k", "", "List tests matching substring or regex")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(listCmd)
