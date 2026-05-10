@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/pandasoft-zz/glut/internal/parser"
 	"github.com/pandasoft-zz/glut/internal/reporter"
 	"github.com/pandasoft-zz/glut/internal/runner"
 	"github.com/spf13/cobra"
@@ -39,16 +38,38 @@ var (
 	runDebugPause     string
 	runKeepLastFailed int
 	listPattern       string
+	lintFormat        string
+	doctorFormat      string
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "glut",
 	Short: "GLUT is a test runner",
+	Long: `GLUT runs GitLab CI component tests locally.
+
+A GLUT test file has normal GitLab CI YAML and a .glut metadata document.
+GLUT prepares an isolated workspace, starts mocks, runs gitlab-ci-local,
+checks asserts, and prints a result.`,
+	Example: `  glut run ./tests
+  glut run -k release ./tests
+  glut lint ./tests
+  glut list ./tests
+  glut version`,
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run",
+	Use:   "run [paths...]",
 	Short: "Run tests",
+	Long: `Run GLUT tests from one or more paths.
+
+A path can be a directory or a YAML file. If no path is given, GLUT uses the
+current directory. Each test gets its own workspace and mock services.`,
+	Example: `  glut run
+  glut run ./tests
+  glut run ./tests/release.yml
+  glut run -k release ./tests
+  glut run --report=junit:report.xml ./tests
+  glut run --debug --keep-workspace ./tests/release.yml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := runOptionsFromCommand(args)
 		sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
@@ -81,8 +102,14 @@ var runCmd = &cobra.Command{
 }
 
 var listCmd = &cobra.Command{
-	Use:   "list",
+	Use:   "list [paths...]",
 	Short: "List tests",
+	Long: `List GLUT tests without running them.
+
+A path can be a directory or a YAML file. Use --run to filter by test name.`,
+	Example: `  glut list
+  glut list ./tests
+  glut list -k release ./tests`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := listOptionsFromCommand(args)
 		tests, err := runner.List(context.Background(), opts.Paths, runner.ListOptions{
@@ -97,35 +124,47 @@ var listCmd = &cobra.Command{
 }
 
 var lintCmd = &cobra.Command{
-	Use:   "lint [dirs...]",
+	Use:   "lint [paths...]",
 	Short: "Lint tests",
+	Long: `Lint GLUT test files.
+
+Lint checks YAML syntax, .glut schema errors, and semantic mistakes such as
+assert.job references to missing pipeline jobs.`,
+	Example: `  glut lint
+  glut lint ./tests
+  glut lint ./tests/release.yml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := lintOptionsFromCommand(args)
-
-		hasError := false
-		for _, dir := range opts.Paths {
-			files, errs := parser.ParseDir(dir)
-			if len(errs) > 0 {
-				for _, err := range errs {
-					fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
-				}
-				hasError = true
-			}
-
-			for _, f := range files {
-				lints := parser.Lint(f.FilePath)
-				for _, l := range lints {
-					prefix := "WARNING"
-					if l.Level == parser.LevelError {
-						prefix = "ERROR"
-						hasError = true
-					}
-					fmt.Printf("[%s] %s: %s\n", prefix, l.File, l.Message)
-				}
-			}
+		report := buildLintReport(opts.Paths)
+		if err := printLintReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
+			writeError(err)
+			os.Exit(ExitError)
 		}
+		if report.HasErrors {
+			os.Exit(ExitTestFail)
+		}
+		os.Exit(ExitOK)
+	},
+}
 
-		if hasError {
+var doctorCmd = &cobra.Command{
+	Use:   "doctor [paths...]",
+	Short: "Explain tests for AI tools",
+	Long: `Explain GLUT test files for AI tools.
+
+Doctor returns lint issues and authoring hints. Use JSON output when another
+tool or AI assistant needs structured feedback.`,
+	Example: `  glut doctor ./tests
+  glut doctor --format=json ./tests/release.yml`,
+	Run: func(cmd *cobra.Command, args []string) {
+		opts := lintOptionsFromCommand(args)
+		opts.Format = doctorFormat
+		report := buildDoctorReport(opts.Paths)
+		if err := printDoctorReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
+			writeError(err)
+			os.Exit(ExitError)
+		}
+		if report.HasErrors {
 			os.Exit(ExitTestFail)
 		}
 		os.Exit(ExitOK)
@@ -133,8 +172,10 @@ var lintCmd = &cobra.Command{
 }
 
 var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print version",
+	Use:     "version",
+	Short:   "Print version",
+	Long:    "Print the GLUT version and build commit.",
+	Example: `  glut version`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("glut %s (commit: %s, built: unknown)\n", version, commit)
 	},
@@ -165,10 +206,13 @@ func init() {
 	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
 
 	listCmd.Flags().StringVarP(&listPattern, "run", "k", "", "List tests matching substring or regex")
+	lintCmd.Flags().StringVar(&lintFormat, "format", "text", "Output format: text or json")
+	doctorCmd.Flags().StringVar(&doctorFormat, "format", "text", "Output format: text or json")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(lintCmd)
+	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(versionCmd)
 }
 

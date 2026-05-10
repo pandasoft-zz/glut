@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -183,6 +185,72 @@ func TestValidateGlutInvalid(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantSnippet, errs)
 			}
 		})
+	}
+}
+
+func TestValidateGlutRejectsUnknownFields(t *testing.T) {
+	errs, err := ValidateGlut(map[string]any{
+		"name":    "bad",
+		"unknown": true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if !hasErrorSnippet(errs, "additional property") {
+		t.Fatalf("expected unknown field error, got %v", errs)
+	}
+}
+
+func TestValidateGlutRejectsInvalidEnumValues(t *testing.T) {
+	errs, err := ValidateGlut(map[string]any{
+		"name": "bad source",
+		"setup": map[string]any{
+			"pipeline_source": "manual",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if !hasErrorSnippet(errs, "must be one of") {
+		t.Fatalf("expected enum error, got %v", errs)
+	}
+}
+
+func TestValidateGlutUsesEmbeddedSchemaAtRuntime(t *testing.T) {
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldDir); err != nil {
+			t.Fatalf("failed to restore working directory: %v", err)
+		}
+	})
+
+	errs, err := ValidateGlut(map[string]any{
+		"name": "embedded",
+		"setup": map[string]any{
+			"pipeline_source": "bad",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if len(errs) == 0 {
+		t.Fatal("expected embedded schema validation errors")
+	}
+}
+
+func TestPublishedSchemaMatchesEmbeddedSchema(t *testing.T) {
+	published, err := os.ReadFile(filepath.Join("glut.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(published)) != strings.TrimSpace(glutSchema) {
+		t.Fatal("published schema and embedded schema differ")
 	}
 }
 

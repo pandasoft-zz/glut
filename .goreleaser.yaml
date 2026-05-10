@@ -1,11 +1,51 @@
+version: 2
+
+project_name: glut
+
+before:
+  hooks:
+    - go mod tidy
+
 builds:
-  - env: [CGO_ENABLED=0]
-    goos: [linux, darwin]
-    goarchs: [amd64, arm64]
+  - id: glut
+    main: ./cmd/glut
+    binary: glut
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
     ldflags:
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
 dockers:
   - image_templates:
       - ghcr.io/pandasoft-zz/glut:{{ .Tag }}
       - ghcr.io/pandasoft-zz/glut:latest
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--build-arg=COMMIT={{ .Commit }}"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

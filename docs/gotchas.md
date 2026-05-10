@@ -68,8 +68,8 @@ Empty structs and empty tests are acceptable only as very short-lived scaffoldin
 They should not survive as a green test suite because they make implementation
 progress look stronger than it is.
 
-When a package is not implemented yet, prefer a clear TODO document or issue over
-an empty passing test.
+When a package is not implemented yet, prefer a clear follow-up document or
+issue over an empty passing test.
 
 ## Native Windows Is Not A Target
 

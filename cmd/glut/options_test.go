@@ -75,9 +75,12 @@ func TestRunOptionsFromCommandUsesGlobalsAndDefaultPath(t *testing.T) {
 
 func TestListAndLintOptionsUseDefaultPaths(t *testing.T) {
 	oldPattern := listPattern
+	oldLintFormat := lintFormat
 	listPattern = "smoke"
+	lintFormat = "json"
 	t.Cleanup(func() {
 		listPattern = oldPattern
+		lintFormat = oldLintFormat
 	})
 
 	listOpts := listOptionsFromCommand(nil)
@@ -86,8 +89,8 @@ func TestListAndLintOptionsUseDefaultPaths(t *testing.T) {
 	}
 
 	lintOpts := lintOptionsFromCommand(nil)
-	if !reflect.DeepEqual(lintOpts.Paths, []string{"./tests/"}) {
-		t.Fatalf("lint paths = %#v", lintOpts.Paths)
+	if !reflect.DeepEqual(lintOpts.Paths, []string{"./tests/"}) || lintOpts.Format != "json" {
+		t.Fatalf("lint options = %+v", lintOpts)
 	}
 
 	custom := lintOptionsFromCommand([]string{"custom"})
