@@ -26,6 +26,7 @@ func TestRootHelpContainsCommandsAndPurpose(t *testing.T) {
 		"run",
 		"lint",
 		"list",
+		"doctor",
 		"version",
 	} {
 		if !strings.Contains(help, want) {

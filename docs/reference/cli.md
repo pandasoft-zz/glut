@@ -79,6 +79,7 @@ Run static checks.
 glut lint
 glut lint ./tests
 glut lint ./tests/release.yml
+glut lint --format=json ./tests/release.yml
 ```
 
 Lint checks include:
@@ -92,6 +93,26 @@ Lint checks include:
 - Invalid setup combinations, such as `branch` and `tag` together.
 
 `glut lint` exits with code `1` when it finds an error.
+
+Use `--format=json` when another tool or AI assistant needs structured output.
+The JSON output groups issues by file and marks each issue as `schema`,
+`semantic`, or `parse`.
+
+## `glut doctor`
+
+Explain tests for AI tools.
+
+```bash
+glut doctor ./tests
+glut doctor --format=json ./tests/release.yml
+```
+
+`doctor` returns the same lint issues as `lint`. It also returns authoring
+hints. Hints point out weak tests, such as tests that only check job exit status
+or configure mock binaries without `assert.binary`.
+
+Use `--format=json` when a coding assistant should read the result and edit the
+test.
 
 ## `glut version`
 

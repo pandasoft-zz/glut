@@ -1,15 +1,86 @@
-# GLUT Test Author Skill
+---
+name: glut-test-author
+description: Write, review, and fix GLUT test files for GitLab CI components. Use when an AI assistant needs to create valid GLUT YAML tests, improve existing GLUT tests, choose setup/assert syntax, mock GitLab API calls, mock binaries, or explain why a GLUT test is invalid.
+---
 
-## What GLUT Is
+# GLUT Test Author
 
-GLUT tests GitLab CI components locally. A test file has normal GitLab CI YAML
-first and GLUT metadata second. GLUT runs the pipeline, records side effects,
-and checks structured asserts.
+Use this skill to write better GLUT tests. Optimize for valid YAML, realistic CI
+context, and useful asserts.
 
-## Minimal Test Structure
+## Workflow
 
-Use two YAML documents. The first document is passed to `gitlab-ci-local`. The
-second document has one top-level `.glut:` key.
+1. Identify the behavior under test: job output, artifact, git change, API call,
+   or binary call.
+2. Write the GitLab CI pipeline as the first YAML document.
+3. Write the `.glut:` metadata as the second YAML document.
+4. Put CI context in `setup:`. Do not hard-code runner-injected variables in the
+   pipeline.
+5. Put checks in `assert:`. Prefer checking the side effect that matters, not
+   only `exit-status: 0`.
+6. Run or suggest `glut lint` before `glut run`.
+7. When GLUT is available locally, prefer structured feedback:
+   `glut lint --format=json <file>` for validation and
+   `glut doctor --format=json <file>` for validation plus authoring hints.
+
+## Use GLUT Feedback
+
+When a GLUT binary is available, use it instead of guessing.
+
+Use lint for validity:
+
+```bash
+glut lint --format=json path/to/test.yml
+```
+
+The JSON output has this shape:
+
+```json
+{
+  "files": [
+    {
+      "file": "path/to/test.yml",
+      "issues": [
+        {
+          "level": "error",
+          "category": "schema",
+          "path": ".glut.setup.pipeline_source",
+          "message": "glut schema: setup.pipeline_source: must be one of..."
+        }
+      ]
+    }
+  ],
+  "has_errors": true
+}
+```
+
+Use `category` to choose the fix:
+
+- `schema`: fix `.glut:` keys, value types, enum values, or matcher shape.
+- `semantic`: fix cross-document logic, such as `assert.job` pointing to a
+  missing job.
+- `parse`: fix YAML syntax, missing files, or invalid file structure.
+
+Use doctor when the test is valid but may be weak:
+
+```bash
+glut doctor --format=json path/to/test.yml
+```
+
+Doctor returns `issues` plus `hints`. Treat hints as authoring advice, not as
+hard failures. Good fixes for hints usually add stronger asserts:
+
+- add `assert.artifacts` for generated files
+- add `assert.git` for pushed commits or changed files
+- add `assert.api` for GitLab API calls
+- add `assert.binary` for mocked tools
+
+If `has_errors` is true, fix `issues` first. Then use `hints` to improve test
+quality.
+
+## Required File Shape
+
+A GLUT test has two YAML documents.
 
 ```yaml
 stages:
@@ -21,7 +92,7 @@ test-job:
     - echo "ok"
 ---
 .glut:
-  name: "minimal"
+  name: "basic test"
   setup:
     branch: "main"
   assert:
@@ -32,240 +103,132 @@ test-job:
           - "ok"
 ```
 
-## Full `setup:` Reference
+Rules:
 
-`setup:` defines CI context and prepared state.
+- Keep `.glut:` only in the second document.
+- Keep GitLab CI YAML pass-through. Do not rewrite anchors or aliases.
+- Make each `assert.job` key match a real job name.
+- Do not set `setup.branch` and `setup.tag` together.
+- Add `setup.merge_request` when `setup.pipeline_source` is
+  `merge_request_event`.
+
+## `setup:` Cheat Sheet
+
+Use `setup:` to define test context.
 
 ```yaml
-.glut:
-  setup:
-    branch: "main"
-    pipeline_source: "push"
+setup:
+  branch: "main"
+  pipeline_source: "push"
 ```
 
-Use `tag` instead of `branch` for tag pipelines. Do not set both.
+Allowed `pipeline_source` values:
+
+- `push`
+- `web`
+- `merge_request_event`
+- `schedule`
+- `trigger`
+- `api`
+- `parent_pipeline`
+- `chat`
+
+Merge request context:
 
 ```yaml
-.glut:
-  setup:
-    tag: "v1.2.0"
-    pipeline_source: "push"
+setup:
+  branch: "feature/release"
+  pipeline_source: "merge_request_event"
+  merge_request:
+    title: "Release change"
+    target_branch: "main"
+    iid: 42
+    draft: false
+    labels: "release,ready"
+    assignees: "dev"
 ```
 
-Use `merge_request` with `merge_request_event`.
+Fake origin seed:
 
 ```yaml
-.glut:
-  setup:
-    branch: "feature/release"
-    pipeline_source: "merge_request_event"
-    merge_request:
-      title: "Release change"
-      target_branch: "main"
-      iid: 42
-      draft: false
-      labels: "release,ready"
-      assignees: "dev"
+setup:
+  git:
+    origin:
+      branch: "main"
+      files:
+        "manifest.yaml": "image: old\n"
 ```
 
-Other pipeline sources are `web`, `schedule`, `trigger`, `api`,
-`parent_pipeline`, and `chat`.
+Git setup fields:
+
+- `git.user.name`
+- `git.user.email`
+- `git.origin.branch`
+- `git.origin.files`
+- `git.origin.commands`
+
+Mock GitLab API:
 
 ```yaml
-.glut:
-  setup:
-    pipeline_source: "schedule"
-    schedule:
-      description: "nightly"
+setup:
+  api:
+    token:
+      valid: true
+      scopes:
+        - "api"
+    project:
+      path: "test-group/test-project"
+      default_branch: "main"
+    seed:
+      releases:
+        - tag_name: "v1.0.0"
+          name: "Old release"
 ```
 
-```yaml
-.glut:
-  setup:
-    pipeline_source: "chat"
-    chat:
-      channel: "release"
-      input: "ship"
-      user_id: "100"
-```
+Mock API seed supports:
 
-Use `upstream` for parent or trigger context.
+- `releases`
+- `merge_requests`
+- `labels`
 
-```yaml
-.glut:
-  setup:
-    pipeline_source: "parent_pipeline"
-    upstream:
-      pipeline_id: 1000
-      project_id: 20
-      job_id: 300
-```
+Common mock API project resources:
 
-Use `git.origin` to seed the fake origin.
+- `/releases`
+- `/merge_requests`
+- `/repository/tags`
+- `/repository/branches`
+- `/labels`
+- `/milestones`
+- `/issues`
+- `/hooks`
+- `/variables`
+- `/deployments`
+- `/environments`
+- `/pipelines`
 
-```yaml
-.glut:
-  setup:
-    git:
-      user:
-        name: "Test User"
-        email: "test@example.com"
-      origin:
-        branch: "main"
-        files:
-          "manifest.yaml": "image: old\n"
-        commands:
-          - "git checkout -b release"
-          - "printf 'note\n' > note.txt"
-          - "git add note.txt"
-          - "git commit -m 'add note'"
-```
+Special mock API endpoints:
 
-Use `api` to set mock GitLab API state.
+- `POST /api/v4/projects/:id/repository/commits`
+- `POST /api/v4/projects/:id/merge_requests/:iid/notes`
+- `POST /api/v4/projects/:id/merge_requests/:iid/approve`
+
+Mock binary:
 
 ```yaml
-.glut:
-  setup:
-    api:
-      token:
-        valid: true
-        expires_at: "2030-01-01T00:00:00Z"
-        scopes:
-          - "api"
-      project:
-        default_branch: "main"
-        path: "test-group/test-project"
-      seed:
-        releases:
-          - tag_name: "v1.0.0"
-            name: "v1.0.0"
-        merge_requests:
-          - iid: 7
-            title: "Open change"
-        labels:
-          - name: "ready"
-```
-
-Use `mocks.binaries` to replace tools in `PATH`.
-
-```yaml
-.glut:
-  setup:
-    mocks:
-      binaries:
-        release-cli:
-          executable: |
-            #!/bin/sh
-            echo "mock release"
-```
-
-## Full `assert:` Reference
-
-`assert.job` checks job result data.
-
-```yaml
-.glut:
-  assert:
-    job:
-      build:
-        present: true
-        exit-status: 0
-        stdout:
-          - "built"
-        stderr:
-          not: "panic"
-```
-
-`assert.artifacts` checks files from the workspace.
-
-```yaml
-.glut:
-  assert:
-    artifacts:
-      "dist/image.txt":
-        exists: true
-        contents:
-          contain-substring: "registry.example.com/app"
-        mode: "-rw-r--r--"
-        size:
-          gt: 0
-        filetype: "file"
-```
-
-`assert.git` checks workspace or fake origin git state.
-
-```yaml
-.glut:
-  assert:
-    git:
-      workspace:
-        branch: "main"
-        clean: true
-      origin:
-        commits:
-          ge: 1
-        last-commit:
-          message:
-            have-prefix: "chore:"
-        file:
-          "manifest.yaml":
-            contents:
-              contain-substring: "image:"
-```
-
-`assert.api` checks recorded mock GitLab API calls.
-
-```yaml
-.glut:
-  assert:
-    api:
-      "POST /api/v4/projects/*/releases":
-        called: true
-        times: 1
-        body:
-          tag_name: "v1.2.0"
-          gjson:
-            "assets.links.#":
-              ge: 1
-```
-
-`assert.binary` checks calls to mock binaries.
-
-```yaml
-.glut:
-  assert:
-    binary:
+setup:
+  mocks:
+    binaries:
       release-cli:
-        called: true
-        times:
-          ge: 1
-        calls:
-          - args:
-              contain-element: "create"
-            cwd:
-              have-suffix: "/builds"
-        never-called-with:
-          args:
-            contain-element: "--dry-run"
+        executable: |
+          #!/bin/sh
+          echo "release-cli $*"
 ```
 
-## Pattern Matching Syntax
+## `assert:` Cheat Sheet
 
-For text lists, each string is a pattern.
+Use exact values for stable facts. Use matchers for variable output.
 
-```yaml
-stdout:
-  - "plain text must exist"
-  - "/image: [a-z0-9._-]+/"
-  - "!/fatal|panic/"
-```
-
-Use `/.../` for a regular expression. Use `!/.../` to reject a regular
-expression. Use `\!text` when the wanted text starts with `!`.
-
-## Advanced Matcher Cheat Sheet
-
-Use matcher objects when exact values are not enough.
+Common matchers:
 
 ```yaml
 equal: "main"
@@ -277,16 +240,12 @@ gt: 0
 ge: 1
 lt: 10
 le: 10
-contain-element: "release"
+contain-element: "create"
 contain-elements:
   - "linux"
   - "amd64"
-consist-of:
-  - "a"
-  - "b"
 have-len: 2
 have-key: "tag_name"
-semver-constraint: ">=1.2.0"
 gjson:
   "assets.links.#":
     ge: 1
@@ -300,17 +259,135 @@ not:
   contain-substring: "dirty"
 ```
 
-## Common Mistakes
+Text pattern lists:
 
-- Do not put `.glut:` in the first YAML document.
-- Do not set `branch` and `tag` at the same time.
-- Use `merge_request` when `pipeline_source` is `merge_request_event`.
-- Make every `assert.job` key match a real pipeline job.
-- Add job stages to `stages:` when stages are explicit.
-- Use `setup.mocks.binaries` for tool calls that must be recorded.
-- Keep GitLab CI YAML pass-through. Do not rewrite anchors or aliases.
+```yaml
+stdout:
+  - "created release"
+  - "/tag: v[0-9]+\\.[0-9]+\\.[0-9]+/"
+  - "!/panic|fatal/"
+```
 
-## Sample Test: Image Build
+## Assert Patterns
+
+Job result:
+
+```yaml
+assert:
+  job:
+    build:
+      present: true
+      exit-status: 0
+      stdout:
+        - "build complete"
+      stderr:
+        - "!/panic|fatal/"
+```
+
+Job assert fields:
+
+- `present`
+- `exit-status`
+- `stdout`
+- `stderr`
+
+Artifact content:
+
+```yaml
+assert:
+  artifacts:
+    "dist/manifest.json":
+      exists: true
+      contents:
+        gjson:
+          "image.name": "registry.example.com/app"
+          "image.tag":
+            have-prefix: "v"
+```
+
+Artifact assert fields:
+
+- `exists`
+- `contents`
+- `mode`
+- `size`
+- `md5`
+- `sha256`
+- `filetype`
+
+Git side effect:
+
+```yaml
+assert:
+  git:
+    origin:
+      commits:
+        ge: 2
+      last-commit:
+        message:
+          contain-substring: "update manifest"
+      file:
+        "manifest.yaml":
+          contents:
+            contain-substring: "image: new"
+```
+
+Git assert fields:
+
+- `commits`
+- `last-commit.author-name`
+- `last-commit.author-email`
+- `last-commit.message`
+- `last-commit.sha`
+- `file`
+- `branch` for workspace
+- `clean` for workspace
+
+API call:
+
+```yaml
+assert:
+  api:
+    "POST /api/v4/projects/*/releases":
+      called: true
+      times: 1
+      body:
+        tag_name: "v1.2.0"
+```
+
+API assert fields:
+
+- `called`
+- `times`
+- `body`
+
+Binary call:
+
+```yaml
+assert:
+  binary:
+    release-cli:
+      called: true
+      calls:
+        - args:
+            contain-elements:
+              - "create"
+              - "--tag-name"
+              - "v1.2.0"
+```
+
+Binary assert fields:
+
+- `called`
+- `times`
+- `calls[].args`
+- `calls[].cwd`
+- `calls[].stdin`
+- `never-called-with`
+
+## Complete Templates
+
+### Image Build
 
 ```yaml
 stages:
@@ -326,6 +403,7 @@ build-image:
   name: "image build"
   setup:
     branch: "feature/image"
+    pipeline_source: "push"
   assert:
     job:
       build-image:
@@ -337,7 +415,7 @@ build-image:
           - "/registry.example.com\\/app:feature-image/"
 ```
 
-## Sample Test: Manifest Update
+### Manifest Update
 
 ```yaml
 stages:
@@ -376,7 +454,7 @@ update-manifest:
               contain-substring: "image: new"
 ```
 
-## Sample Test: Release
+### Release With Mock Binary
 
 ```yaml
 stages:
@@ -388,9 +466,10 @@ release:
     - release-cli create --tag-name "$CI_COMMIT_TAG" --name "$CI_COMMIT_TAG"
 ---
 .glut:
-  name: "release"
+  name: "release from tag"
   setup:
     tag: "v1.2.0"
+    pipeline_source: "push"
     mocks:
       binaries:
         release-cli:
@@ -411,3 +490,14 @@ release:
                 - "--tag-name"
                 - "v1.2.0"
 ```
+
+## Review Checklist
+
+- The file has exactly two YAML documents.
+- The second document has `.glut:` at the top.
+- `.glut.name` is short and specific.
+- `setup:` describes the trigger and external state.
+- `assert:` checks the important side effect.
+- Job names in `assert.job` exist in the pipeline.
+- Matchers are used where output is variable.
+- Mock API and mock binary calls use asserts, not only log checks.

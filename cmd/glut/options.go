@@ -23,7 +23,8 @@ type RunOptions struct {
 }
 
 type LintOptions struct {
-	Paths []string
+	Paths  []string
+	Format string
 }
 
 type ListOptions struct {
@@ -71,7 +72,7 @@ func lintOptionsFromCommand(args []string) LintOptions {
 	if len(paths) == 0 {
 		paths = []string{"./tests/"}
 	}
-	return LintOptions{Paths: paths}
+	return LintOptions{Paths: paths, Format: lintFormat}
 }
 
 func envList(name string) []string {
