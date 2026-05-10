@@ -44,11 +44,31 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "glut",
 	Short: "GLUT is a test runner",
+	Long: `GLUT runs GitLab CI component tests locally.
+
+A GLUT test file has normal GitLab CI YAML and a .glut metadata document.
+GLUT prepares an isolated workspace, starts mocks, runs gitlab-ci-local,
+checks asserts, and prints a result.`,
+	Example: `  glut run ./tests
+  glut run -k release ./tests
+  glut lint ./tests
+  glut list ./tests
+  glut version`,
 }
 
 var runCmd = &cobra.Command{
-	Use:   "run",
+	Use:   "run [paths...]",
 	Short: "Run tests",
+	Long: `Run GLUT tests from one or more paths.
+
+A path can be a directory or a YAML file. If no path is given, GLUT uses the
+current directory. Each test gets its own workspace and mock services.`,
+	Example: `  glut run
+  glut run ./tests
+  glut run ./tests/release.yml
+  glut run -k release ./tests
+  glut run --report=junit:report.xml ./tests
+  glut run --debug --keep-workspace ./tests/release.yml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := runOptionsFromCommand(args)
 		sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
@@ -81,8 +101,14 @@ var runCmd = &cobra.Command{
 }
 
 var listCmd = &cobra.Command{
-	Use:   "list",
+	Use:   "list [paths...]",
 	Short: "List tests",
+	Long: `List GLUT tests without running them.
+
+A path can be a directory or a YAML file. Use --run to filter by test name.`,
+	Example: `  glut list
+  glut list ./tests
+  glut list -k release ./tests`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := listOptionsFromCommand(args)
 		tests, err := runner.List(context.Background(), opts.Paths, runner.ListOptions{
@@ -97,8 +123,15 @@ var listCmd = &cobra.Command{
 }
 
 var lintCmd = &cobra.Command{
-	Use:   "lint [dirs...]",
+	Use:   "lint [paths...]",
 	Short: "Lint tests",
+	Long: `Lint GLUT test files.
+
+Lint checks YAML syntax, .glut schema errors, and semantic mistakes such as
+assert.job references to missing pipeline jobs.`,
+	Example: `  glut lint
+  glut lint ./tests
+  glut lint ./tests/release.yml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := lintOptionsFromCommand(args)
 
@@ -133,8 +166,10 @@ var lintCmd = &cobra.Command{
 }
 
 var versionCmd = &cobra.Command{
-	Use:   "version",
-	Short: "Print version",
+	Use:     "version",
+	Short:   "Print version",
+	Long:    "Print the GLUT version and build commit.",
+	Example: `  glut version`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("glut %s (commit: %s, built: unknown)\n", version, commit)
 	},

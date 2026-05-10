@@ -1425,11 +1425,11 @@ In v1 (no parallel execution):
 
 **Docker image:** The GLUT release artifact contains `gitlab-ci-local` in a specific version pinned in the Dockerfile. When building a new GLUT version, you decide which GCL version to use.
 
-**Native installation:** The user installs `gitlab-ci-local` themselves (via npm). The recommended version is documented in README. GLUT does not do a runtime version check. Testing against the correct version is the user's responsibility.
+**Native installation:** The user downloads a released GLUT binary. The user installs `gitlab-ci-local` themselves only for native runs. The recommended version is documented in README. GLUT does not do a runtime version check. Testing against the correct version is the user's responsibility.
 
 ### 13.3 Other
 
-System requirements (Linux/macOS, Go for `go install`, Node.js for native installation) are described in the README. The spec does not mention them. It stays focused on design, not deployment details.
+System requirements are described in the README. Docker is the preferred user install path because it includes runtime dependencies. The spec does not mention all deployment details.
 
 ---
 
@@ -1701,7 +1701,6 @@ make release    # goreleaser release --snapshot --clean (local test)
 - Binaries for linux/darwin × amd64/arm64.
 - Docker image on GHCR.
 - GitHub Release with checksums.
-- Homebrew tap (future versions).
 
 **GitHub Actions:**
 
@@ -1784,7 +1783,7 @@ Documentation is written after the API is stable.
 
 Starting point on GitHub:
 - What GLUT is and what it is for (2-3 sentences).
-- Installation — brew, Docker, `go install`.
+- Installation — Docker image and release binaries.
 - Quickstart — minimal working example.
 - System requirements.
 - Link to full documentation.

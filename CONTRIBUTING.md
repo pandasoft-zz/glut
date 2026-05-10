@@ -10,6 +10,10 @@ Run tests in the devcontainer before you send a change.
 The `internal/mockserver` package owns HTTP behavior. Other packages may read
 recorded calls or prepared state, but they should not implement HTTP routes.
 
+Mock API work uses two groups. Tier 2 means a standard stored resource with
+create, read, update, and delete behavior. Tier 1 means a special endpoint with
+custom behavior.
+
 ## Add A Tier 2 CRUD Resource
 
 Use Tier 2 for normal GitLab API resources that follow simple CRUD behavior.

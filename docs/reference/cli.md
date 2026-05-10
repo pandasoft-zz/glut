@@ -101,6 +101,17 @@ Print the GLUT version.
 glut version
 ```
 
+## Help
+
+Every command has built-in help.
+
+```bash
+glut --help
+glut help run
+glut run --help
+glut lint --help
+```
+
 ## Exit Codes
 
 | Code | Meaning |

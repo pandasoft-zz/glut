@@ -7,12 +7,12 @@ calls the GitLab API, or calls tools such as `release-cli`.
 
 ## Install With Docker
 
-The Docker image is the preferred install path once releases are published.
-Until then, build the image from this repository:
+The Docker image is the preferred install path because it includes runtime
+dependencies.
 
 ```bash
-docker build -t glut:local .
-docker run --rm -v "$PWD:/work" -w /work glut:local run ./tests
+docker pull ghcr.io/pandasoft-zz/glut:latest
+docker run --rm -v "$PWD:/work" -w /work ghcr.io/pandasoft-zz/glut:latest run ./tests
 ```
 
 If jobs need Docker, share the Docker socket:
@@ -22,17 +22,13 @@ docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD:/work" \
   -w /work \
-  glut:local run ./tests
+  ghcr.io/pandasoft-zz/glut:latest run ./tests
 ```
 
-## Install With Go
+## Install Native Binary
 
-```bash
-go install github.com/pandasoft-zz/glut/cmd/glut@latest
-```
-
-This installs only the GLUT binary. You still need the native tools listed
-below.
+Download the binary archive for your operating system and CPU from
+[GitHub Releases](https://github.com/pandasoft-zz/glut/releases).
 
 ## Native Requirements
 
