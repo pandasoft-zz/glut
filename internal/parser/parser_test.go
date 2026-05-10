@@ -699,3 +699,30 @@ func TestSemanticLintReportsInvalidPipelineYAML(t *testing.T) {
 		t.Fatalf("SemanticLint() = %#v", lints)
 	}
 }
+
+func TestLintReportsSchemaAndSemanticErrorsSeparately(t *testing.T) {
+	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
+name: "schema and semantic"
+setup:
+  pipeline_source: "manual"
+assert:
+  job:
+    missing_job: {}
+`))
+
+	lints := Lint(path)
+	var schemaErr bool
+	var semanticErr bool
+	for _, lint := range lints {
+		if lint.Level == LevelError && strings.Contains(lint.Message, "glut schema:") {
+			schemaErr = true
+		}
+		if lint.Level == LevelError && strings.Contains(lint.Message, "references non-existent job") {
+			semanticErr = true
+		}
+	}
+
+	if !schemaErr || !semanticErr {
+		t.Fatalf("Lint() schema error = %v, semantic error = %v, lints = %#v", schemaErr, semanticErr, lints)
+	}
+}
