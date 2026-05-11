@@ -18,20 +18,29 @@ type Workspace struct {
 	KeepWorkspace bool
 }
 
-func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace, error) {
+func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *Workspace, err error) {
 	tmpWork, err := os.MkdirTemp("", "glut-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
 	}
+	created := false
+	defer func() {
+		if created {
+			return
+		}
+		if removeErr := os.RemoveAll(tmpWork); removeErr != nil && err != nil {
+			err = fmt.Errorf("%w; failed to remove temp workspace %s: %v", err, tmpWork, removeErr)
+		}
+	}()
 
 	stagingDir := filepath.Join(tmpWork, "staging")
 	workspaceDir := filepath.Join(tmpWork, "workspace")
 	originRepo := filepath.Join(tmpWork, ".glut-origin.git")
 
 	// 2. Copy host repository
-	srcDirSlash := filepath.ToSlash(srcDir)
-	stagingDirSlash := filepath.ToSlash(stagingDir)
-	rsyncCmd := exec.Command("sh", "-c", fmt.Sprintf("rsync -a '%s/' '%s/'", srcDirSlash, stagingDirSlash))
+	srcDirSlash := filepath.ToSlash(filepath.Clean(srcDir)) + "/"
+	stagingDirSlash := filepath.ToSlash(filepath.Clean(stagingDir)) + "/"
+	rsyncCmd := exec.Command("rsync", "-a", srcDirSlash, stagingDirSlash)
 	if err := rsyncCmd.Run(); err != nil {
 		// Fallback to native Go copy when rsync is not present.
 		if cpErr := copyDir(srcDir, stagingDir); cpErr != nil {
@@ -114,6 +123,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (*Workspace,
 		return nil, fmt.Errorf("failed to remove staging directory: %v", err)
 	}
 
+	created = true
 	return w, nil
 }
 
@@ -276,7 +286,20 @@ func removeRemoteIfExists(dir string, name string) error {
 }
 
 func copyDir(src string, dst string) error {
+	srcAbs, err := filepath.Abs(src)
+	if err != nil {
+		return err
+	}
+	dstAbs, err := filepath.Abs(dst)
+	if err != nil {
+		return err
+	}
+
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		pathAbs, err := filepath.Abs(path)
 		if err != nil {
 			return err
 		}
@@ -288,14 +311,27 @@ func copyDir(src string, dst string) error {
 		}
 
 		dstPath := filepath.Join(dst, relPath)
+		dstPathAbs, err := filepath.Abs(dstPath)
+		if err != nil {
+			return err
+		}
+		if isPathInside(dstPathAbs, srcAbs) && isPathInside(pathAbs, dstAbs) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 
 		if info.IsDir() {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
 
-		// Don't copy the destination directory into itself if src is '.'
-		if strings.HasPrefix(dstPath, dst) && relPath != "." && strings.HasPrefix(path, dst) {
-			return filepath.SkipDir
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(target, dstPath)
 		}
 
 		data, err := os.ReadFile(path)
@@ -305,4 +341,12 @@ func copyDir(src string, dst string) error {
 
 		return os.WriteFile(dstPath, data, info.Mode())
 	})
+}
+
+func isPathInside(path string, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }

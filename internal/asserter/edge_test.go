@@ -171,12 +171,21 @@ func TestGitEdgeCases(t *testing.T) {
 	bareResults := runBareGitFileAssert("assert.git.origin.file.\"nested/config.txt\"", origin, "nested/config.txt", config.ArtifactAssert{
 		Exists:   boolPtr(true),
 		Contents: []any{"value"},
-		Mode:     "100644",
+		Mode:     "0644",
 		Filetype: "file",
 	})
 	for _, result := range bareResults {
 		if !result.Passed {
 			t.Fatalf("unexpected bare file failure: %+v", result)
+		}
+	}
+
+	missingResults := runBareGitFileAssert("assert.git.origin.file.\"missing.txt\"", origin, "missing.txt", config.ArtifactAssert{
+		Exists: boolPtr(false),
+	})
+	for _, result := range missingResults {
+		if !result.Passed {
+			t.Fatalf("expected missing bare file assert to pass, got %+v", result)
 		}
 	}
 

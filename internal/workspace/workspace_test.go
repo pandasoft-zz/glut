@@ -266,3 +266,55 @@ func TestCopyDirCopiesFiles(t *testing.T) {
 		t.Fatalf("copied data = %q", string(data))
 	}
 }
+
+func TestCopyDirPreservesSymlinks(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "target.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(src, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir() error = %v", err)
+	}
+
+	info, err := os.Lstat(filepath.Join(dst, "link.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("copied link mode = %s, want symlink", info.Mode())
+	}
+	target, err := os.Readlink(filepath.Join(dst, "link.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "target.txt" {
+		t.Fatalf("copied link target = %q, want target.txt", target)
+	}
+}
+
+func TestNewCleansTempWorkspaceOnError(t *testing.T) {
+	tmpRoot := t.TempDir()
+	t.Setenv("TMPDIR", tmpRoot)
+
+	_, err := New(parser.SetupConfig{}, false, filepath.Join(tmpRoot, "missing-source"))
+	if err == nil {
+		t.Fatal("expected New to fail for missing source")
+	}
+
+	entries, readErr := os.ReadDir(tmpRoot)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected temp root to be empty after failed New, got %d entries", len(entries))
+	}
+}

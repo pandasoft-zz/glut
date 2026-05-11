@@ -79,6 +79,47 @@ func TestTokenAuthSuccessAndFailure(t *testing.T) {
 			t.Fatalf("expected 403, got %d", resp.StatusCode)
 		}
 	})
+
+	t.Run("read api scope allows read requests", func(t *testing.T) {
+		server := startTestServer(t, config.APISetupConfig{
+			Token: &config.TokenConfig{Valid: true, Scopes: []string{"read_api"}},
+		})
+
+		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1"), "test-token", nil)
+		defer closeBody(t, resp.Body)
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("api scope allows write requests", func(t *testing.T) {
+		server := startTestServer(t, config.APISetupConfig{
+			Token: &config.TokenConfig{Valid: true, Scopes: []string{"api"}},
+		})
+
+		resp := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/releases"), "test-token", map[string]any{
+			"tag_name": "v1.0.0",
+		})
+		defer closeBody(t, resp.Body)
+
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("expected 201, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("write repository scope does not authenticate API requests", func(t *testing.T) {
+		server := startTestServer(t, config.APISetupConfig{
+			Token: &config.TokenConfig{Valid: true, Scopes: []string{"write_repository"}},
+		})
+
+		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1"), "test-token", nil)
+		defer closeBody(t, resp.Body)
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", resp.StatusCode)
+		}
+	})
 }
 
 func TestPersonalAccessTokenResponse(t *testing.T) {

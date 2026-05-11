@@ -232,7 +232,7 @@ assert:
 | --- | --- | --- |
 | `exists` | boolean | Path must exist or must not exist. |
 | `contents` | text list or matcher | File content. |
-| `mode` | string | File mode string. |
+| `mode` | string | File permission mode as four octal digits, such as `0644`. |
 | `size` | value or matcher | File size in bytes. |
 | `md5` | string | Expected MD5 hash. |
 | `sha256` | string | Expected SHA-256 hash. |
@@ -274,7 +274,7 @@ assert:
   artifacts:
     "dist/tool":
       exists: true
-      mode: "-rwxr-xr-x"
+      mode: "0755"
       size:
         gt: 1024
       sha256: "3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7"

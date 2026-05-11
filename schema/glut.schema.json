@@ -331,7 +331,8 @@
           "$ref": "#/definitions/text_or_matcher"
         },
         "mode": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^0[0-7]{3}$"
         },
         "size": {
           "$ref": "#/definitions/value_or_matcher"
