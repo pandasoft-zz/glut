@@ -301,7 +301,24 @@ func (s *Server) authorized(r *http.Request) bool {
 	if !token.Valid {
 		return false
 	}
+	return hasAuthHeader(r) && s.hasReadScope()
+}
+
+func hasAuthHeader(r *http.Request) bool {
 	return r.Header.Get("PRIVATE-TOKEN") != "" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ")
+}
+
+func (s *Server) hasReadScope() bool {
+	token := s.tokenConfig()
+	if len(token.Scopes) == 0 {
+		return true
+	}
+	for _, scope := range token.Scopes {
+		if scope == "api" || scope == "read_api" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) hasWriteScope() bool {

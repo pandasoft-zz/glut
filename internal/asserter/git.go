@@ -176,7 +176,8 @@ func runBareGitFileAssert(basePath string, repoPath string, relativePath string,
 		fields := strings.Fields(entry)
 		if len(fields) >= 2 {
 			if assert.Mode != "" {
-				results = append(results, resultFromBool(basePath+".mode", assert.Mode == fields[0], assert.Mode, fields[0]))
+				actualMode := gitTreeModeToPermissionMode(fields[0])
+				results = append(results, resultFromBool(basePath+".mode", assert.Mode == actualMode, assert.Mode, actualMode))
 			}
 			if assert.Filetype != "" {
 				actualType := gitObjectTypeToFileType(fields[1])
@@ -185,6 +186,13 @@ func runBareGitFileAssert(basePath string, repoPath string, relativePath string,
 		}
 	}
 	return results
+}
+
+func gitTreeModeToPermissionMode(mode string) string {
+	if len(mode) > 4 {
+		return mode[len(mode)-4:]
+	}
+	return mode
 }
 
 func gitObjectTypeToFileType(gitType string) string {

@@ -48,7 +48,7 @@ project behavior in `setup.api`.
 | --- | --- | --- | --- |
 | `valid` | boolean | `true` | When false, protected endpoints return `401 Unauthorized`. |
 | `expires_at` | string | empty | Value returned by token self endpoint. |
-| `scopes` | list of strings | empty | When set, write requests need the `api` scope. |
+| `scopes` | list of strings | empty | When set, API reads need `api` or `read_api`. API writes need `api`. |
 
 ```yaml
 setup:
@@ -148,8 +148,10 @@ Auth behavior:
 | --- | --- |
 | No token header | `401 Unauthorized` |
 | `setup.api.token.valid: false` | `401 Unauthorized` |
-| Write request with scopes but without `api` | `403 Forbidden` |
-| Write request with no scopes set | Allowed |
+| Read request with `api` or `read_api` | Allowed |
+| Write request with `read_api` | `403 Forbidden` |
+| API request with only `write_repository` | `401 Unauthorized` |
+| Request with no scopes set | Allowed |
 | `GET /api/v4/version` | Allowed without auth |
 
 Write methods are `POST`, `PUT`, `DELETE`, and `PATCH`.

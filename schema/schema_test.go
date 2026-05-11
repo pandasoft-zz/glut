@@ -33,6 +33,7 @@ func TestValidateGlutValid(t *testing.T) {
 			"artifacts": map[string]any{
 				"output.json": map[string]any{
 					"exists": true,
+					"mode":   "0644",
 					"contents": map[string]any{
 						"gjson": map[string]any{
 							"items.#": map[string]any{"gt": 0},
@@ -137,6 +138,19 @@ func TestValidateGlutInvalid(t *testing.T) {
 				},
 			},
 			wantSnippet: "must be one of",
+		},
+		{
+			name: "invalid artifact mode",
+			value: map[string]any{
+				"assert": map[string]any{
+					"artifacts": map[string]any{
+						"out.txt": map[string]any{
+							"mode": "-rw-r--r--",
+						},
+					},
+				},
+			},
+			wantSnippet: "Does not match pattern",
 		},
 		{
 			name: "invalid binary call field",

@@ -535,7 +535,8 @@ The user only configures things when the default is not enough:
         # Options:
         # valid: false              → API returns 401 for all auth calls
         # expires_at: "2026-01-01T00:00:00Z"  → token expires soon
-        # scopes: ["read_api"]      → token does not have write_repository
+        # scopes: ["read_api"]      → token can read API but cannot write API
+        # scopes: ["write_repository"] → token cannot authenticate API calls
 
       project:
         default_branch: "main"      # default
@@ -1216,7 +1217,7 @@ include:
     api:
       token:
         valid: true
-        scopes: ["api", "write_repository"]
+        scopes: ["api"]
 
     mocks:
       binaries:
