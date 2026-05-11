@@ -180,6 +180,15 @@ func TestGitEdgeCases(t *testing.T) {
 		}
 	}
 
+	missingResults := runBareGitFileAssert("assert.git.origin.file.\"missing.txt\"", origin, "missing.txt", config.ArtifactAssert{
+		Exists: boolPtr(false),
+	})
+	for _, result := range missingResults {
+		if !result.Passed {
+			t.Fatalf("expected missing bare file assert to pass, got %+v", result)
+		}
+	}
+
 	escapeResults := runBareGitFileAssert("assert.git.origin.file.\"../bad\"", origin, "../bad", config.ArtifactAssert{
 		Exists: boolPtr(true),
 	})

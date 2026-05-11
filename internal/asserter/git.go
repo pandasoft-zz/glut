@@ -153,7 +153,7 @@ func runBareGitFileAssert(basePath string, repoPath string, relativePath string,
 		results = append(results, resultFromBool(basePath+".exists", *assert.Exists == exists, *assert.Exists, exists))
 	}
 	if !exists {
-		if existsErr != nil {
+		if assert.Exists == nil || *assert.Exists {
 			results = append(results, failResult(basePath, "git file to exist", existsErr))
 		}
 		return results
