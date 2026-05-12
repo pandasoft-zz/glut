@@ -1,155 +1,79 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="GLUT" width="180">
+</p>
+
 # GLUT
 
-GLUT is a CLI tool for testing GitLab CI components on your machine.
-It runs a GitLab CI file with `gitlab-ci-local` and adds test setup, mocks,
-and structured asserts. It is useful when a component changes git state,
-calls the GitLab API, or calls tools such as `release-cli`.
+GLUT is a CLI tool for testing GitLab CI components on your machine. It runs a
+GitLab CI pipeline with `gitlab-ci-local` and adds isolated git state, a mock
+GitLab API, mock binaries, and structured asserts.
 
-## Install With Docker
+Use GLUT when a component changes git state, calls the GitLab API, or calls
+tools such as `release-cli`. It is useful for image build jobs, manifest update
+jobs, and release jobs.
 
-The Docker image is the preferred install path because it includes runtime
-dependencies. GLUT uses `gitlab-ci-local`, and `gitlab-ci-local` runs jobs in
-Docker containers. The GLUT container must be able to reach a Docker daemon.
+## For Users
 
-```bash
-docker pull ghcr.io/pandasoft-zz/glut:latest
-docker run --rm \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD:/work" \
-  -w /work \
-  ghcr.io/pandasoft-zz/glut:latest run ./tests
-```
+The full manual is on **[GitHub Pages](https://pandasoft-zz.github.io/glut/)**
+and covers everything you need to get started and use GLUT day to day:
 
-For GitLab CI, use socket sharing when your runner mounts the host Docker
-socket:
+- [Installation](https://pandasoft-zz.github.io/glut/getting-started/installation/) — Docker image and native binary
+- [Getting Started](https://pandasoft-zz.github.io/glut/getting-started/) — quickstart and AI skill setup
+- [Test Format](https://pandasoft-zz.github.io/glut/reference/test-format/) — how to write test files
+- [Assert Syntax](https://pandasoft-zz.github.io/glut/reference/assert-syntax/) — all available assertions
+- [Mock API](https://pandasoft-zz.github.io/glut/reference/mock-api/) — mock GitLab API reference
+- [CLI Reference](https://pandasoft-zz.github.io/glut/reference/cli/) — all commands and flags
+- [Examples](https://pandasoft-zz.github.io/glut/examples/) — image build, manifest update, release
 
-```yaml
-stages:
-  - lint
-  - test
+## For Developers
 
-lint:glut:
-  stage: lint
-  image: ghcr.io/pandasoft-zz/glut:latest
-  script:
-    - mkdir -p reports
-    - glut lint --format=json ./tests > reports/glut-lint.json
-  artifacts:
-    when: always
-    paths:
-      - reports/glut-lint.json
+### Repository Overview
 
-test:glut:
-  stage: test
-  image: ghcr.io/pandasoft-zz/glut:latest
-  needs:
-    - lint:glut
-  variables:
-    DOCKER_HOST: "unix:///var/run/docker.sock"
-  script:
-    - mkdir -p reports
-    - glut run --report=junit:reports/glut-junit.xml ./tests
-  artifacts:
-    when: always
-    reports:
-      junit: reports/glut-junit.xml
-    paths:
-      - reports/glut-junit.xml
-```
+| Path | Purpose |
+|---|---|
+| `cmd/glut/` | CLI entry point (Cobra, thin handlers) |
+| `internal/parser/` | YAML parsing and schema validation |
+| `internal/runner/` | Test orchestration |
+| `internal/asserter/` | Assert evaluation |
+| `internal/mockserver/` | Mock GitLab API |
+| `schema/` | JSON Schema for the `.glut:` document |
+| `docs/` | MkDocs source (published to GitHub Pages) |
+| `tests/` | GLUT test files |
+| `skill/` | AI skill definition |
 
-Use Docker-in-Docker when your runner supports privileged services:
+Architecture and package boundary rules are in [docs/architecture.md](docs/architecture.md).
 
-```yaml
-stages:
-  - lint
-  - test
+### Dev Container
 
-lint:glut:
-  stage: lint
-  image: ghcr.io/pandasoft-zz/glut:latest
-  script:
-    - mkdir -p reports
-    - glut lint --format=json ./tests > reports/glut-lint.json
-  artifacts:
-    when: always
-    paths:
-      - reports/glut-lint.json
+All development happens inside the dev container. Open the repository in VS
+Code and choose **Reopen in Container**. The container includes Go, Docker
+access, and `gitlab-ci-local`.
 
-test:glut:
-  stage: test
-  image: ghcr.io/pandasoft-zz/glut:latest
-  needs:
-    - lint:glut
-  services:
-    - name: docker:25-dind
-      alias: docker
-  variables:
-    DOCKER_HOST: "tcp://docker:2375"
-    DOCKER_TLS_CERTDIR: ""
-  script:
-    - mkdir -p reports
-    - glut run --report=junit:reports/glut-junit.xml ./tests
-  artifacts:
-    when: always
-    reports:
-      junit: reports/glut-junit.xml
-    paths:
-      - reports/glut-junit.xml
-```
-
-`lint:glut` does not need Docker daemon access. Its JSON artifact is for debug
-and AI tools. `test:glut` writes the JUnit report that GitLab can show in the
-pipeline UI.
-
-## Install Native Binary
-
-Download the binary archive for your operating system and CPU from
-[GitHub Releases](https://github.com/pandasoft-zz/glut/releases).
-
-## Native Requirements
-
-Native runs need:
-
-- POSIX shell
-- `git`
-- `bash`
-- `gitlab-ci-local`
-- Docker daemon access
-
-Windows is not a target runtime. Use Docker or WSL2 on Windows.
-
-## Quickstart
-
-Create `tests/simple.yml`:
-
-```yaml
-stages:
-  - test
-
-test-job:
-  stage: test
-  script:
-    - echo "hello from GLUT"
----
-.glut:
-  name: "simple job"
-  setup:
-    branch: "main"
-  assert:
-    job:
-      test-job:
-        exit-status: 0
-        stdout:
-          - "hello from GLUT"
-```
-
-Run it:
+If you prefer the CLI:
 
 ```bash
-glut run ./tests/simple.yml
+devcontainer open .
 ```
 
-## Documentation
+### Common Commands
 
-The documentation source is in [`docs/`](docs/index.md). It is built with
-MkDocs Material.
+```bash
+make build          # build the glut binary
+make test           # run all tests
+make test-cover     # run tests with coverage report
+make lint           # run golangci-lint
+make docker         # build the Docker image locally
+make release        # build a snapshot release with goreleaser
+```
+
+Docs are built with MkDocs:
+
+```bash
+pip install mkdocs mkdocs-readthedocs
+mkdocs serve        # preview at http://localhost:8000
+```
+
+### Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add mock API endpoints and
+where tests belong. Read [AGENTS.md](AGENTS.md) before any implementation work.

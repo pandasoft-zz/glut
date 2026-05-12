@@ -3,7 +3,7 @@ site_description: Local tests for GitLab CI components
 repo_url: https://github.com/pandasoft-zz/glut
 theme:
   name: readthedocs
-  logo: assets/logo.svg
+  logo: assets/logo.png
 
 plugins:
   - search
