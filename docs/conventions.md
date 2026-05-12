@@ -114,6 +114,51 @@ Use table-driven tests for:
 Scaffold packages may exist before implementation, but they should not contain
 empty tests that make `go test ./...` look more complete than it is.
 
+## Commit Messages
+
+All commits must follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) specification.
+
+Format:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+Allowed types:
+
+| Type | When to use |
+|------|-------------|
+| `feat` | New feature visible to users |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code change with no feature or fix |
+| `test` | Adding or fixing tests |
+| `chore` | Tooling, CI, dependencies, config |
+| `perf` | Performance improvement |
+| `build` | Build system or external dependencies |
+| `ci` | CI configuration |
+
+Rules:
+
+- Use lowercase for type and description.
+- Do not end the description with a period.
+- Keep the description under 72 characters.
+- Use the imperative mood: "add feature" not "added feature".
+- Breaking changes must include `!` after the type/scope or a `BREAKING CHANGE:` footer.
+
+Examples:
+
+```
+feat(parser): add support for multi-document YAML files
+fix(executor): handle non-zero exit codes from gitlab-ci-local
+chore: update devcontainer lock file
+feat!: change pipeline source name format
+```
+
 ## Dependencies
 
 Prefer mature libraries for complex domains:

@@ -24,6 +24,19 @@ Also read the decision records:
 - [002. Parser And Validation Strategy](docs/decisions/002-parser-and-validation.md)
 - [003. Package Boundaries](docs/decisions/003-package-boundaries.md)
 
+## Commit Messages
+
+All commits must follow the Conventional Commits specification. See
+[Conventions](docs/conventions.md#commit-messages) for the full rules,
+allowed types, and examples.
+
+The short version:
+
+- Format: `<type>[scope]: <description>`
+- Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`
+- Lowercase, imperative mood, no trailing period, under 72 characters.
+- Breaking changes: add `!` after the type or a `BREAKING CHANGE:` footer.
+
 ## Implementation Rules
 
 - Use the devcontainer for all repository operations. Never use the native
