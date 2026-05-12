@@ -34,12 +34,35 @@ checksum:
 
 dockers:
   - image_templates:
-      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}
-      - ghcr.io/pandasoft-zz/glut:latest
-    dockerfile: Dockerfile
+      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-amd64
+      - ghcr.io/pandasoft-zz/glut:latest-amd64
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
     build_flag_templates:
+      - "--platform=linux/amd64"
       - "--build-arg=VERSION={{ .Version }}"
       - "--build-arg=COMMIT={{ .Commit }}"
+  - image_templates:
+      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-arm64
+      - ghcr.io/pandasoft-zz/glut:latest-arm64
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--build-arg=VERSION={{ .Version }}"
+      - "--build-arg=COMMIT={{ .Commit }}"
+
+docker_manifests:
+  - name_template: ghcr.io/pandasoft-zz/glut:{{ .Tag }}
+    image_templates:
+      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-amd64
+      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-arm64
+  - name_template: ghcr.io/pandasoft-zz/glut:latest
+    image_templates:
+      - ghcr.io/pandasoft-zz/glut:latest-amd64
+      - ghcr.io/pandasoft-zz/glut:latest-arm64
 
 release:
   mode: append
