@@ -30,7 +30,7 @@ jobs:
           python-version: "3.x"
 
       - name: Install docs tools
-        run: pip install mkdocs-dracula-theme==1.0.9 mkdocs-mermaid2-plugin==1.1.0
+        run: pip install mkdocs-terminal==4.8.0 mkdocs-mermaid2-plugin==1.1.0
 
       - name: Build docs
         run: mkdocs build --strict
