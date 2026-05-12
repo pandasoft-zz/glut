@@ -60,3 +60,28 @@ func TestRunHelpDocumentsReportsAndDebug(t *testing.T) {
 		}
 	}
 }
+
+func TestDoctorHelpDocumentsFilterAndFormat(t *testing.T) {
+	var out bytes.Buffer
+	doctorCmd.SetOut(&out)
+	doctorCmd.SetErr(&out)
+	t.Cleanup(func() {
+		doctorCmd.SetOut(os.Stdout)
+		doctorCmd.SetErr(os.Stderr)
+	})
+
+	if err := doctorCmd.Help(); err != nil {
+		t.Fatalf("doctor help failed: %v", err)
+	}
+
+	help := out.String()
+	for _, want := range []string{
+		"--run",
+		"--format",
+		"coverage",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("doctor help missing %q:\n%s", want, help)
+		}
+	}
+}

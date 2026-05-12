@@ -104,15 +104,36 @@ Explain tests for AI tools.
 
 ```bash
 glut doctor ./tests
+glut doctor -k release ./tests
 glut doctor --format=json ./tests/release.yml
 ```
 
+Flags:
+
+| Flag | Short | Meaning |
+| --- | --- | --- |
+| `--run <pattern>` | `-k` | Analyse only tests with names that match a substring. |
+| `--format <fmt>` | | Output format: `text` (default) or `json`. |
+
 `doctor` returns the same lint issues as `lint`. It also returns authoring
-hints. Hints point out weak tests, such as tests that only check job exit status
-or configure mock binaries without `assert.binary`.
+hints and a job coverage summary for each file.
+
+**Hints** point out weak or incomplete tests. Examples:
+
+- Most job asserts check only exit status — add artifact, git, API, or binary asserts.
+- A tag pipeline test has no release API or binary assert.
+- Mock binaries are configured but `assert.binary` is missing — the hint lists the binary names.
+- A git setup is present but `assert.git` is missing.
+- A scheduled or upstream-triggered pipeline has no job asserts.
+- API seed data is configured but `assert.api` is missing.
+- The assert block is empty entirely.
+
+**Coverage** shows how many pipeline jobs have at least one `assert.job` entry.
+Text output adds a `[COVERAGE]` line per file. JSON output adds a `coverage`
+object with `jobs_total` and `jobs_asserted`.
 
 Use `--format=json` when a coding assistant should read the result and edit the
-test.
+test. Parse errors go to `stderr`. All other output goes to `stdout`.
 
 ## `glut version`
 

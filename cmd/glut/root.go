@@ -40,6 +40,7 @@ var (
 	listPattern       string
 	lintFormat        string
 	doctorFormat      string
+	doctorPattern     string
 )
 
 var rootCmd = &cobra.Command{
@@ -152,14 +153,16 @@ var doctorCmd = &cobra.Command{
 	Short: "Explain tests for AI tools",
 	Long: `Explain GLUT test files for AI tools.
 
-Doctor returns lint issues and authoring hints. Use JSON output when another
-tool or AI assistant needs structured feedback.`,
+Doctor returns lint issues, authoring hints, and job coverage per file.
+Use --run to focus on a single test by name substring.
+Use JSON output when another tool or AI assistant needs structured feedback.`,
 	Example: `  glut doctor ./tests
+  glut doctor -k release ./tests
   glut doctor --format=json ./tests/release.yml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := lintOptionsFromCommand(args)
 		opts.Format = doctorFormat
-		report := buildDoctorReport(opts.Paths)
+		report := buildDoctorReportFiltered(opts.Paths, doctorPattern)
 		if err := printDoctorReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
 			writeError(err)
 			os.Exit(ExitError)
@@ -208,6 +211,7 @@ func init() {
 	listCmd.Flags().StringVarP(&listPattern, "run", "k", "", "List tests matching substring or regex")
 	lintCmd.Flags().StringVar(&lintFormat, "format", "text", "Output format: text or json")
 	doctorCmd.Flags().StringVar(&doctorFormat, "format", "text", "Output format: text or json")
+	doctorCmd.Flags().StringVarP(&doctorPattern, "run", "k", "", "Analyse tests matching substring")
 
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(listCmd)

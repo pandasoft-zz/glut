@@ -1531,6 +1531,38 @@ glut lint ./tests/
 glut lint ./tests/live.yml
 ```
 
+#### `glut doctor` — authoring hints and coverage for AI tools
+
+`doctor` runs the same checks as `lint`. It also returns authoring hints and
+a job coverage summary. Use it when writing or reviewing tests, or when a
+coding assistant needs structured feedback about test quality.
+
+**Hints** catch patterns that are technically valid but weak:
+- Most job asserts check only exit status — no artifact, git, API, or binary asserts.
+- A tag pipeline test has no release API or binary assert, and no git assert.
+- Mock binaries are configured but `assert.binary` is missing. The hint names the binaries.
+- Git setup is present but `assert.git` is missing.
+- A scheduled pipeline test has no assert that covers scheduled-only behavior.
+- An upstream-triggered pipeline test has no job asserts.
+- API seed data is configured but `assert.api` is missing.
+- The assert block is entirely empty.
+
+**Coverage** shows how many pipeline jobs have at least one `assert.job` entry.
+
+```bash
+glut doctor ./tests/
+glut doctor -k release ./tests/        # filter by test name substring
+glut doctor --format=json ./tests/     # structured output for AI tools
+```
+
+| Flag | Shortcut | Description |
+|---|---|---|
+| `--run <pattern>` | `-k` | Filter by test name substring |
+| `--format <fmt>` | | Output format: `text` (default) or `json` |
+
+Text output writes `[HINT]` and `[COVERAGE]` lines to stdout. Parse errors go
+to stderr. JSON output groups issues, hints, and coverage by file.
+
 #### `glut version`
 
 ```bash

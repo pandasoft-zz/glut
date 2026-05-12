@@ -35,15 +35,21 @@ type doctorReport struct {
 }
 
 type doctorFileReport struct {
-	File   string       `json:"file"`
-	Issues []lintIssue  `json:"issues"`
-	Hints  []doctorHint `json:"hints"`
+	File     string       `json:"file"`
+	Issues   []lintIssue  `json:"issues"`
+	Hints    []doctorHint `json:"hints"`
+	Coverage *coverage    `json:"coverage,omitempty"`
 }
 
 type doctorHint struct {
 	File    string `json:"file"`
 	Path    string `json:"path,omitempty"`
 	Message string `json:"message"`
+}
+
+type coverage struct {
+	JobsTotal    int `json:"jobs_total"`
+	JobsAsserted int `json:"jobs_asserted"`
 }
 
 func buildLintReport(paths []string) lintReport {
@@ -64,7 +70,13 @@ func buildLintReport(paths []string) lintReport {
 	return lintReportFromMap(byFile)
 }
 
-func buildDoctorReport(paths []string) doctorReport {
+func buildDoctorReport(paths []string) buildDoctorReportResult {
+	return buildDoctorReportFiltered(paths, "")
+}
+
+type buildDoctorReportResult = doctorReport
+
+func buildDoctorReportFiltered(paths []string, pattern string) doctorReport {
 	files, parseIssues := collectLintFiles(paths)
 	byFile := make(map[string]doctorFileReport)
 	for _, issue := range parseIssues {
@@ -74,15 +86,23 @@ func buildDoctorReport(paths []string) doctorReport {
 		byFile[issue.File] = report
 	}
 	for _, file := range files {
+		if pattern != "" && !matchesPattern(file.Glut.Name, pattern) {
+			continue
+		}
 		report := byFile[file.FilePath]
 		report.File = file.FilePath
 		for _, lint := range parser.Lint(file.FilePath) {
 			report.Issues = append(report.Issues, lintIssueFromLint(lint))
 		}
 		report.Hints = append(report.Hints, doctorHintsForFile(file)...)
+		report.Coverage = coverageForFile(file)
 		byFile[file.FilePath] = report
 	}
 	return doctorReportFromMap(byFile)
+}
+
+func matchesPattern(name, pattern string) bool {
+	return strings.Contains(name, pattern)
 }
 
 func collectLintFiles(paths []string) ([]*parser.TestFile, []lintIssue) {
@@ -201,22 +221,125 @@ func lintPath(message string) string {
 	}
 }
 
+func coverageForFile(file *parser.TestFile) *coverage {
+	pipelineJobs := pipelineJobNames(file)
+	if len(pipelineJobs) == 0 {
+		return nil
+	}
+	asserted := 0
+	for _, name := range pipelineJobs {
+		if _, ok := file.Glut.Assert.Job[name]; ok {
+			asserted++
+		}
+	}
+	return &coverage{
+		JobsTotal:    len(pipelineJobs),
+		JobsAsserted: asserted,
+	}
+}
+
+// pipelineJobNames returns the job names inferred from the parsed pipeline YAML.
+// It uses the raw GlutRaw map is not the pipeline; we derive jobs from what
+// assert.job references plus any jobs found via the pipeline text. Since
+// TestFile does not expose a parsed pipeline map directly, we use the jobs
+// that appear in assert.job as a minimum set and complement with the pipeline
+// YAML when parseable.
+func pipelineJobNames(file *parser.TestFile) []string {
+	seen := make(map[string]struct{})
+	// Jobs we already know about from assert.job
+	for name := range file.Glut.Assert.Job {
+		seen[name] = struct{}{}
+	}
+	// Walk the raw pipeline YAML for job keys (lines that look like top-level
+	// map keys followed by "script:" or "stage:").
+	if file.PipelineYAML != "" {
+		for _, name := range extractPipelineJobNames(file.PipelineYAML) {
+			seen[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+var gitlabTopLevelKeywords = map[string]bool{
+	"stages":        true,
+	"variables":     true,
+	"image":         true,
+	"before_script": true,
+	"after_script":  true,
+	"cache":         true,
+	"services":      true,
+	"workflow":      true,
+	"include":       true,
+	"default":       true,
+	"pages":         true,
+}
+
+func extractPipelineJobNames(pipelineYAML string) []string {
+	var names []string
+	for _, line := range strings.Split(pipelineYAML, "\n") {
+		if len(line) == 0 || line[0] == ' ' || line[0] == '\t' || line[0] == '#' || line[0] == '-' {
+			continue
+		}
+		colon := strings.Index(line, ":")
+		if colon <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:colon])
+		if key == "" || strings.HasPrefix(key, ".") || gitlabTopLevelKeywords[key] {
+			continue
+		}
+		names = append(names, key)
+	}
+	return names
+}
+
 func doctorHintsForFile(file *parser.TestFile) []doctorHint {
 	var hints []doctorHint
-	if len(file.Glut.Assert.Job) > 0 && onlyJobExitStatus(file) {
+
+	// Upstream trigger setup — assert coverage may be insufficient.
+	// Checked before the empty-assert early return so it fires independently.
+	if file.Glut.Setup.Upstream != nil && len(file.Glut.Assert.Job) == 0 {
+		hints = append(hints, doctorHint{
+			File:    file.FilePath,
+			Path:    ".glut.assert.job",
+			Message: "This is an upstream-triggered pipeline test with no job asserts. Add assert.job checks for the jobs that should run.",
+		})
+	}
+
+	// Empty assert block — no asserts at all.
+	if hasNoAsserts(file) {
 		hints = append(hints, doctorHint{
 			File:    file.FilePath,
 			Path:    ".glut.assert",
-			Message: "This test mostly checks job exit status. Add an artifact, git, API, or binary assert for the behavior that matters.",
+			Message: "No asserts are defined. Add at least one job, artifact, git, API, or binary assert.",
 		})
+		return hints
 	}
-	if file.Glut.Setup.Tag != "" && len(file.Glut.Assert.Binary) == 0 && len(file.Glut.Assert.API) == 0 {
+
+	// Most jobs check only exit status.
+	if mostlyJobExitStatus(file) {
 		hints = append(hints, doctorHint{
 			File:    file.FilePath,
 			Path:    ".glut.assert",
-			Message: "This looks like a tag or release test. Consider asserting the release API call or the release binary call.",
+			Message: "Most job asserts only check exit status. Add an artifact, git, API, or binary assert for the behavior that matters.",
 		})
 	}
+
+	// Tag/release test without meaningful asserts.
+	if file.Glut.Setup.Tag != "" && len(file.Glut.Assert.Binary) == 0 && len(file.Glut.Assert.API) == 0 && file.Glut.Assert.Git == nil {
+		hints = append(hints, doctorHint{
+			File:    file.FilePath,
+			Path:    ".glut.assert",
+			Message: "This looks like a tag or release test. Consider asserting the release API call, the release binary call, or the git state after the job.",
+		})
+	}
+
+	// Merge request test without API asserts.
 	if file.Glut.Setup.PipelineSource == "merge_request_event" && file.Glut.Setup.MergeRequest != nil && len(file.Glut.Assert.API) == 0 {
 		hints = append(hints, doctorHint{
 			File:    file.FilePath,
@@ -224,13 +347,18 @@ func doctorHintsForFile(file *parser.TestFile) []doctorHint {
 			Message: "This is a merge request test. Consider asserting merge request API calls if the component should comment, approve, or read merge request data.",
 		})
 	}
+
+	// Mock binaries defined but not asserted.
 	if file.Glut.Setup.Mocks != nil && len(file.Glut.Setup.Mocks.Binaries) > 0 && len(file.Glut.Assert.Binary) == 0 {
+		names := sortedKeys(file.Glut.Setup.Mocks.Binaries)
 		hints = append(hints, doctorHint{
 			File:    file.FilePath,
 			Path:    ".glut.assert.binary",
-			Message: "Mock binaries are configured, but no binary asserts exist. Add assert.binary checks for called tools and arguments.",
+			Message: fmt.Sprintf("Mock binaries are configured (%s), but no binary asserts exist. Add assert.binary checks for called tools and arguments.", strings.Join(names, ", ")),
 		})
 	}
+
+	// Mock API setup but no API asserts.
 	if file.Glut.Setup.API != nil && len(file.Glut.Assert.API) == 0 {
 		hints = append(hints, doctorHint{
 			File:    file.FilePath,
@@ -238,22 +366,86 @@ func doctorHintsForFile(file *parser.TestFile) []doctorHint {
 			Message: "Mock API setup exists, but no API asserts exist. Add assert.api checks for important GitLab API calls.",
 		})
 	}
+
+	// API seed data but no API asserts.
+	if file.Glut.Setup.API != nil && file.Glut.Setup.API.Seed != nil && len(file.Glut.Assert.API) == 0 {
+		entities := seedEntitySummary(file.Glut.Setup.API.Seed)
+		hints = append(hints, doctorHint{
+			File:    file.FilePath,
+			Path:    ".glut.assert.api",
+			Message: fmt.Sprintf("API seed data is configured (%s), but no API asserts exist. The component may be reading this data — assert the API calls it makes.", entities),
+		})
+	}
+
+	// Git setup without git asserts.
+	if file.Glut.Setup.Git != nil && file.Glut.Assert.Git == nil {
+		hints = append(hints, doctorHint{
+			File:    file.FilePath,
+			Path:    ".glut.assert.git",
+			Message: "Git setup is configured, but no git asserts exist. Consider asserting commits, branch state, or file contents after the pipeline runs.",
+		})
+	}
+
+	// Schedule setup — no schedule-specific hints possible yet, but flag it.
+	if file.Glut.Setup.Schedule != nil {
+		hints = append(hints, doctorHint{
+			File:    file.FilePath,
+			Path:    ".glut.setup.schedule",
+			Message: "This is a scheduled pipeline test. Make sure asserts cover the behavior that is unique to the scheduled trigger.",
+		})
+	}
+
 	return hints
 }
 
-func onlyJobExitStatus(file *parser.TestFile) bool {
+func hasNoAsserts(file *parser.TestFile) bool {
+	a := file.Glut.Assert
+	return len(a.Job) == 0 && len(a.Artifacts) == 0 && a.Git == nil && len(a.API) == 0 && len(a.Binary) == 0
+}
+
+// mostlyJobExitStatus returns true when more than half of the job asserts check
+// only exit status (no stdout, stderr, or present check), and no other assert
+// types are present.
+func mostlyJobExitStatus(file *parser.TestFile) bool {
+	if len(file.Glut.Assert.Job) == 0 {
+		return false
+	}
 	if len(file.Glut.Assert.Artifacts) > 0 || file.Glut.Assert.Git != nil || len(file.Glut.Assert.API) > 0 || len(file.Glut.Assert.Binary) > 0 {
 		return false
 	}
+	exitOnlyCount := 0
 	for _, job := range file.Glut.Assert.Job {
-		if job.Present != nil || job.Stdout != nil || job.Stderr != nil {
-			return false
-		}
-		if job.ExitStatus == nil {
-			return false
+		if job.Present == nil && job.Stdout == nil && job.Stderr == nil && job.ExitStatus != nil {
+			exitOnlyCount++
 		}
 	}
-	return len(file.Glut.Assert.Job) > 0
+	return exitOnlyCount > len(file.Glut.Assert.Job)/2
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func seedEntitySummary(seed *parser.APISeedConfig) string {
+	var parts []string
+	if len(seed.Releases) > 0 {
+		parts = append(parts, fmt.Sprintf("%d release(s)", len(seed.Releases)))
+	}
+	if len(seed.MergeRequests) > 0 {
+		parts = append(parts, fmt.Sprintf("%d merge request(s)", len(seed.MergeRequests)))
+	}
+	if len(seed.Labels) > 0 {
+		parts = append(parts, fmt.Sprintf("%d label(s)", len(seed.Labels)))
+	}
+	if len(parts) == 0 {
+		return "seeded data"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func printLintReport(stdout io.Writer, stderr io.Writer, report lintReport, format string) error {
@@ -271,7 +463,8 @@ func printLintReport(stdout io.Writer, stderr io.Writer, report lintReport, form
 func printDoctorReport(stdout io.Writer, stderr io.Writer, report doctorReport, format string) error {
 	switch format {
 	case "", "text":
-		printDoctorText(stdout, stderr, report)
+		printDoctorText(stdout, report)
+		printDoctorIssuesStderr(stderr, report)
 	case "json":
 		return writeJSON(stdout, report)
 	default:
@@ -296,19 +489,39 @@ func printLintText(stdout io.Writer, stderr io.Writer, report lintReport) {
 	}
 }
 
-func printDoctorText(stdout io.Writer, stderr io.Writer, report doctorReport) {
-	lint := lintReport{HasErrors: report.HasErrors}
+// printDoctorText writes all doctor output to stdout only: lint issues, hints,
+// and coverage summary. Parse errors go to stderr via printDoctorIssuesStderr.
+func printDoctorText(stdout io.Writer, report doctorReport) {
 	for _, file := range report.Files {
-		lint.Files = append(lint.Files, lintFileReport{File: file.File, Issues: file.Issues})
-	}
-	printLintText(stdout, stderr, lint)
-	for _, file := range report.Files {
+		for _, issue := range file.Issues {
+			if issue.Category == "parse" {
+				continue
+			}
+			prefix := "WARNING"
+			if issue.Level == "error" {
+				prefix = "ERROR"
+			}
+			_, _ = fmt.Fprintf(stdout, "[%s] %s: %s\n", prefix, file.File, issue.Message)
+		}
 		for _, hint := range file.Hints {
 			path := ""
 			if hint.Path != "" {
 				path = " " + hint.Path + ":"
 			}
 			_, _ = fmt.Fprintf(stdout, "[HINT] %s:%s %s\n", hint.File, path, hint.Message)
+		}
+		if file.Coverage != nil {
+			_, _ = fmt.Fprintf(stdout, "[COVERAGE] %s: %d/%d jobs asserted\n", file.File, file.Coverage.JobsAsserted, file.Coverage.JobsTotal)
+		}
+	}
+}
+
+func printDoctorIssuesStderr(stderr io.Writer, report doctorReport) {
+	for _, file := range report.Files {
+		for _, issue := range file.Issues {
+			if issue.Category == "parse" {
+				_, _ = fmt.Fprintf(stderr, "[ERROR] %s: %s\n", file.File, issue.Message)
+			}
 		}
 	}
 }
