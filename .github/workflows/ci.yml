@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Set up Go
       uses: actions/setup-go@v6
@@ -27,7 +27,7 @@ jobs:
 
     - name: Publish test report
       if: always()
-      uses: mikepenz/action-junit-report@v5
+      uses: mikepenz/action-junit-report@v6
       with:
         report_paths: .artifacts/test-results.xml
         detailed_summary: true
@@ -47,7 +47,7 @@ jobs:
 
     - name: Upload coverage artifacts
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: coverage-report
         path: |
