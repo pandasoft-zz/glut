@@ -18,8 +18,15 @@ jobs:
           fetch-depth: 0
 
       - uses: cycjimmy/semantic-release-action@v6
+        id: semantic
         with:
           extra_plugins: |
             conventional-changelog-conventionalcommits
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger release build
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: gh workflow run release.yml --ref ${{ steps.semantic.outputs.new_release_git_tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
