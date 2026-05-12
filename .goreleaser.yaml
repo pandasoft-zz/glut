@@ -41,6 +41,9 @@ dockers:
       - "--build-arg=VERSION={{ .Version }}"
       - "--build-arg=COMMIT={{ .Commit }}"
 
+release:
+  mode: append
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
