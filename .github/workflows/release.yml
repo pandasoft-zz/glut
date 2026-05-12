@@ -2,33 +2,32 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    branches: ["main"]
 
 permissions:
   contents: write
-  packages: write
+  issues: write
+  pull-requests: write
+  actions: write
 
 jobs:
-  goreleaser:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: cycjimmy/semantic-release-action@v6
+        id: semantic
         with:
-          go-version-file: go.mod
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
+          extra_plugins: |
+            conventional-changelog-conventionalcommits
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger build
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: gh workflow run build.yml --ref ${{ steps.semantic.outputs.new_release_git_tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
