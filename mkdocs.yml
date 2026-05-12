@@ -17,6 +17,7 @@ nav:
       - Assert Syntax: reference/assert-syntax.md
       - Mock API: reference/mock-api.md
       - CLI: reference/cli.md
+      - Doctor: reference/doctor.md
   - Examples:
       - Image Build: examples/image-build.md
       - Manifest Update: examples/manifest-update.md

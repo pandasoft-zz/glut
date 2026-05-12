@@ -86,6 +86,8 @@ objects and avoid reaching back into runner internals.
 
 ## Execution Flow
 
+### `glut run`
+
 1. CLI parses options and selects input paths.
 2. Parser discovers test files and extracts `.glut:` config from the second YAML document.
 3. Schema validation checks structural correctness.
@@ -97,6 +99,17 @@ objects and avoid reaching back into runner internals.
 9. Asserter evaluates the configured resources.
 10. Reporter emits human and machine-readable results.
 11. Runner cleans up or preserves the workspace based on options.
+
+### `glut lint` and `glut doctor`
+
+1. CLI parses options and selects input paths.
+2. Parser discovers test files.
+3. Schema validation checks structural correctness.
+4. Lint rules check semantic and GitLab-specific mistakes.
+5. `doctor` additionally evaluates authoring hints per file and computes job coverage.
+6. Results are printed to stdout (`doctor` and `lint`) or as JSON with `--format=json`.
+
+`lint` and `doctor` do not create workspaces, start mock servers, or run `gitlab-ci-local`.
 
 ## Design Principles
 
