@@ -2,12 +2,17 @@
 
 package mockwrapper
 
-import "os"
+import (
+	"errors"
+	"os"
+)
+
+var errWindowsNotSupported = errors.New("mock wrapper file locking is not supported on Windows")
 
 func lockFile(file *os.File) error {
-	return nil
+	return errWindowsNotSupported
 }
 
 func unlockFile(file *os.File) error {
-	return nil
+	return errWindowsNotSupported
 }
