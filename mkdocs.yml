@@ -2,7 +2,13 @@ site_name: GLUT
 site_description: Local tests for GitLab CI components
 repo_url: https://github.com/pandasoft-zz/glut
 theme:
-  name: material
+  name: dracula
+  logo: assets/logo.svg
+
+plugins:
+  - search
+  - mermaid2:
+      javascript: https://unpkg.com/mermaid@11/dist/mermaid.min.js
 nav:
   - Home: index.md
   - Getting Started:
