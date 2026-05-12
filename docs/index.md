@@ -66,6 +66,7 @@ setup, execution, assertions, and reports stay in separate packages.
 glut run ./tests
 glut list ./tests
 glut lint ./tests
+glut doctor ./tests
 glut version
 ```
 

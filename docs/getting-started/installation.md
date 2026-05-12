@@ -203,8 +203,13 @@ With the native binary:
 
 ```bash
 glut lint ./tests
+glut doctor ./tests
 glut run ./tests
 ```
+
+`doctor` does not need Docker or `gitlab-ci-local`. It reads test files,
+reports lint issues, prints authoring hints, and shows job coverage. Run it
+before `run` to catch weak or incomplete tests early.
 
 ## Windows
 
