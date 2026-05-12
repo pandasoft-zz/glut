@@ -1,5 +1,5 @@
 ---
-name: glut-test-author
+name: glut-tests
 description: Write, review, and fix GLUT test files for GitLab CI components. Use when an AI assistant needs to create valid GLUT YAML tests, improve existing GLUT tests, choose setup/assert syntax, mock GitLab API calls, mock binaries, or explain why a GLUT test is invalid.
 ---
 
