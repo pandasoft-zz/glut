@@ -2,16 +2,16 @@ site_name: GLUT
 site_description: Local tests for GitLab CI components
 repo_url: https://github.com/pandasoft-zz/glut
 theme:
-  name: terminal
+  name: readthedocs
+  logo: assets/logo.svg
 
 plugins:
   - search
-  - mermaid2:
-      javascript: https://unpkg.com/mermaid@11/dist/mermaid.min.js
 nav:
   - Home: index.md
   - Getting Started:
       - Installation: getting-started/installation.md
+      - AI Skill: getting-started/ai-skill.md
   - Reference:
       - Test Format: reference/test-format.md
       - Assert Syntax: reference/assert-syntax.md
