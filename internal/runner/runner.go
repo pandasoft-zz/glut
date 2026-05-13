@@ -246,7 +246,7 @@ func loadTestFile(path string) (*parser.TestFile, error) {
 		return nil, fmt.Errorf("validate schema for %s: %s", path, strings.Join(messages, "; "))
 	}
 
-	lints := parser.SemanticLint(*testFile)
+	lints := parser.SemanticLint(testFile.FilePath, testFile.GlutRaw)
 	errorsOnly := make([]string, 0, len(lints))
 	for _, lint := range lints {
 		if lint.Level != parser.LevelError {

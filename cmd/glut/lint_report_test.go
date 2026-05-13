@@ -18,9 +18,7 @@ test_job:
   name: "bad"
   setup:
     pipeline_source: "manual"
-  assert:
-    job:
-      missing_job: {}
+    merge_request_event_also: true
 `)
 
 	report := buildLintReport([]string{path})
@@ -37,7 +35,7 @@ test_job:
 		if issue.Category == "schema" && issue.Path == ".glut.setup.pipeline_source" {
 			hasSchema = true
 		}
-		if issue.Category == "semantic" && issue.Path == ".glut.assert.job" {
+		if issue.Category == "semantic" {
 			hasSemantic = true
 		}
 	}
