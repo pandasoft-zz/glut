@@ -1,5 +1,27 @@
 # Installation
 
+Try GLUT immediately without installing anything:
+
+```bash
+docker run --rm ghcr.io/pandasoft-zz/glut:latest glut --help
+```
+
+Download released binaries and tagged Docker images from
+[GitHub Releases](https://github.com/pandasoft-zz/glut/releases).
+
+## Commands and Docker Requirements
+
+| Command | Docker daemon needed? | Notes |
+| --- | --- | --- |
+| `glut lint` | No | Reads and validates test files statically. Safe to run anywhere. |
+| `glut doctor` | No | Reads test files, prints lint issues and authoring hints. Safe to run anywhere. |
+| `glut run` | Yes | Executes the pipeline via `gitlab-ci-local`. Needs a reachable Docker daemon (socket or DinD). |
+
+Use `glut lint` and `glut doctor` in lightweight lint-stage jobs. Reserve a
+Docker-capable environment for `glut run`.
+
+## Docker Image
+
 GLUT is best used from the Docker image. The image includes GLUT and the runtime
 tools that tests need, such as `gitlab-ci-local`.
 
@@ -126,11 +148,9 @@ test:glut:
 
 The runner must allow privileged services for Docker-in-Docker.
 
-`glut lint` does not need `gitlab-ci-local` or a Docker daemon. It only reads
-test files, validates `.glut:` metadata, and runs semantic checks. The JSON
-artifact is useful for debugging and AI tools. GitLab does not read it as a
-native test report. The JUnit report belongs to `glut run`, because that command
-executes tests.
+The JSON lint artifact is useful for debugging and AI tools. GitLab does not
+treat it as a native test report. The JUnit report belongs to `glut run`,
+because that command executes tests.
 
 For a local manual check, you can start a Docker daemon container and point GLUT
 at it:
@@ -210,6 +230,9 @@ glut run ./tests
 `doctor` does not need Docker or `gitlab-ci-local`. It reads test files,
 reports lint issues, prints authoring hints, and shows job coverage. Run it
 before `run` to catch weak or incomplete tests early.
+
+See [Doctor reference](../reference/doctor.md) for example output and guidance
+on which hints are worth acting on.
 
 ## Windows
 
