@@ -630,6 +630,61 @@ func TestSemanticLintValidatesGlutMetadata(t *testing.T) {
 	}
 }
 
+func TestLint_NoDynamicPipelineFalsePositives(t *testing.T) {
+	tests := []struct {
+		name     string
+		pipeline string
+		glut     string
+	}{
+		{
+			name: "input interpolation job name with default",
+			pipeline: `
+spec:
+  inputs:
+    job_name:
+      default: "build:container"
+
+$[[ inputs.job_name ]]:
+  script:
+    - docker build .
+`,
+			glut: `
+name: "component input job"
+assert:
+  job:
+    build:container: {}
+`,
+		},
+		{
+			name: "remote component via include",
+			pipeline: `
+include:
+  - component: my-group/my-component@1.0
+    inputs:
+      job_name: build:container
+`,
+			glut: `
+name: "remote component"
+assert:
+  job:
+    build:container: {}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := createTempYAML(t, testFile(tt.pipeline, tt.glut))
+			errs := Lint(path)
+			for _, e := range errs {
+				if e.Level == LevelError {
+					t.Errorf("Lint() reported unexpected error for dynamic pipeline: %s", e.Message)
+				}
+			}
+		})
+	}
+}
+
 func TestLintReportsSchemaAndSetupErrors(t *testing.T) {
 	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
 name: "schema and setup"
