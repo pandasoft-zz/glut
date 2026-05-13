@@ -509,22 +509,6 @@ setup: "oops"
 	})
 }
 
-func TestReadStagesAndContainsString(t *testing.T) {
-	if _, ok := readStages(map[string]interface{}{}); ok {
-		t.Fatal("readStages without stages should report false")
-	}
-
-	stages, ok := readStages(map[string]interface{}{
-		"stages": []interface{}{"build", 1, "test"},
-	})
-	if !ok || len(stages) != 2 || stages[1] != "test" {
-		t.Fatalf("readStages() = %#v, %v", stages, ok)
-	}
-
-	if containsString([]string{"a", "b"}, "c") {
-		t.Fatal("containsString should be false")
-	}
-}
 
 func TestLint_Errors(t *testing.T) {
 	tests := []struct {
@@ -581,44 +565,6 @@ assert: {}
 			},
 		},
 		{
-			name: "missing stage",
-			pipeline: `
-stages:
-  - build
-test_job:
-  stage: test
-`,
-			glut: `
-name: "test"
-`,
-			check: func(errs []LintError) bool {
-				for _, e := range errs {
-					if e.Level == LevelError && strings.Contains(e.Message, "which is not in stages block") {
-						return true
-					}
-				}
-				return false
-			},
-		},
-		{
-			name:     "assert non-existent job",
-			pipeline: "test_job:\n  script: echo ok\n",
-			glut: `
-name: "test"
-assert:
-  job:
-    missing_job: {}
-`,
-			check: func(errs []LintError) bool {
-				for _, e := range errs {
-					if e.Level == LevelError && strings.Contains(e.Message, "references non-existent job") {
-						return true
-					}
-				}
-				return false
-			},
-		},
-		{
 			name:     "tag and branch",
 			pipeline: "test_job:\n  script: echo ok\n",
 			glut: `
@@ -666,63 +612,101 @@ setup:
 	}
 }
 
-func TestSemanticLintUsesParsedTestFile(t *testing.T) {
-	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
-name: "semantic"
-assert:
-  job:
-    missing_job: {}
-`))
-	testFile, err := Parse(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	lints := SemanticLint(*testFile)
-	if len(lints) == 0 {
-		t.Fatal("SemanticLint() returned no lints")
-	}
-	if lints[0].Level != LevelError || !strings.Contains(lints[0].Message, "missing_job") {
-		t.Fatalf("SemanticLint() = %#v", lints)
-	}
-}
-
-func TestSemanticLintReportsInvalidPipelineYAML(t *testing.T) {
-	lints := SemanticLint(TestFile{
-		FilePath:     "bad.yml",
-		PipelineYAML: "job: [broken",
-		GlutRaw: map[string]interface{}{
-			"name": "bad",
+func TestSemanticLintValidatesGlutMetadata(t *testing.T) {
+	lints := SemanticLint("test.yml", map[string]interface{}{
+		"setup": map[string]interface{}{
+			"tag":    "1.0",
+			"branch": "main",
 		},
 	})
-	if len(lints) != 1 || lints[0].Level != LevelError || !strings.Contains(lints[0].Message, "invalid pipeline yaml") {
-		t.Fatalf("SemanticLint() = %#v", lints)
+	found := false
+	for _, l := range lints {
+		if l.Level == LevelError && strings.Contains(l.Message, "mutually exclusive") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("SemanticLint() did not report setup conflict: %#v", lints)
 	}
 }
 
-func TestLintReportsSchemaAndSemanticErrorsSeparately(t *testing.T) {
-	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
-name: "schema and semantic"
-setup:
-  pipeline_source: "manual"
+func TestLint_NoDynamicPipelineFalsePositives(t *testing.T) {
+	tests := []struct {
+		name     string
+		pipeline string
+		glut     string
+	}{
+		{
+			name: "input interpolation job name with default",
+			pipeline: `
+spec:
+  inputs:
+    job_name:
+      default: "build:container"
+
+$[[ inputs.job_name ]]:
+  script:
+    - docker build .
+`,
+			glut: `
+name: "component input job"
 assert:
   job:
-    missing_job: {}
+    build:container: {}
+`,
+		},
+		{
+			name: "remote component via include",
+			pipeline: `
+include:
+  - component: my-group/my-component@1.0
+    inputs:
+      job_name: build:container
+`,
+			glut: `
+name: "remote component"
+assert:
+  job:
+    build:container: {}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := createTempYAML(t, testFile(tt.pipeline, tt.glut))
+			errs := Lint(path)
+			for _, e := range errs {
+				if e.Level == LevelError {
+					t.Errorf("Lint() reported unexpected error for dynamic pipeline: %s", e.Message)
+				}
+			}
+		})
+	}
+}
+
+func TestLintReportsSchemaAndSetupErrors(t *testing.T) {
+	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
+name: "schema and setup"
+setup:
+  pipeline_source: "manual"
+  tag: "1.0"
+  branch: "main"
 `))
 
 	lints := Lint(path)
 	var schemaErr bool
-	var semanticErr bool
+	var setupErr bool
 	for _, lint := range lints {
 		if lint.Level == LevelError && strings.Contains(lint.Message, "glut schema:") {
 			schemaErr = true
 		}
-		if lint.Level == LevelError && strings.Contains(lint.Message, "references non-existent job") {
-			semanticErr = true
+		if lint.Level == LevelError && strings.Contains(lint.Message, "mutually exclusive") {
+			setupErr = true
 		}
 	}
 
-	if !schemaErr || !semanticErr {
-		t.Fatalf("Lint() schema error = %v, semantic error = %v, lints = %#v", schemaErr, semanticErr, lints)
+	if !schemaErr || !setupErr {
+		t.Fatalf("Lint() schema error = %v, setup error = %v, lints = %#v", schemaErr, setupErr, lints)
 	}
 }

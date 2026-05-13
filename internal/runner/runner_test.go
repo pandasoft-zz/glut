@@ -49,26 +49,22 @@ func TestRunFailingAssertResult(t *testing.T) {
 func TestRunReturnsRunnerErrorForInvalidInput(t *testing.T) {
 	env := newRunnerTestEnv(t)
 	env.writeRawFile(t, "tests/invalid.yml", strings.TrimSpace(`
-stages: [test]
-
-bad-assert:
-  stage: test
+test-job:
   script:
     - echo ok
 ---
 .glut:
-  name: bad-assert
-  assert:
-    job:
-      missing-job: {}
+  name: bad-setup
+  setup:
+    pipeline_source: merge_request_event
 `)+"\n")
 
 	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
 	if exitCode != ExitRunnerError {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitRunnerError)
 	}
-	if result.Error == nil || !strings.Contains(result.Error.Error(), "missing-job") {
-		t.Fatalf("Run() error = %v, want missing job context", result.Error)
+	if result.Error == nil || !strings.Contains(result.Error.Error(), "setup.merge_request is missing") {
+		t.Fatalf("Run() error = %v, want merge_request missing context", result.Error)
 	}
 }
 
