@@ -32,40 +32,48 @@ archives:
 checksum:
   name_template: checksums.txt
 
-dockers:
-  - image_templates:
-      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-amd64
-      - ghcr.io/pandasoft-zz/glut:latest-amd64
-    goarch: amd64
-    use: buildx
+dockers_v2:
+  - id: glut
+    ids:
+      - glut
     dockerfile: Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--build-arg=VERSION={{ .Version }}"
-      - "--build-arg=COMMIT={{ .Commit }}"
-  - image_templates:
-      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-arm64
-      - ghcr.io/pandasoft-zz/glut:latest-arm64
-    goarch: arm64
-    use: buildx
-    dockerfile: Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--build-arg=VERSION={{ .Version }}"
-      - "--build-arg=COMMIT={{ .Commit }}"
-
-docker_manifests:
-  - name_template: ghcr.io/pandasoft-zz/glut:{{ .Tag }}
-    image_templates:
-      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-amd64
-      - ghcr.io/pandasoft-zz/glut:{{ .Tag }}-arm64
-  - name_template: ghcr.io/pandasoft-zz/glut:latest
-    image_templates:
-      - ghcr.io/pandasoft-zz/glut:latest-amd64
-      - ghcr.io/pandasoft-zz/glut:latest-arm64
+    images:
+      - ghcr.io/pandasoft-zz/glut
+    tags:
+      - "{{ .Tag }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      "org.opencontainers.image.title": "glut"
+      "org.opencontainers.image.description": "Tool for unit testing GitLab pipelines."
+      "org.opencontainers.image.url": "https://github.com/pandasoft-zz/glut"
+      "org.opencontainers.image.source": "https://github.com/pandasoft-zz/glut"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.licenses": "MIT"
+    annotations:
+      "org.opencontainers.image.title": "glut"
+      "org.opencontainers.image.description": "Tool for unit testing GitLab pipelines."
+      "org.opencontainers.image.url": "https://github.com/pandasoft-zz/glut"
+      "org.opencontainers.image.source": "https://github.com/pandasoft-zz/glut"
+      "org.opencontainers.image.licenses": "MIT"
+    sbom: false
 
 release:
   mode: append
+  header: |
+    ## Docker Images
+
+    ```bash
+    docker pull ghcr.io/pandasoft-zz/glut:{{ .Tag }}
+    ```
+
+    Supported platforms: `linux/amd64` · `linux/arm64`
+
+    Browse on GHCR: https://github.com/pandasoft-zz/glut/pkgs/container/glut
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"

@@ -1,8 +1,9 @@
 FROM ubuntu:24.04
+ARG TARGETPLATFORM
 ARG GCL_VERSION=4.55.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates docker.io git nodejs npm rsync \
     && npm install -g gitlab-ci-local@${GCL_VERSION} \
     && rm -rf /var/lib/apt/lists/*
-COPY glut /usr/local/bin/glut
+COPY ${TARGETPLATFORM}/glut /usr/local/bin/glut
 ENTRYPOINT ["/usr/local/bin/glut"]
