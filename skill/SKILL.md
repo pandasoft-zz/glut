@@ -8,6 +8,37 @@ description: Write, review, and fix GLUT test files for GitLab CI components. Us
 Use this skill to write better GLUT tests. Optimize for valid YAML, realistic CI
 context, and useful asserts.
 
+## How to Invoke GLUT
+
+GLUT is distributed as a Docker image. The image includes GLUT and all required
+tools (`gitlab-ci-local`, git, bash). Do not assume a native `glut` binary is
+on `PATH` — always try Docker first.
+
+`glut lint` and `glut doctor` do not need a Docker daemon. No socket mount
+required:
+
+```bash
+docker run --rm \
+  -v "$PWD:/work" -w /work \
+  ghcr.io/pandasoft-zz/glut:latest lint --format=json path/to/test.yml
+
+docker run --rm \
+  -v "$PWD:/work" -w /work \
+  ghcr.io/pandasoft-zz/glut:latest doctor --format=json path/to/test.yml
+```
+
+`glut run` executes the pipeline and requires a reachable Docker daemon:
+
+```bash
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD:/work" -w /work \
+  ghcr.io/pandasoft-zz/glut:latest run path/to/test.yml
+```
+
+If a native `glut` binary is on `PATH` (e.g. inside a devcontainer), use it
+directly instead. The commands are the same without the `docker run` prefix.
+
 ## Workflow
 
 1. Identify the behavior under test: job output, artifact, git change, API call,
@@ -18,19 +49,18 @@ context, and useful asserts.
    pipeline.
 5. Put checks in `assert:`. Prefer checking the side effect that matters, not
    only `exit-status: 0`.
-6. Run or suggest `glut lint` before `glut run`.
-7. When GLUT is available locally, prefer structured feedback:
-   `glut lint --format=json <file>` for validation and
-   `glut doctor --format=json <file>` for validation plus authoring hints.
+6. Run `glut lint --format=json` before `glut run`.
+7. Run `glut doctor --format=json` to get authoring hints and coverage feedback.
 
 ## Use GLUT Feedback
 
-When a GLUT binary is available, use it instead of guessing.
+Always use GLUT to validate — do not guess whether a file is valid.
 
 Use lint for validity:
 
 ```bash
-glut lint --format=json path/to/test.yml
+docker run --rm -v "$PWD:/work" -w /work \
+  ghcr.io/pandasoft-zz/glut:latest lint --format=json path/to/test.yml
 ```
 
 The JSON output has this shape:
@@ -64,7 +94,8 @@ Use `category` to choose the fix:
 Use doctor when the test is valid but may be weak:
 
 ```bash
-glut doctor --format=json path/to/test.yml
+docker run --rm -v "$PWD:/work" -w /work \
+  ghcr.io/pandasoft-zz/glut:latest doctor --format=json path/to/test.yml
 ```
 
 Doctor returns `issues` plus `hints`. Treat hints as authoring advice, not as
