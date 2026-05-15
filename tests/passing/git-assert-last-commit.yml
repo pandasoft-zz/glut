@@ -1,0 +1,28 @@
+stages: [test]
+
+noop:
+  stage: test
+  script:
+    - echo "checking git state"
+---
+.glut:
+  name: "assert git origin last-commit message after commands setup"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    git:
+      origin:
+        branch: "main"
+        commands: |
+          git commit --allow-empty -m "feat: first"
+          git commit --allow-empty -m "fix: important correction"
+  assert:
+    job:
+      noop:
+        exit-status: 0
+    git:
+      origin:
+        commits:
+          ge: 2
+        last-commit:
+          message: "fix: important correction"

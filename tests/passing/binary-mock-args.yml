@@ -1,0 +1,37 @@
+stages: [test]
+
+release:
+  stage: test
+  script:
+    - release-cli create --tag-name "v1.2.3" --name "Release v1.2.3"
+    - release-cli upload --tag-name "v1.2.3" --file dist/app.tar.gz
+---
+.glut:
+  name: "binary mock records call count and arguments for each invocation"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    mocks:
+      binaries:
+        release-cli:
+          executable: |
+            #!/bin/sh
+            echo "release-cli $*"
+            exit 0
+  assert:
+    binary:
+      release-cli:
+        called: true
+        times:
+          equal: 2
+        calls:
+          - args:
+              contain-elements:
+                - "create"
+                - "--tag-name"
+                - "v1.2.3"
+          - args:
+              contain-elements:
+                - "upload"
+                - "--tag-name"
+                - "v1.2.3"

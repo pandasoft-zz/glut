@@ -1,0 +1,21 @@
+stages: [test]
+
+warn-job:
+  stage: test
+  script:
+    - echo "warning message" >&2
+    - echo "normal output"
+---
+.glut:
+  name: "job stderr assertion matches text written to stderr"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      warn-job:
+        exit-status: 0
+        stdout:
+          - "normal output"
+        stderr:
+          - "warning message"

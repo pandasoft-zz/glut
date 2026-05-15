@@ -1,0 +1,27 @@
+stages: [test]
+
+never-job:
+  stage: test
+  rules:
+    - when: never
+  script:
+    - echo "this should not run"
+
+real-job:
+  stage: test
+  script:
+    - echo "this runs"
+---
+.glut:
+  name: "job with when:never is not present; other job runs normally"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      never-job:
+        present: false
+      real-job:
+        exit-status: 0
+        stdout:
+          - "this runs"

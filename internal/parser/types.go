@@ -7,6 +7,7 @@ type TestFile struct {
 	Glut         GlutSection
 	GlutRaw      map[string]interface{}
 	PipelineYAML string
+	ParseError   error
 }
 
 type GlutSection struct {

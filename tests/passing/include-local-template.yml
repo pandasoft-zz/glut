@@ -1,0 +1,16 @@
+stages: [test]
+
+include:
+  - local: 'tests/fixtures/echo-template.yml'
+---
+.glut:
+  name: "include local template file defines and runs job from included file"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      from-template:
+        exit-status: 0
+        stdout:
+          - "I am from the included template"

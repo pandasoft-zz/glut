@@ -1,0 +1,6 @@
+stages: [test]
+
+from-template:
+  stage: test
+  script:
+    - echo "I am from the included template"

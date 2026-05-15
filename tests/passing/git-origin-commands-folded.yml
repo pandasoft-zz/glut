@@ -1,0 +1,22 @@
+stages: [test]
+
+check-tag:
+  stage: test
+  script:
+    - git tag | grep "v1.0.0"
+---
+.glut:
+  name: "git.origin.commands accepts YAML folded scalar > for single-line script"
+  setup:
+    branch: "main"
+    git:
+      origin:
+        branch: "main"
+        commands: >
+          git tag v1.0.0
+  assert:
+    job:
+      check-tag:
+        exit-status: 0
+        stdout:
+          - "v1.0.0"

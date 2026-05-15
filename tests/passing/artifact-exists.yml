@@ -1,0 +1,22 @@
+stages: [test]
+
+writer:
+  stage: test
+  script:
+    - mkdir -p dist
+    - echo "artifact content" > dist/output.txt
+---
+.glut:
+  name: "artifact created by job exists and has expected content"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      writer:
+        exit-status: 0
+    artifacts:
+      "dist/output.txt":
+        exists: true
+        contents:
+          - "artifact content"

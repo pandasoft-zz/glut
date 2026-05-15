@@ -1,0 +1,27 @@
+stages: [build]
+
+build-artifact:
+  stage: build
+  image: alpine:latest
+  script:
+    - mkdir -p dist
+    - echo "built on alpine" > dist/result.txt
+  artifacts:
+    paths:
+      - dist/
+---
+.glut:
+  name: "docker:true job creates artifact accessible to asserter (requires Docker daemon)"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    docker: true
+  assert:
+    job:
+      build-artifact:
+        exit-status: 0
+    artifacts:
+      "dist/result.txt":
+        exists: true
+        contents:
+          - "built on alpine"

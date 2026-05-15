@@ -1,0 +1,29 @@
+stages: [deploy]
+
+deploy-release:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - echo "Deploying tag=$CI_COMMIT_TAG"
+
+deploy-branch:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_TAG == null
+  script:
+    - echo "branch deploy"
+---
+.glut:
+  name: "tag pipeline source sets CI_COMMIT_TAG and gates tag-only jobs"
+  setup:
+    tag: "v2.5.0"
+    pipeline_source: "push"
+  assert:
+    job:
+      deploy-release:
+        exit-status: 0
+        stdout:
+          - "tag=v2.5.0"
+      deploy-branch:
+        present: false
