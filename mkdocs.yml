@@ -11,6 +11,8 @@ nav:
   - Home: index.md
   - Getting Started:
       - Installation: getting-started/installation.md
+      - Your First Test: getting-started/first-test.md
+      - Debugging: getting-started/debugging.md
       - AI Skill: getting-started/ai-skill.md
   - Reference:
       - Test Format: reference/test-format.md
@@ -22,3 +24,4 @@ nav:
       - Image Build: examples/image-build.md
       - Manifest Update: examples/manifest-update.md
       - Release: examples/release.md
+      - Merge Request: examples/merge-request.md

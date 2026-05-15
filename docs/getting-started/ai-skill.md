@@ -6,6 +6,38 @@ files.
 The skill file is at [`skill/SKILL.md`](https://github.com/pandasoft-zz/glut/blob/main/skill/SKILL.md)
 in the repository.
 
+## Workflow
+
+Once the skill is installed, use this loop to write and improve tests:
+
+1. **Write an initial test.** Give the AI your CI job YAML and ask it to write
+   a GLUT test file.
+
+2. **Validate.** Run `glut lint --format=json ./tests/my-test.yml` and pass the
+   JSON output to the AI. The AI reads `has_errors` and each `issues[].category`
+   to decide which fixes to make.
+
+3. **Check coverage.** Run `glut doctor --format=json ./tests/my-test.yml` and
+   pass the output. The AI reads `hints` and adds stronger asserts (artifacts,
+   git, API, binary) as suggested.
+
+4. **Run.** Run `glut run ./tests/my-test.yml`. On failure, pass the stdout and
+   stderr back to the AI.
+
+5. **Iterate** until the test passes and `glut doctor` reports no hints.
+
+A strong GLUT test asserts the side effect that matters — the artifact written,
+the git commit pushed, the API call made, or the binary invoked. A test that
+only checks `exit-status: 0` is weak. `glut doctor` will tell you when this is
+the case.
+
+Example prompt to start:
+
+```
+I have this GitLab CI job: [paste job YAML]
+Write a GLUT test. Use `glut doctor --format=json` output to improve coverage.
+```
+
 ## Claude Code
 
 [Claude Code](https://claude.ai/code) loads skills from `.claude/skills/` in

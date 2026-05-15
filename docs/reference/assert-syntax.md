@@ -322,6 +322,20 @@ Fields for `last-commit`:
 | `message` | value or matcher | Last commit message. |
 | `sha` | value or matcher | Last commit SHA. |
 
+Fields for `file` entries (key is the path relative to the repository root):
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `exists` | boolean | File must exist or must not exist. |
+| `contents` | text list or matcher | File content. |
+| `mode` | string | File permission mode as four octal digits, such as `0644`. |
+| `size` | value or matcher | File size in bytes. |
+| `md5` | string | Expected MD5 hash. |
+| `sha256` | string | Expected SHA-256 hash. |
+| `filetype` | string | `file`, `directory`, `symlink`, or `socket`. |
+
+These fields are identical to `assert.artifacts` fields.
+
 Check a pushed manifest update:
 
 ```yaml
@@ -359,6 +373,21 @@ assert:
       last-commit:
         sha:
           match-regexp: "^[a-f0-9]{40}$"
+```
+
+Check a file was deleted by the pipeline:
+
+```yaml
+assert:
+  git:
+    origin:
+      file:
+        "CHANGELOG.md":
+          exists: false
+        "dist/release.json":
+          exists: true
+          contents:
+            - "/\"version\": \"v[0-9]+/"
 ```
 
 ## API Asserts

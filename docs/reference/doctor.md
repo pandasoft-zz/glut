@@ -120,6 +120,40 @@ Parse errors go to `stderr`. Everything else goes to `stdout`.
 
 Hints and coverage do not affect the exit code.
 
+## Example Output
+
+Running `glut doctor ./tests` on a test suite with one release test and two
+authoring gaps:
+
+```
+[WARNING]  tests/release.yml: .glut.setup.pipeline_source: unknown value "push-tag"
+[HINT]     tests/release.yml: .glut.assert: More than half of job asserts check only exit-status. Add artifact, git, API, or binary asserts for stronger coverage.
+[HINT]     tests/release.yml: .glut.assert.binary: Mock binaries are configured (release-cli), but no binary asserts exist. Add assert.binary checks for called tools and arguments.
+[COVERAGE] tests/release.yml: 1/2 jobs asserted
+```
+
+Exit code is `0` because there are no errors — only warnings and hints.
+
+## Acting on Hints
+
+Hints do not block the pipeline and do not affect the exit code. Use this table
+to decide how much to act on each one.
+
+| Hint path | Act on it when... | Safe to ignore when... |
+| --- | --- | --- |
+| `.glut.assert` (empty) | Always. An empty assert block proves nothing. | Never. |
+| `.glut.assert` (exit-status only) | Your pipeline has side effects: releases, pushes, API calls. | Your job only needs to pass — e.g. a compile-only job with no artifacts. |
+| `.glut.assert` (tag, no binary/api/git) | Your tag pipeline creates a release or pushes a manifest. | Your tag pipeline only builds an image with no external effects. |
+| `.glut.assert.api` (MR, no api assert) | Your pipeline calls the GitLab API (fetches MR labels, posts a comment). | Your pipeline reads `CI_MERGE_REQUEST_*` variables but makes no API calls. |
+| `.glut.assert.api` (mock configured, no assert) | Always. You set up a mock but never checked whether it was called. | Never. |
+| `.glut.assert.binary` | Always. You mocked a binary so you could assert on it. | Never. |
+| `.glut.assert.git` | Your pipeline commits or pushes. | Your pipeline only reads git variables like `CI_COMMIT_SHA`. |
+| `.glut.assert.job` (upstream, no job asserts) | Always. An upstream context is useful only if you verify the triggered job. | Never. |
+| `.glut.setup.schedule` | You want a reminder to cover scheduled-only behavior. | You already have a separate test for scheduled behavior. |
+
+Coverage below 100 % means some pipeline jobs have no asserts at all. Add at
+least an `exit-status` check for any job that should run.
+
 ## Use With AI Tools
 
 Run `glut doctor --format=json ./tests` and pass the output to a coding
