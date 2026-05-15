@@ -290,7 +290,7 @@ func copyRepo(src, dst string) error {
 
 	runRsync := func() error {
 		var stderr strings.Builder
-		cmd := exec.Command("rsync", "-a", "--no-owner", "--no-group", srcSlash, dstSlash)
+		cmd := exec.Command("rsync", "-a", "--no-owner", "--no-group", "--exclude=.git", srcSlash, dstSlash)
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			if msg := strings.TrimSpace(stderr.String()); msg != "" {
@@ -367,6 +367,9 @@ func copyDir(src string, dst string) error {
 		}
 
 		if info.IsDir() {
+			if relPath == ".git" {
+				return filepath.SkipDir
+			}
 			return os.MkdirAll(dstPath, info.Mode())
 		}
 
