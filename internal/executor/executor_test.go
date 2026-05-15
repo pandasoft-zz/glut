@@ -291,6 +291,26 @@ func TestParseJobOutputsFromGitLabCILocalLogs(t *testing.T) {
 	}
 }
 
+func TestParseJobOutputsHandlesAllowFailureWarnStatus(t *testing.T) {
+	stdout := strings.Join([]string{
+		"check-fail starting shell (test)",
+		"check-fail $ exit 2",
+		"check-fail finished in 15 ms  WARN 2 ",
+		"",
+		" WARN  check-fail  pre_script",
+		"  > $ exit 2",
+	}, "\n")
+
+	jobs := parseJobOutputs(stdout, "")
+	job, ok := jobs["check-fail"]
+	if !ok {
+		t.Fatalf("expected check-fail job to be present, got %#v", jobs)
+	}
+	if job.ExitStatus != 2 {
+		t.Fatalf("exit status = %d, want 2", job.ExitStatus)
+	}
+}
+
 func TestParseJobOutputsHandlesMultilineAndMissingFailCode(t *testing.T) {
 	stdout := strings.Join([]string{
 		"test-job > first",
