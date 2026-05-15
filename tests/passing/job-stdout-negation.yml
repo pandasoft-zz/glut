@@ -1,0 +1,20 @@
+stages: [test]
+
+clean-output:
+  stage: test
+  script:
+    - echo "build succeeded"
+---
+.glut:
+  name: "job stdout negation !literal asserts absence of substring"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      clean-output:
+        exit-status: 0
+        stdout:
+          - "build succeeded"
+          - "!error"
+          - "!failed"

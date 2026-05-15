@@ -1,0 +1,34 @@
+stages: [test]
+
+mr-only:
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - echo "MR=$CI_MERGE_REQUEST_IID target=$CI_MERGE_REQUEST_TARGET_BRANCH_NAME source=$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+
+push-only:
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+  script:
+    - echo "push"
+---
+.glut:
+  name: "merge_request_event source sets CI_MERGE_REQUEST_* variables and gates jobs"
+  setup:
+    branch: "feature/new-thing"
+    pipeline_source: "merge_request_event"
+    merge_request:
+      iid: 42
+      target_branch: "main"
+  assert:
+    job:
+      mr-only:
+        exit-status: 0
+        stdout:
+          - "MR=42"
+          - "target=main"
+          - "source=feature/new-thing"
+      push-only:
+        present: false

@@ -247,7 +247,7 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 }
 
 func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
-	args := append(baseArgs(), envArgs(map[string]string{"CI": "true"})...)
+	args := append(baseArgs(false), envArgs(map[string]string{"CI": "true"})...)
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "--shell-executor-no-image") {

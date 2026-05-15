@@ -1,0 +1,19 @@
+stages: [test]
+
+no-writer:
+  stage: test
+  script:
+    - echo "not writing any file"
+---
+.glut:
+  name: "artifact that was not created asserts exists: false"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      no-writer:
+        exit-status: 0
+    artifacts:
+      "should-not-exist.txt":
+        exists: false

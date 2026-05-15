@@ -63,3 +63,30 @@ jobs:
 
     - name: Docker Build
       run: docker build .
+
+  integration-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Build image
+      run: docker build -t glut:dev .
+
+    - name: Run passing integration tests
+      run: |
+        docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -v "${{ github.workspace }}/tests:/tests" \
+          -w /tests \
+          glut:dev run ./passing/
+
+    - name: Run failing integration tests (expect failure)
+      run: |
+        if docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -v "${{ github.workspace }}/tests:/tests" \
+          -w /tests \
+          glut:dev run ./failing/; then
+          echo "Expected integration tests to fail but they passed"
+          exit 1
+        fi

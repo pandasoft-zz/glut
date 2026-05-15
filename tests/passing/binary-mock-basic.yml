@@ -1,0 +1,28 @@
+stages: [test]
+
+build:
+  stage: test
+  script:
+    - my-tool --version
+---
+.glut:
+  name: "mocked binary is callable and records that it was called"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    mocks:
+      binaries:
+        my-tool:
+          executable: |
+            #!/bin/sh
+            echo "my-tool mock $*"
+            exit 0
+  assert:
+    job:
+      build:
+        exit-status: 0
+        stdout:
+          - "my-tool mock"
+    binary:
+      my-tool:
+        called: true

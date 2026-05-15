@@ -1,0 +1,16 @@
+stages: [test]
+
+no-writer:
+  stage: test
+  script:
+    - echo "I do not create output.txt"
+---
+.glut:
+  name: "assert fails when expected artifact does not exist"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "output.txt":
+        exists: true

@@ -1,0 +1,31 @@
+stages: [maintenance]
+
+scheduled-cleanup:
+  stage: maintenance
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - 'echo "Running scheduled task: $CI_SCHEDULE_DESCRIPTION"'
+
+manual-only:
+  stage: maintenance
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
+  script:
+    - echo "manual"
+---
+.glut:
+  name: "schedule pipeline source sets CI_PIPELINE_SCHEDULE and description variable"
+  setup:
+    branch: "main"
+    pipeline_source: "schedule"
+    schedule:
+      description: "nightly-cleanup"
+  assert:
+    job:
+      scheduled-cleanup:
+        exit-status: 0
+        stdout:
+          - "nightly-cleanup"
+      manual-only:
+        present: false

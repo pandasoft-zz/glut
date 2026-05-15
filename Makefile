@@ -27,5 +27,31 @@ lint:
 docker:
 	docker build -t glut:dev .
 
+INCONTAINER := $(shell [ -f /.dockerenv ] && echo 1 || echo 0)
+DOCKER_TEST_CONFIG ?= /tmp/glut-docker-config
+
+ifeq ($(INCONTAINER),1)
+test-integration: build
+	@mkdir -p $(DOCKER_TEST_CONFIG) && printf '{}' > $(DOCKER_TEST_CONFIG)/config.json
+	DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run ./tests/passing/
+	@if DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run ./tests/failing/; then \
+		echo "Expected tests to fail but they passed"; exit 1; \
+	fi
+else
+test-integration: docker
+	docker run --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v "$(PWD)/tests:/tests" \
+		-w /tests \
+		glut:dev run ./passing/
+	@if docker run --rm \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v "$(PWD)/tests:/tests" \
+		-w /tests \
+		glut:dev run ./failing/; then \
+		echo "Expected tests to fail but they passed"; exit 1; \
+	fi
+endif
+
 release:
 	goreleaser release --snapshot --clean

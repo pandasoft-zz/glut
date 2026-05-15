@@ -1,0 +1,20 @@
+stages: [test]
+
+greet:
+  stage: test
+  script:
+    - echo "hello world"
+    - echo "line two"
+---
+.glut:
+  name: "job stdout literal pattern matches substring on any line"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      greet:
+        exit-status: 0
+        stdout:
+          - "hello world"
+          - "line two"

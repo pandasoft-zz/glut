@@ -7,6 +7,22 @@ import (
 	"github.com/pandasoft-zz/glut/internal/executor"
 )
 
+func TestRunJobAssertsFailsWhenJobNotPresent(t *testing.T) {
+	asserts := config.AssertConfig{
+		Job: map[string]config.JobAssert{
+			"missing-job": {},
+		},
+	}
+
+	results := Run(asserts, AssertContext{
+		JobOutputs: map[string]executor.JobOutput{},
+	})
+
+	if len(results) != 1 || results[0].Passed {
+		t.Fatalf("expected one failing assertion for non-present job, got %+v", results)
+	}
+}
+
 func TestRunJobAsserts(t *testing.T) {
 	presentFalse := false
 	asserts := config.AssertConfig{

@@ -1,0 +1,21 @@
+stages: [test]
+
+alpine-job:
+  stage: test
+  image: alpine:latest
+  script:
+    - echo "running in alpine"
+    - cat /etc/alpine-release
+---
+.glut:
+  name: "docker:true runs job inside alpine image (requires Docker daemon)"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    docker: true
+  assert:
+    job:
+      alpine-job:
+        exit-status: 0
+        stdout:
+          - "running in alpine"

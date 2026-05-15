@@ -1,0 +1,26 @@
+stages: [test]
+
+noop:
+  stage: test
+  script:
+    - echo "no git ops in this job"
+---
+.glut:
+  name: "assert git origin commit count after commands setup"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    git:
+      origin:
+        branch: "main"
+        commands:
+          - 'git commit --allow-empty -m "feat: one"'
+          - 'git commit --allow-empty -m "feat: two"'
+  assert:
+    job:
+      noop:
+        exit-status: 0
+    git:
+      origin:
+        commits:
+          gt: 1

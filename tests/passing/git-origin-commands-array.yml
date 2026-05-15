@@ -1,0 +1,24 @@
+stages: [test]
+
+count-commits:
+  stage: test
+  script:
+    - git log --oneline | wc -l | tr -d ' '
+---
+.glut:
+  name: "git.origin.commands as array runs each command as separate bash invocation"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    git:
+      origin:
+        branch: "main"
+        commands:
+          - 'git commit --allow-empty -m "feat: first commit"'
+          - 'git commit --allow-empty -m "feat: second commit"'
+  assert:
+    job:
+      count-commits:
+        exit-status: 0
+        stdout:
+          - "/[23]/"

@@ -167,6 +167,28 @@ Git setup fields:
 - `git.origin.files`
 - `git.origin.commands`
 
+`git.origin.commands` accepts either a YAML sequence or any block scalar (`|`,
+`>`, `|-`, `>-`). Use `|` to write a multi-line shell script as a single bash
+invocation:
+
+```yaml
+git:
+  origin:
+    commands: |
+      git tag v1.0.0
+      git commit --allow-empty -m "feat: next release"
+```
+
+Or use a sequence when each command should be a separate invocation:
+
+```yaml
+git:
+  origin:
+    commands:
+      - git tag v1.0.0
+      - git commit --allow-empty -m "feat: next release"
+```
+
 Mock GitLab API:
 
 ```yaml
@@ -183,6 +205,16 @@ setup:
       releases:
         - tag_name: "v1.0.0"
           name: "Old release"
+```
+
+`api.token.scopes` accepts either a sequence or a plain string:
+
+```yaml
+api:
+  token:
+    valid: true
+    scopes: "api"          # plain string
+    # scopes: ["api", "read_repository"]  # or sequence
 ```
 
 Mock API seed supports:
@@ -490,6 +522,33 @@ release:
                 - "--tag-name"
                 - "v1.2.0"
 ```
+
+## Docker Executor
+
+By default GLUT runs jobs without Docker (`--shell-executor-no-image`). Scripts
+run directly on the host — fast, no image pull, suitable for testing logic that
+does not depend on a specific runtime environment.
+
+Set `setup.docker: true` to enable Docker. GLUT will let gitlab-ci-local pull
+and run the `image:` defined in each job. Use this when:
+
+- The component under test relies on tools only available in a specific image.
+- You want the full realistic runtime as used in production.
+- You are writing tests for components that define `image:`.
+
+```yaml
+setup:
+  branch: "main"
+  pipeline_source: "push"
+  docker: true
+```
+
+Docker tests are slower (image pull on first run) and require a Docker daemon
+to be accessible. Omit `docker:` or set `docker: false` for tests that only
+need shell commands — this is the default and keeps the suite fast.
+
+**Rule of thumb**: start without Docker to cover logic. Add `docker: true` when
+you need to prove the component works in its actual runtime image.
 
 ## Review Checklist
 

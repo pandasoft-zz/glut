@@ -1,0 +1,20 @@
+stages: [test]
+
+info:
+  stage: test
+  script:
+    - 'echo "version: 1.2.3"'
+    - 'echo "status: ok"'
+---
+.glut:
+  name: "job stdout regex pattern /.../ and negation !/.../ both work"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      info:
+        exit-status: 0
+        stdout:
+          - "/version: [0-9]+\\.[0-9]+\\.[0-9]+/"
+          - "!/error|panic/"
