@@ -41,14 +41,14 @@ else
 test-integration: docker
 	docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
-		-v "$(PWD)/tests:/tests" \
-		-w /tests \
-		glut:dev run ./passing/
+		-v "$(PWD):/repo" \
+		-w /repo \
+		glut:dev run ./tests/passing/
 	@if docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
-		-v "$(PWD)/tests:/tests" \
-		-w /tests \
-		glut:dev run ./failing/; then \
+		-v "$(PWD):/repo" \
+		-w /repo \
+		glut:dev run ./tests/failing/; then \
 		echo "Expected tests to fail but they passed"; exit 1; \
 	fi
 endif
