@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,14 +39,8 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *
 	originRepo := filepath.Join(tmpWork, ".glut-origin.git")
 
 	// 2. Copy host repository
-	srcDirSlash := filepath.ToSlash(filepath.Clean(srcDir)) + "/"
-	stagingDirSlash := filepath.ToSlash(filepath.Clean(stagingDir)) + "/"
-	rsyncCmd := exec.Command("rsync", "-a", srcDirSlash, stagingDirSlash)
-	if err := rsyncCmd.Run(); err != nil {
-		// Fallback to native Go copy when rsync is not present.
-		if cpErr := copyDir(srcDir, stagingDir); cpErr != nil {
-			return nil, fmt.Errorf("failed to copy repository natively after rsync failed: %v", cpErr)
-		}
+	if err := copyRepo(srcDir, stagingDir); err != nil {
+		return nil, fmt.Errorf("copy repository: %w", err)
 	}
 
 	// 3. Initialize bare git repo
@@ -285,6 +280,55 @@ func removeRemoteIfExists(dir string, name string) error {
 	return runCmd(dir, "git", "remote", "remove", name)
 }
 
+// copyRepo copies src into dst using rsync when available, falling back to
+// copyDir only when rsync is not installed. If rsync is present but exits
+// non-zero (e.g. intermittent WSL2 I/O error), we clean up any partially
+// copied files and retry once before giving up.
+func copyRepo(src, dst string) error {
+	srcSlash := filepath.ToSlash(filepath.Clean(src)) + "/"
+	dstSlash := filepath.ToSlash(filepath.Clean(dst)) + "/"
+
+	runRsync := func() error {
+		var stderr strings.Builder
+		cmd := exec.Command("rsync", "-a", "--no-owner", "--no-group", "--exclude=.git", srcSlash, dstSlash)
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				return fmt.Errorf("rsync: %w\n%s", err, msg)
+			}
+			return fmt.Errorf("rsync: %w", err)
+		}
+		return nil
+	}
+
+	err := runRsync()
+	if err == nil {
+		return nil
+	}
+
+	// If rsync is not installed, fall back to native copy.
+	if isNotFound(err) {
+		return copyDir(src, dst)
+	}
+
+	// rsync ran but failed (e.g. transient I/O error) — clean up partial
+	// files and retry once before returning the error.
+	_ = os.RemoveAll(dst)
+	if retryErr := runRsync(); retryErr != nil {
+		return retryErr
+	}
+	return nil
+}
+
+func isNotFound(err error) bool {
+	var exitErr *exec.ExitError
+	// exec.ErrNotFound or "no such file" means binary missing
+	if !errors.As(err, &exitErr) {
+		return true
+	}
+	return false
+}
+
 func copyDir(src string, dst string) error {
 	srcAbs, err := filepath.Abs(src)
 	if err != nil {
@@ -323,6 +367,9 @@ func copyDir(src string, dst string) error {
 		}
 
 		if info.IsDir() {
+			if relPath == ".git" {
+				return filepath.SkipDir
+			}
 			return os.MkdirAll(dstPath, info.Mode())
 		}
 

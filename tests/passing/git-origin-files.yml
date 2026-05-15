@@ -1,0 +1,24 @@
+stages: [test]
+
+read-seed:
+  stage: test
+  script:
+    - cat config.yaml
+---
+.glut:
+  name: "git.origin.files seeds files into the git origin before clone"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    git:
+      origin:
+        branch: "main"
+        files:
+          "config.yaml": "env: production\nversion: 1.0.0\n"
+  assert:
+    job:
+      read-seed:
+        exit-status: 0
+        stdout:
+          - "env: production"
+          - "version: 1.0.0"

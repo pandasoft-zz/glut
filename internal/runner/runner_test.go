@@ -60,11 +60,11 @@ test-job:
 `)+"\n")
 
 	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
-	if exitCode != ExitRunnerError {
-		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitRunnerError)
+	if exitCode != ExitTestFailed {
+		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
-	if result.Error == nil || !strings.Contains(result.Error.Error(), "setup.merge_request is missing") {
-		t.Fatalf("Run() error = %v, want merge_request missing context", result.Error)
+	if len(result.Tests) != 1 || result.Tests[0].Error == nil || !strings.Contains(result.Tests[0].Error.Error(), "setup.merge_request is missing") {
+		t.Fatalf("Run() test error = %v, want merge_request missing context", result.Tests)
 	}
 }
 

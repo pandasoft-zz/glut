@@ -1,0 +1,19 @@
+stages: [test]
+
+generate:
+  stage: test
+  script:
+    - printf "IMAGE_URL=registry.example.com/app:1.2.3\nBUILD_ID=42\n" > build.env
+---
+.glut:
+  name: "artifact contents regex pattern /.../ matches variable output"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "build.env":
+        exists: true
+        contents:
+          - "/IMAGE_URL=registry\\.example\\.com\\/app:[0-9]+\\.[0-9]+\\.[0-9]+/"
+          - "/BUILD_ID=[0-9]+/"

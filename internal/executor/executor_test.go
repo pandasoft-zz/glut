@@ -247,7 +247,7 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 }
 
 func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
-	args := append(baseArgs(), envArgs(map[string]string{"CI": "true"})...)
+	args := append(baseArgs(false), envArgs(map[string]string{"CI": "true"})...)
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "--shell-executor-no-image") {
@@ -288,6 +288,26 @@ func TestParseJobOutputsFromGitLabCILocalLogs(t *testing.T) {
 	}
 	if jobs["release:publish"].ExitStatus != 7 || jobs["release:publish"].Stderr != "denied" {
 		t.Fatalf("release job = %#v", jobs["release:publish"])
+	}
+}
+
+func TestParseJobOutputsHandlesAllowFailureWarnStatus(t *testing.T) {
+	stdout := strings.Join([]string{
+		"check-fail starting shell (test)",
+		"check-fail $ exit 2",
+		"check-fail finished in 15 ms  WARN 2 ",
+		"",
+		" WARN  check-fail  pre_script",
+		"  > $ exit 2",
+	}, "\n")
+
+	jobs := parseJobOutputs(stdout, "")
+	job, ok := jobs["check-fail"]
+	if !ok {
+		t.Fatalf("expected check-fail job to be present, got %#v", jobs)
+	}
+	if job.ExitStatus != 2 {
+		t.Fatalf("exit status = %d, want 2", job.ExitStatus)
 	}
 }
 

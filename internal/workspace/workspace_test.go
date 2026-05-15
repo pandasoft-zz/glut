@@ -301,6 +301,28 @@ func TestCopyDirPreservesSymlinks(t *testing.T) {
 	}
 }
 
+func TestCopyRepoUsesRsyncAndFallsBackWhenMissing(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0444); err != nil {
+		t.Fatal(err)
+	}
+
+	// With a fake PATH that has no rsync, copyRepo must fall back to copyDir.
+	t.Setenv("PATH", t.TempDir())
+	if err := copyRepo(src, dst); err != nil {
+		t.Fatalf("copyRepo() fallback error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if err != nil || string(data) != "hello" {
+		t.Fatalf("fallback copy: read file error = %v, data = %q", err, data)
+	}
+}
+
 func TestNewCleansTempWorkspaceOnError(t *testing.T) {
 	tmpRoot := t.TempDir()
 	t.Setenv("TMPDIR", tmpRoot)

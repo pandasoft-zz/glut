@@ -1,0 +1,17 @@
+stages: [test]
+
+check-fail:
+  stage: test
+  allow_failure: true
+  script:
+    - exit 2
+---
+.glut:
+  name: "job non-zero exit status is correctly captured"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      check-fail:
+        exit-status: 2

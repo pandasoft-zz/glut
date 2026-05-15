@@ -1,9 +1,41 @@
 package config
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
+// StringSlice unmarshals from either a YAML string (any block scalar: |, >, |-,
+// >-) treated as a single element, or a YAML sequence of strings.
+type StringSlice []string
+
+func (s *StringSlice) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if value.Value == "" {
+			*s = nil
+			return nil
+		}
+		*s = StringSlice{value.Value}
+		return nil
+	case yaml.SequenceNode:
+		var items []string
+		if err := value.Decode(&items); err != nil {
+			return err
+		}
+		*s = items
+		return nil
+	default:
+		return fmt.Errorf("expected string or sequence, got %s", value.Tag)
+	}
+}
+
 type SetupConfig struct {
 	Branch         string          `yaml:"branch"`
 	Tag            string          `yaml:"tag"`
 	PipelineSource string          `yaml:"pipeline_source"`
+	Docker         bool            `yaml:"docker"`
 	MergeRequest   *MRConfig       `yaml:"merge_request"`
 	Upstream       *UpstreamConfig `yaml:"upstream"`
 	Schedule       *ScheduleConfig `yaml:"schedule"`
@@ -51,7 +83,7 @@ type GitUserConfig struct {
 type GitOriginConfig struct {
 	Branch   string            `yaml:"branch"`
 	Files    map[string]string `yaml:"files"`
-	Commands []string          `yaml:"commands"`
+	Commands StringSlice       `yaml:"commands"`
 }
 
 type APISetupConfig struct {
@@ -61,9 +93,9 @@ type APISetupConfig struct {
 }
 
 type TokenConfig struct {
-	Valid     bool     `yaml:"valid"`
-	ExpiresAt string   `yaml:"expires_at"`
-	Scopes    []string `yaml:"scopes"`
+	Valid     bool        `yaml:"valid"`
+	ExpiresAt string      `yaml:"expires_at"`
+	Scopes    StringSlice `yaml:"scopes"`
 }
 
 type ProjectConfig struct {

@@ -1,0 +1,12 @@
+spec:
+  inputs:
+    message:
+      type: string
+      default: "default message"
+
+---
+
+echo-component:
+  stage: test
+  script:
+    - echo "$[[ inputs.message ]]"

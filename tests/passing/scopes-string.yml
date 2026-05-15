@@ -1,0 +1,25 @@
+stages: [test]
+
+api-call:
+  stage: test
+  script:
+    - 'curl -sf -H "PRIVATE-TOKEN: mock-token" "$CI_API_V4_URL/projects/1" -o /dev/null'
+variables:
+  GITLAB_TOKEN: "mock-token"
+---
+.glut:
+  name: "api.token.scopes accepts plain string (StringSlice fix for scopes)"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    api:
+      token:
+        valid: true
+        scopes: "api"
+      project:
+        path: "test-group/test-project"
+        default_branch: "main"
+  assert:
+    job:
+      api-call:
+        exit-status: 0

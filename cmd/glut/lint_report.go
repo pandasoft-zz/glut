@@ -113,10 +113,10 @@ func collectLintFiles(paths []string) ([]*parser.TestFile, []lintIssue) {
 		files = append(files, parsed...)
 		for _, err := range errs {
 			issues = append(issues, lintIssue{
-				File:     path,
+				File:     err.FilePath,
 				Level:    "error",
 				Category: "parse",
-				Message:  err.Error(),
+				Message:  err.Err.Error(),
 			})
 		}
 	}

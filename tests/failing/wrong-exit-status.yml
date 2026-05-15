@@ -1,0 +1,16 @@
+stages: [test]
+
+ok-job:
+  stage: test
+  script:
+    - exit 0
+---
+.glut:
+  name: "assert fails when expected exit status does not match actual"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      ok-job:
+        exit-status: 1

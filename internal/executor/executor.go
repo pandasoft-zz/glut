@@ -27,7 +27,7 @@ const (
 
 var (
 	gitlabOutputLineRE   = regexp.MustCompile(`^(.+?) > (.*)$`)
-	gitlabFinishedLineRE = regexp.MustCompile(`^(.+?) finished in .*\s+(PASS|FAIL)(?:\s+([0-9]+))?\s*$`)
+	gitlabFinishedLineRE = regexp.MustCompile(`^(.+?) finished in .*\s+(PASS|FAIL|WARN)(?:\s+([0-9]+))?\s*$`)
 	gitlabSummaryLineRE  = regexp.MustCompile(`^\s*(PASS|FAIL)\s+(.+?)\s*$`)
 )
 
@@ -39,6 +39,7 @@ type ExecutorConfig struct {
 	Timeout       time.Duration
 	Debug         bool
 	Verbose       bool
+	UseDocker     bool
 }
 
 type RunResult struct {
@@ -63,7 +64,7 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	runCtx, cancel := withTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	args := append(baseArgs(), envArgs(cfg.EnvVars)...)
+	args := append(baseArgs(cfg.UseDocker), envArgs(cfg.EnvVars)...)
 	stdout, stderr, err := runCommand(runCtx, cfg, args...)
 	result := RunResult{
 		Jobs:      parseJobOutputs(stdout, stderr),
@@ -195,6 +196,9 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 	if tmp := os.Getenv("TMP"); tmp != "" {
 		env["TMP"] = tmp
 	}
+	if dockerConfig := os.Getenv("DOCKER_CONFIG"); dockerConfig != "" {
+		env["DOCKER_CONFIG"] = dockerConfig
+	}
 
 	if _, ok := env[config.EnvMockLogDir]; !ok {
 		if value := os.Getenv(config.EnvMockLogDir); value != "" {
@@ -220,8 +224,12 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 	return items
 }
 
-func baseArgs() []string {
-	return []string{"--shell-executor-no-image", "--no-color", "--file", pipelineFileName}
+func baseArgs(useDocker bool) []string {
+	args := []string{"--no-color", "--file", pipelineFileName}
+	if !useDocker {
+		return append([]string{"--shell-executor-no-image"}, args...)
+	}
+	return args
 }
 
 func envArgs(envVars map[string]string) []string {

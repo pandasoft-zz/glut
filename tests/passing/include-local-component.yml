@@ -1,0 +1,18 @@
+stages: [test]
+
+include:
+  - local: 'tests/fixtures/echo-component.yml'
+    inputs:
+      message: "hello from component input"
+---
+.glut:
+  name: "include local component with spec inputs injects input value into job script"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      echo-component:
+        exit-status: 0
+        stdout:
+          - "hello from component input"

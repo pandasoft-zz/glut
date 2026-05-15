@@ -13,6 +13,8 @@ func runJobAsserts(asserts map[string]config.JobAssert, ctx AssertContext) []Ass
 
 		if jobAssert.Present != nil {
 			results = append(results, resultFromBool(basePath+".present", *jobAssert.Present == present, *jobAssert.Present, present))
+		} else if !present {
+			results = append(results, failResult(basePath+".present", true, false))
 		}
 		if !present {
 			continue

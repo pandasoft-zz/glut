@@ -158,6 +158,9 @@ func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, 
 
 	listed := make([]ListedTest, 0, len(tests))
 	for _, testFile := range tests {
+		if testFile.ParseError != nil {
+			continue
+		}
 		listed = append(listed, ListedTest{
 			FilePath: testFile.FilePath,
 			TestName: testFile.Glut.Name,
@@ -197,7 +200,8 @@ func discoverTests(paths []string, pattern string) ([]parser.TestFile, error) {
 					if parser.IsMissingGlut(err) {
 						return nil
 					}
-					return err
+					collected = append(collected, parser.TestFile{FilePath: path, ParseError: err})
+					return nil
 				}
 				if matcher(testFile) {
 					collected = append(collected, *testFile)
@@ -212,7 +216,11 @@ func discoverTests(paths []string, pattern string) ([]parser.TestFile, error) {
 
 		testFile, err := loadTestFile(input)
 		if err != nil {
-			return nil, err
+			if parser.IsMissingGlut(err) {
+				return nil, err
+			}
+			collected = append(collected, parser.TestFile{FilePath: input, ParseError: err})
+			continue
 		}
 		if matcher(testFile) {
 			collected = append(collected, *testFile)
@@ -268,6 +276,15 @@ func runSingleTest(
 	opts RunOptions,
 	preservedFailed *[]string,
 ) (result TestResult) {
+	if testFile.ParseError != nil {
+		return TestResult{
+			FilePath: testFile.FilePath,
+			TestName: testFile.FilePath,
+			Passed:   false,
+			Error:    testFile.ParseError,
+		}
+	}
+
 	result = TestResult{
 		FilePath:   testFile.FilePath,
 		TestName:   testFile.Glut.Name,
@@ -382,6 +399,7 @@ func runSingleTest(
 		Timeout:       opts.Timeout,
 		Debug:         opts.Debug,
 		Verbose:       opts.Verbose,
+		UseDocker:     testFile.Glut.Setup.Docker,
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {

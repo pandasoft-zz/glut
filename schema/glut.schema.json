@@ -59,6 +59,10 @@
         },
         "mocks": {
           "$ref": "#/definitions/mocks"
+        },
+        "docker": {
+          "type": "boolean",
+          "description": "Enable Docker executor. When true, gitlab-ci-local uses Docker for jobs with image:. Default false uses shell executor (faster, no Docker daemon required). Enable when testing components that require a specific runtime image."
         }
       },
       "not": {
@@ -169,10 +173,10 @@
           }
         },
         "commands": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
         }
       }
     },
@@ -202,10 +206,10 @@
           "type": "string"
         },
         "scopes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
         }
       }
     },

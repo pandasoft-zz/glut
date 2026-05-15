@@ -4,7 +4,9 @@ ARG GOLANGCI_LINT_VERSION=v2.11.4
 ARG GCL_VERSION=4.55.0
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends bash ca-certificates curl git nodejs npm rsync \
+	&& apt-get install -y --no-install-recommends bash ca-certificates curl git rsync \
+	&& curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+	&& apt-get install -y --no-install-recommends nodejs \
 	&& rm -rf /var/lib/apt/lists/*
 
 RUN curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION#v}-linux-amd64.tar.gz" \

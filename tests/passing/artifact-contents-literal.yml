@@ -1,0 +1,26 @@
+stages: [test]
+
+build:
+  stage: test
+  script:
+    - |
+      cat > report.txt << 'EOF'
+      status: success
+      version: 2.0.0
+      environment: staging
+      EOF
+---
+.glut:
+  name: "artifact contents literal patterns match multiple lines independently"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "report.txt":
+        exists: true
+        contents:
+          - "status: success"
+          - "version: 2.0.0"
+          - "environment: staging"
+          - "!failed"
