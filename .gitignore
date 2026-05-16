@@ -4,3 +4,4 @@
 .codex/config.toml
 .glut-tmp-*/
 *.test
+/.artifacts/
