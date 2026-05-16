@@ -246,6 +246,57 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 	})
 }
 
+// TestGitLabCILocalDockerModeAddsVolumeAndExtraHost verifies BUG-2 and BUG-4: when
+// UseDocker is true the executor must pass --volume (so mock binaries and the git
+// origin inside work.Dir are reachable from inside Docker containers) and --extra-host
+// (so containers can reach the host via host.docker.internal).
+func TestGitLabCILocalDockerModeAddsVolumeAndExtraHost(t *testing.T) {
+	hostPath := os.Getenv("PATH")
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := writeExecutable(binDir, "gitlab-ci-local", echoArgsScript()); err != nil {
+		t.Fatalf("write echo-args script: %v", err)
+	}
+
+	t.Setenv("PATH", joinPath(binDir, hostPath))
+	t.Setenv("HOME", tempDir)
+	t.Setenv("TMP", tempDir)
+
+	volumeMount := tempDir + ":" + tempDir
+	extraHost := "host.docker.internal:host-gateway"
+
+	result, err := Run(context.Background(), ExecutorConfig{
+		WorkspacePath:    tempDir,
+		PipelineYAML:     "job:\n  image: alpine\n  script: echo hi\n",
+		UseDocker:        true,
+		DockerVolumes:    []string{volumeMount},
+		DockerExtraHosts: []string{extraHost},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(result.RawStdout, "--volume") {
+		t.Errorf("--volume missing from gitlab-ci-local args; stdout = %q", result.RawStdout)
+	}
+	if !strings.Contains(result.RawStdout, volumeMount) {
+		t.Errorf("volume mount %q missing from args; stdout = %q", volumeMount, result.RawStdout)
+	}
+	if !strings.Contains(result.RawStdout, "--extra-host") {
+		t.Errorf("--extra-host missing from gitlab-ci-local args; stdout = %q", result.RawStdout)
+	}
+	if !strings.Contains(result.RawStdout, extraHost) {
+		t.Errorf("extra host %q missing from args; stdout = %q", extraHost, result.RawStdout)
+	}
+	if strings.Contains(result.RawStdout, "--shell-executor-no-image") {
+		t.Errorf("--shell-executor-no-image must not appear in docker mode; stdout = %q", result.RawStdout)
+	}
+}
+
 func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
 	args := append(baseArgs(false), envArgs(map[string]string{"CI": "true"})...)
 	joined := strings.Join(args, " ")
@@ -384,6 +435,13 @@ func TestCheckDependenciesReportsMissingCommands(t *testing.T) {
 	if !strings.Contains(problems[0], "rsync") {
 		t.Fatalf("expected rsync warning, got %#v", problems)
 	}
+}
+
+func echoArgsScript() string {
+	if runtime.GOOS == "windows" {
+		return "@echo off\r\necho %*\r\n"
+	}
+	return "#!/bin/sh\necho \"$@\"\n"
 }
 
 func writeExecutable(dir string, name string, content string) error {

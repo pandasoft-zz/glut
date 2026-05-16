@@ -378,7 +378,7 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	if hasMockBinaries(testFile) {
-		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath))
+		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), testFile.Glut.Setup.Docker)
 	}
 	phaseTimings["mock-binaries"] = time.Since(phaseStart)
 	if primaryErr != nil {
@@ -397,15 +397,25 @@ func runSingleTest(
 	}
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
+	useDocker := testFile.Glut.Setup.Docker
+	if useDocker {
+		// BUG-3: Docker containers cannot reach 127.0.0.1; rewrite API URLs to use
+		// host.docker.internal so the mock server is reachable from inside containers.
+		port := server.Port()
+		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://host.docker.internal:%d", port)
+		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://host.docker.internal:%d/api/v4", port)
+	}
 	execCfg := executor.ExecutorConfig{
-		WorkspacePath: work.WorkspaceDir,
-		PipelineYAML:  testFile.PipelineYAML,
-		EnvVars:       envVars,
-		MockBinPath:   workspace.MockBinaryBinDir(work.Dir),
-		Timeout:       opts.Timeout,
-		Debug:         opts.Debug,
-		Verbose:       opts.Verbose,
-		UseDocker:     testFile.Glut.Setup.Docker,
+		WorkspacePath:    work.WorkspaceDir,
+		PipelineYAML:     testFile.PipelineYAML,
+		EnvVars:          envVars,
+		MockBinPath:      workspace.MockBinaryBinDir(work.Dir),
+		Timeout:          opts.Timeout,
+		Debug:            opts.Debug,
+		Verbose:          opts.Verbose,
+		UseDocker:        useDocker,
+		DockerVolumes:    dockerVolumes(useDocker, work.Dir),
+		DockerExtraHosts: dockerExtraHosts(useDocker),
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
@@ -667,6 +677,26 @@ func copyPhaseTimings(values map[string]time.Duration) map[string]time.Duration 
 		out[key] = value
 	}
 	return out
+}
+
+// dockerVolumes returns the --volume mounts needed for Docker executor jobs.
+// work.Dir contains mock binaries (BUG-2), mock logs, and the bare git origin
+// (BUG-4), so mounting it at the same path gives containers full access.
+func dockerVolumes(useDocker bool, workDir string) []string {
+	if !useDocker {
+		return nil
+	}
+	return []string{workDir + ":" + workDir}
+}
+
+// dockerExtraHosts returns the --extra-host entries needed for Docker executor jobs.
+// host.docker.internal resolves to the host IP inside containers so they can reach
+// the mock API server that GLUT starts on the host (BUG-3).
+func dockerExtraHosts(useDocker bool) []string {
+	if !useDocker {
+		return nil
+	}
+	return []string{"host.docker.internal:host-gateway"}
 }
 
 func errorsToStrings(errs []error) []string {

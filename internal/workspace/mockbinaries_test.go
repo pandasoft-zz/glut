@@ -29,7 +29,7 @@ func TestSetupMockBinariesCreatesWrapperLinksAndRealScripts(t *testing.T) {
 		},
 	}
 
-	if err := SetupMockBinaries(tmpWork, mocks, glutBin); err != nil {
+	if err := SetupMockBinaries(tmpWork, mocks, glutBin, false); err != nil {
 		t.Fatalf("setup mock binaries: %v", err)
 	}
 

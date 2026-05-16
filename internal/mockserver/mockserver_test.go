@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 
@@ -309,6 +310,17 @@ func TestConcurrentRequestsAreSafe(t *testing.T) {
 	}
 	if len(releases) != 20 {
 		t.Fatalf("expected 20 releases, got %d", len(releases))
+	}
+}
+
+// TestServerDoesNotBindToLocalhostOnly verifies BUG-3: the mock API server must listen on
+// all network interfaces so Docker sibling containers can reach it via host.docker.internal.
+// Binding to 127.0.0.1 makes the server unreachable from inside Docker containers.
+func TestServerDoesNotBindToLocalhostOnly(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{})
+	addr := server.ListenAddr()
+	if strings.HasPrefix(addr, "127.0.0.1") {
+		t.Errorf("server listens on %q — Docker containers cannot reach 127.0.0.1; server must bind to 0.0.0.0", addr)
 	}
 }
 

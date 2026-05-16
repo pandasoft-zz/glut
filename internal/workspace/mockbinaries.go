@@ -18,7 +18,7 @@ const (
 	mockLogDirName  = "mock-logs"
 )
 
-func SetupMockBinaries(tmpWork string, mocks parser.MocksConfig, glutBinPath string) error {
+func SetupMockBinaries(tmpWork string, mocks parser.MocksConfig, glutBinPath string, useDocker bool) error {
 	if len(mocks.Binaries) == 0 {
 		return nil
 	}
@@ -41,6 +41,20 @@ func SetupMockBinaries(tmpWork string, mocks parser.MocksConfig, glutBinPath str
 		}
 	}
 
+	// When running with Docker, the glut binary may live outside the volume-mounted
+	// workspace. Copy it inside so Docker containers can reach it via the mount.
+	binTarget := glutBinPath
+	if useDocker {
+		inWorkBin := filepath.Join(tmpWork, "glut-wrapper")
+		if err := copyExecutable(glutBinPath, inWorkBin); err != nil {
+			return fmt.Errorf("copy glut binary for docker: %w", err)
+		}
+		if err := os.Chmod(inWorkBin, 0755); err != nil {
+			return fmt.Errorf("chmod glut wrapper: %w", err)
+		}
+		binTarget = inWorkBin
+	}
+
 	for name, mock := range mocks.Binaries {
 		if err := validateMockBinaryName(name); err != nil {
 			return err
@@ -55,7 +69,7 @@ func SetupMockBinaries(tmpWork string, mocks parser.MocksConfig, glutBinPath str
 		if err := os.Remove(linkPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("replace mock binary link %s: %w", name, err)
 		}
-		if err := linkMockBinary(linkPath, glutBinPath); err != nil {
+		if err := linkMockBinary(linkPath, binTarget); err != nil {
 			return fmt.Errorf("link mock binary %s: %w", name, err)
 		}
 	}
