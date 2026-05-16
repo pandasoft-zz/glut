@@ -635,6 +635,120 @@ func testFileYAML(testName string, jobName string, expectedStdout string) string
 `, jobName, testName, jobName, expectedStdout)
 }
 
+func TestRunMockBinaryWorksWithDockerImageJob(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, dockerAwareFakeGCLScript())
+	logger := filepath.Join(env.repoDir, "mock-logger")
+	writeExecutable(t, env.repoDir, "mock-logger", `#!/bin/sh
+name="$(basename "$0")"
+mkdir -p "$GLUT_MOCK_LOG_DIR"
+printf '{"name":"%s","args":["--flag"],"cwd":"%s","stdin":""}\n' "$name" "$(pwd)" >> "$GLUT_MOCK_LOG_DIR/$name.jsonl"
+`)
+	env.writeRawFile(t, "tests/docker-mock.yml", strings.TrimSpace(`
+stages: [test]
+
+docker-mock-job:
+  image: alpine:3.18
+  stage: test
+  script:
+    - mock-tool --flag
+---
+.glut:
+  name: mock binary accessible from docker image job
+  setup:
+    mocks:
+      binaries:
+        mock-tool:
+          executable: "echo mocked"
+  assert:
+    job:
+      docker-mock-job:
+        present: true
+    binary:
+      mock-tool:
+        called: true
+        times: 1
+        calls:
+          - args:
+              contain-element: "--flag"
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{GlutBinPath: logger})
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
+func TestRunAPICallWorksWithDockerImageJob(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, dockerAwareFakeGCLScript())
+	env.writeRawFile(t, "tests/docker-api.yml", strings.TrimSpace(`
+stages: [test]
+
+docker-api-job:
+  image: alpine:3.18
+  stage: test
+  script:
+    - curl --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1"
+---
+.glut:
+  name: api server reachable from docker image job
+  assert:
+    job:
+      docker-api-job:
+        present: true
+    api:
+      "GET /api/v4/projects/1":
+        called: true
+        times: 1
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
+func TestRunGitOriginReachableFromDockerImageJob(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, dockerAwareFakeGCLScript())
+	env.writeRawFile(t, "tests/docker-git.yml", strings.TrimSpace(`
+stages: [test]
+
+docker-git-job:
+  image: alpine:3.18
+  stage: test
+  script:
+    - git fetch origin
+    - echo "fetch ok"
+---
+.glut:
+  name: git origin reachable from docker image job
+  setup:
+    git:
+      origin:
+        branch: main
+        files:
+          README.md: initial
+  assert:
+    job:
+      docker-git-job:
+        present: true
+        exit-status: 0
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
 func fakeGitLabCILocalScript() string {
 	return `#!/bin/sh
 if [ "$1" = "--list" ]; then
@@ -660,6 +774,36 @@ case "$job_name" in
     ;;
 esac
 printf 'GLUT_JOB|name=%s|exit=0|stdout=%s|stderr=\n' "$job_name" "$stdout"
+`
+}
+
+func dockerAwareFakeGCLScript() string {
+	return `#!/bin/sh
+FORCE_SHELL=0
+for arg in "$@"; do
+  case "$arg" in --force-shell-executor) FORCE_SHELL=1 ;; esac
+done
+
+if [ "$1" = "--list" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+  exit 0
+fi
+
+job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
+
+if grep -qE '^  image:' .gitlab-ci.yml && [ "$FORCE_SHELL" = "0" ]; then
+  printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker isolation: mock resources unreachable\n' "$job_name"
+  exit 0
+fi
+
+if grep -q 'mock-tool' .gitlab-ci.yml; then
+  mock-tool --flag >/dev/null
+fi
+if grep -q 'CI_API_V4_URL' .gitlab-ci.yml; then
+  curl --silent --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1" >/dev/null
+fi
+
+printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
 `
 }
 
