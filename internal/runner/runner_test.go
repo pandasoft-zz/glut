@@ -737,14 +737,15 @@ func strconv(value int) string {
 
 func TestRunUsesGetWdWhenWorkDirEmpty(t *testing.T) {
 	t.Parallel()
-	// When WorkDir is empty Run calls os.Getwd(). The test just verifies no
-	// crash and that we get a non-runner-error (tests will fail due to missing
-	// gitlab-ci-local, but not due to a bad workdir).
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{DebugPause: "bad"})
-	if exitCode != ExitRunnerError || result.Error == nil {
-		// Just confirming Run doesn't panic
+	// WorkDir="" causes Run to call os.Getwd(). Non-existent path forces
+	// discoverTests to fail, exercising the empty-workdir branch.
+	result, exitCode := Run(context.Background(), []string{"/nonexistent-path-xyz-9999"}, RunOptions{})
+	if exitCode != ExitRunnerError {
+		t.Errorf("expected ExitRunnerError, got %d", exitCode)
 	}
-	_ = result
+	if result.Error == nil {
+		t.Error("expected an error when path does not exist")
+	}
 }
 
 func TestListSkipsParseErrorFiles(t *testing.T) {

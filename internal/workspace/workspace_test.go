@@ -419,8 +419,8 @@ func TestWorkspaceResolveExecutable(t *testing.T) {
 	t.Run("nil_hostenv_found", func(t *testing.T) {
 		t.Parallel()
 		result := resolveExecutable("sh", nil)
-		if result == "" || result == "sh" {
-			// On most systems sh exists; just ensure no panic
+		if result == "" {
+			t.Error("expected non-empty result for sh")
 		}
 	})
 

@@ -495,8 +495,8 @@ func TestResolveExecutable(t *testing.T) {
 	t.Run("nil_hostenv_found", func(t *testing.T) {
 		t.Parallel()
 		result := resolveExecutable("sh", nil)
-		if result == "sh" {
-			// ok on unusual systems; just no panic
+		if result == "" {
+			t.Error("expected non-empty result for sh")
 		}
 	})
 
