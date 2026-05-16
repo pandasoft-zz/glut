@@ -46,6 +46,7 @@ type RunOptions struct {
 	KeepLastFailed int
 	GlutBinPath    string
 	CopyStrategy   string
+	Include        []string
 	Progress       []ProgressSink
 }
 
@@ -347,6 +348,7 @@ func runSingleTest(
 	phaseStart := time.Now()
 	work, primaryErr = workspace.New(testFile.Glut.Setup, false, repoRoot, workspace.Options{
 		CopyStrategy: opts.CopyStrategy,
+		Include:      opts.Include,
 		Verbose:      opts.Verbose,
 	})
 	phaseTimings["workspace"] = time.Since(phaseStart)

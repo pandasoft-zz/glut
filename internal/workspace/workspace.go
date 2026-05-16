@@ -23,6 +23,7 @@ const (
 
 type Options struct {
 	CopyStrategy string // auto, rsync, native
+	Include      []string
 	Verbose      bool
 }
 
@@ -292,6 +293,28 @@ func removeRemoteIfExists(dir string, name string) error {
 // auto (default) tries rsync first and falls back to native Go copy; rsync and
 // native force the respective method. In verbose mode the chosen method is logged.
 func copyRepo(src, dst string, opts Options) error {
+	if len(opts.Include) > 0 {
+		return copyRepoIncludes(src, dst, opts)
+	}
+	return copyRepoAll(src, dst, opts)
+}
+
+// copyRepoIncludes copies only the listed subdirectories from src into dst.
+func copyRepoIncludes(src, dst string, opts Options) error {
+	for _, inc := range opts.Include {
+		incSrc := filepath.Join(src, inc)
+		incDst := filepath.Join(dst, inc)
+		if err := os.MkdirAll(filepath.Dir(incDst), 0755); err != nil {
+			return err
+		}
+		if err := copyRepoAll(incSrc, incDst, opts); err != nil {
+			return fmt.Errorf("include %q: %w", inc, err)
+		}
+	}
+	return nil
+}
+
+func copyRepoAll(src, dst string, opts Options) error {
 	strategy := opts.CopyStrategy
 	if strategy == "" {
 		strategy = CopyStrategyAuto

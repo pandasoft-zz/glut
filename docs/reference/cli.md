@@ -35,6 +35,8 @@ Flags:
 | `--keep-workspace` | | `GLUT_KEEP_WORKSPACE` | Keep the workspace after the run. |
 | `--debug-pause <point>` | | | Pause at a debug point. Valid values: `before-pipeline`, `before-asserts`, `after-pipeline` (alias for `before-asserts`), `on-fail`. |
 | `--keep-last-failed <n>` | | | Keep the last N failed workspaces. |
+| `--include <dir>` | | | Copy only this subdirectory into the workspace. Can be repeated. |
+| `--copy-strategy <strategy>` | | | Workspace copy strategy: `auto` (default), `rsync`, or `native`. |
 
 Examples:
 
@@ -44,6 +46,8 @@ glut run --fail-fast ./tests
 glut run --report=junit:report.xml ./tests
 glut run --report=junit:report.xml --report=tap:report.tap ./tests
 glut run --debug --keep-workspace ./tests/release.yml
+glut run --include tests ./tests/
+glut run --include component --include shared ./tests/
 ```
 
 Supported report formats are `junit` and `tap`.
@@ -54,6 +58,41 @@ Supported report formats are `junit` and `tap`.
 export GLUT_REPORT="junit:report.xml,tap:report.tap"
 glut run ./tests
 ```
+
+### Workspace Copy Performance
+
+By default GLUT copies the entire current directory into an isolated workspace
+before each test. For large repositories this can be the dominant cost of a
+test run.
+
+**`--include` — copy only what the pipeline needs**
+
+```bash
+glut run --include tests ./tests/
+glut run --include component --include shared ./tests/
+```
+
+Use `--include` to restrict the copy to one or more subdirectories. The flag
+can be repeated. Only those subdirectories are present in the workspace; all
+other repository files are excluded. This is safe whenever your pipeline does
+not reference files outside the listed directories.
+
+**`--copy-strategy` — choose how files are copied**
+
+| Strategy | Behaviour |
+| --- | --- |
+| `auto` | Try `rsync` first; fall back to native Go copy if rsync is not installed. This is the default. |
+| `rsync` | Always use `rsync`. Fails if rsync is not installed. |
+| `native` | Always use the built-in Go file copy. |
+
+```bash
+glut run --copy-strategy=rsync ./tests/
+glut run --copy-strategy=native ./tests/
+```
+
+`rsync` is typically the fastest option on Linux and in Docker because it
+transfers only the data and skips `.git`. Use `native` when rsync is not
+available or on filesystems where rsync performs poorly.
 
 ### Debugging a Failing Test
 

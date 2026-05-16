@@ -21,6 +21,7 @@ type RunOptions struct {
 	DebugPause     string
 	KeepLastFailed int
 	CopyStrategy   string
+	Include        []string
 }
 
 type LintOptions struct {
@@ -54,6 +55,7 @@ func runOptionsFromCommand(args []string) RunOptions {
 		DebugPause:     runDebugPause,
 		KeepLastFailed: runKeepLastFailed,
 		CopyStrategy:   runCopyStrategy,
+		Include:        append([]string(nil), runInclude...),
 	}
 }
 
