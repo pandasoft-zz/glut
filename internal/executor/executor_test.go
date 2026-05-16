@@ -411,31 +411,29 @@ func writeExecutable(dir string, name string, content string) error {
 		path := filepath.Join(dir, name+".cmd")
 		return os.WriteFile(path, []byte(content), 0755)
 	}
-	// Write to a temp file then rename to avoid ETXTBSY on overlayfs (Docker CI).
-	// On overlayfs, exec'ing a file immediately after WriteFile can fail because
-	// the kernel still holds an implicit write reference during the copy-up.
+	// Write via temp+rename to avoid ETXTBSY on overlayfs in Docker CI.
 	tmp, err := os.CreateTemp(dir, ".tmp-exec-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Chmod(0755); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return os.Rename(tmpPath, filepath.Join(dir, name))
