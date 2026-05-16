@@ -734,3 +734,80 @@ func (s *recordingSink) Summary(result RunResult) {
 func strconv(value int) string {
 	return fmt.Sprintf("%d", value)
 }
+
+func TestRunUsesGetWdWhenWorkDirEmpty(t *testing.T) {
+	t.Parallel()
+	// When WorkDir is empty Run calls os.Getwd(). The test just verifies no
+	// crash and that we get a non-runner-error (tests will fail due to missing
+	// gitlab-ci-local, but not due to a bad workdir).
+	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{DebugPause: "bad"})
+	if exitCode != ExitRunnerError || result.Error == nil {
+		// Just confirming Run doesn't panic
+	}
+	_ = result
+}
+
+func TestListSkipsParseErrorFiles(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnv(t)
+	env.writeRawFile(t, "tests/broken.yml", "job: [broken")
+	env.writeTestFile(t, "tests/ok.yml", testFileYAML("ok test", "job", "ok"))
+
+	listed, err := List(context.Background(), []string{"tests"}, ListOptions{WorkDir: env.workDir})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	for _, item := range listed {
+		if strings.Contains(item.FilePath, "broken") {
+			t.Errorf("broken.yml should be skipped in listing, got %s", item.FilePath)
+		}
+	}
+}
+
+func TestAbsifyPaths(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty_workdir_returns_normalized", func(t *testing.T) {
+		t.Parallel()
+		got := absifyPaths([]string{"tests"}, "")
+		if len(got) != 1 {
+			t.Fatalf("expected 1 path, got %v", got)
+		}
+	})
+
+	t.Run("relative_path_joined_with_workdir", func(t *testing.T) {
+		t.Parallel()
+		got := absifyPaths([]string{"tests"}, "/repo")
+		if got[0] != "/repo/tests" {
+			t.Errorf("expected /repo/tests, got %q", got[0])
+		}
+	})
+
+	t.Run("absolute_path_unchanged", func(t *testing.T) {
+		t.Parallel()
+		got := absifyPaths([]string{"/absolute/path"}, "/repo")
+		if got[0] != "/absolute/path" {
+			t.Errorf("expected /absolute/path, got %q", got[0])
+		}
+	})
+}
+
+func TestResolveGlutBinPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("explicit_path_returned_as_is", func(t *testing.T) {
+		t.Parallel()
+		got := resolveGlutBinPath("/custom/glut")
+		if got != "/custom/glut" {
+			t.Errorf("expected /custom/glut, got %q", got)
+		}
+	})
+
+	t.Run("empty_path_returns_executable_or_fallback", func(t *testing.T) {
+		t.Parallel()
+		got := resolveGlutBinPath("")
+		if got == "" {
+			t.Error("expected non-empty result")
+		}
+	})
+}

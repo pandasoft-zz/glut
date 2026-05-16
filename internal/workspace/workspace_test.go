@@ -323,6 +323,153 @@ func TestCopyRepoCopiesFilesNatively(t *testing.T) {
 	}
 }
 
+func TestCopyDirSkipsGitDir(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(filepath.Join(src, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".git", "config"), []byte("git config"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
+		t.Error(".git dir should be skipped by copyDir")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "file.txt")); err != nil {
+		t.Errorf("regular file should be copied: %v", err)
+	}
+}
+
+func TestCopyRepoNativeVerbose(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("v"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyNative, Verbose: true}); err != nil {
+		t.Fatalf("copyRepo verbose native: %v", err)
+	}
+}
+
+func TestCopyRepoWithIncludes(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+
+	if err := os.MkdirAll(filepath.Join(src, "sub", "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sub", "a.txt"), []byte("aaa"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "other.txt"), []byte("bbb"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyRepo(src, dst, Options{Include: []string{"sub"}, CopyStrategy: CopyStrategyNative}); err != nil {
+		t.Fatalf("copyRepo with includes: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "sub", "a.txt")); err != nil {
+		t.Errorf("included file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "other.txt")); err == nil {
+		t.Errorf("excluded file should not be present")
+	}
+}
+
+func TestCopyRepoNativeStrategy(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("native"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyNative}); err != nil {
+		t.Fatalf("copyRepo native: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if err != nil || string(data) != "native" {
+		t.Fatalf("native copy: read file error = %v, data = %q", err, data)
+	}
+}
+
+func TestWorkspaceResolveExecutable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_hostenv_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("sh", nil)
+		if result == "" || result == "sh" {
+			// On most systems sh exists; just ensure no panic
+		}
+	})
+
+	t.Run("nil_hostenv_not_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("no-such-binary-xyzzy-9999", nil)
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("custom_path_found", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "mybin")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		env := []string{"PATH=" + dir}
+		result := resolveExecutable("mybin", env)
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
+
+	t.Run("custom_path_not_found", func(t *testing.T) {
+		t.Parallel()
+		env := []string{"PATH=/tmp"}
+		result := resolveExecutable("no-such-binary-xyzzy-9999", env)
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("empty_dir_in_path", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "mybin2")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		env := []string{"PATH=:" + dir}
+		result := resolveExecutable("mybin2", env)
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
+}
+
 func TestNewCleansTempWorkspaceOnError(t *testing.T) {
 	t.Parallel()
 	tmpRoot := t.TempDir()

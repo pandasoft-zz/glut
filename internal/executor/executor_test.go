@@ -475,3 +475,70 @@ func joinPath(first string, rest string) string {
 	}
 	return first + string(os.PathListSeparator) + rest
 }
+
+func TestBaseArgsDockerMode(t *testing.T) {
+	t.Parallel()
+	args := baseArgs(true)
+	for _, a := range args {
+		if a == "--shell-executor-no-image" {
+			t.Error("docker mode should not include --shell-executor-no-image")
+		}
+	}
+	if len(args) == 0 {
+		t.Error("expected non-empty args in docker mode")
+	}
+}
+
+func TestResolveExecutable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_hostenv_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("sh", nil)
+		if result == "sh" {
+			// ok on unusual systems; just no panic
+		}
+	})
+
+	t.Run("nil_hostenv_not_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("no-such-binary-xyzzy-9999", nil)
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("custom_path_found", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "myexec")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		result := resolveExecutable("myexec", []string{"PATH=" + dir})
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
+
+	t.Run("custom_path_not_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("no-such-binary-xyzzy-9999", []string{"PATH=/tmp"})
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("empty_dir_in_path_skipped", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "myexec2")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		result := resolveExecutable("myexec2", []string{"PATH=:" + dir})
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
+}
