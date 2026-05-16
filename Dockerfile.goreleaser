@@ -1,8 +1,8 @@
-FROM ubuntu:24.04
+FROM node:22-slim
 ARG TARGETPLATFORM
 ARG GCL_VERSION=4.55.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates docker.io git nodejs npm rsync \
+    bash ca-certificates curl docker.io git rsync \
     && npm install -g gitlab-ci-local@${GCL_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 COPY ${TARGETPLATFORM}/glut /usr/local/bin/glut
