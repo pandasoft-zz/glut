@@ -157,23 +157,31 @@ func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, c
 
 func runCommand(ctx context.Context, cfg ExecutorConfig, args ...string) (string, string, error) {
 	binaryPath := resolveExecutable("gitlab-ci-local", cfg.HostEnv)
-	cmd := exec.CommandContext(ctx, binaryPath, args...)
-	cmd.Dir = cfg.WorkspacePath
-	cmd.Env = buildCommandEnv(cfg)
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		cmd := exec.CommandContext(ctx, binaryPath, args...)
+		cmd.Dir = cfg.WorkspacePath
+		cmd.Env = buildCommandEnv(cfg)
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return stdout.String(), stderr.String(), ctx.Err()
+		if err := cmd.Run(); err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return stdout.String(), stderr.String(), ctx.Err()
+			}
+			// Retry on ETXTBSY (overlayfs write-reference not yet cleared).
+			if attempt < maxAttempts-1 && strings.Contains(err.Error(), "text file busy") {
+				time.Sleep(time.Duration(1<<uint(attempt)) * 10 * time.Millisecond)
+				continue
+			}
+			return stdout.String(), stderr.String(), fmt.Errorf("%w; stdout: %s; stderr: %s", err, tailForError(stdout.String()), tailForError(stderr.String()))
 		}
-		return stdout.String(), stderr.String(), fmt.Errorf("%w; stdout: %s; stderr: %s", err, tailForError(stdout.String()), tailForError(stderr.String()))
+		return stdout.String(), stderr.String(), nil
 	}
-
-	return stdout.String(), stderr.String(), nil
+	return "", "", fmt.Errorf("executor: runCommand: could not exec binary after %d attempts", maxAttempts)
 }
 
 func buildCommandEnv(cfg ExecutorConfig) []string {
