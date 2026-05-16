@@ -11,8 +11,9 @@ import (
 )
 
 func TestWorkspace_NewAndDestroy(t *testing.T) {
+	t.Parallel()
 	cfg := parser.SetupConfig{}
-	w, err := New(cfg, false, ".", Options{})
+	w, err := New(cfg, false, ".", Options{HostEnv: noSignGitEnv(t)})
 	if err != nil {
 		t.Fatalf("failed to create workspace: %v", err)
 	}
@@ -154,6 +155,7 @@ func TestEnvVars(t *testing.T) {
 }
 
 func TestGitOriginFilesAndCommands(t *testing.T) {
+	t.Parallel()
 	cfg := parser.SetupConfig{
 		Git: &parser.GitSetupConfig{
 			Origin: &parser.GitOriginConfig{
@@ -167,7 +169,7 @@ func TestGitOriginFilesAndCommands(t *testing.T) {
 			},
 		},
 	}
-	w, err := New(cfg, false, ".", Options{})
+	w, err := New(cfg, false, ".", Options{HostEnv: noSignGitEnv(t)})
 	if err != nil {
 		t.Fatalf("failed to create workspace: %v", err)
 	}
@@ -230,16 +232,16 @@ func TestGitHelpersNoopBranches(t *testing.T) {
 		t.Fatalf("git config name: %v", err)
 	}
 
-	if err := commitIfStaged(dir, "empty"); err != nil {
+	if err := commitIfStaged(dir, "empty", nil); err != nil {
 		t.Fatalf("commitIfStaged empty repo error = %v", err)
 	}
-	if err := removeRemoteIfExists(dir, "origin"); err != nil {
+	if err := removeRemoteIfExists(dir, "origin", nil); err != nil {
 		t.Fatalf("remove missing remote error = %v", err)
 	}
 	if err := runCmd(dir, "git", "remote", "add", "origin", "/tmp/origin.git"); err != nil {
 		t.Fatalf("add remote: %v", err)
 	}
-	if err := removeRemoteIfExists(dir, "origin"); err != nil {
+	if err := removeRemoteIfExists(dir, "origin", nil); err != nil {
 		t.Fatalf("remove remote error = %v", err)
 	}
 }
@@ -322,10 +324,10 @@ func TestCopyRepoCopiesFilesNatively(t *testing.T) {
 }
 
 func TestNewCleansTempWorkspaceOnError(t *testing.T) {
+	t.Parallel()
 	tmpRoot := t.TempDir()
-	t.Setenv("TMPDIR", tmpRoot)
 
-	_, err := New(parser.SetupConfig{}, false, filepath.Join(tmpRoot, "missing-source"), Options{})
+	_, err := New(parser.SetupConfig{}, false, filepath.Join(tmpRoot, "missing-source"), Options{TempDir: tmpRoot})
 	if err == nil {
 		t.Fatal("expected New to fail for missing source")
 	}

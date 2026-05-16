@@ -15,10 +15,11 @@ import (
 )
 
 func TestRunPassingTest(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/pass.yml", testFileYAML("pass test", "pass-job", "ok"))
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitOK)
 	}
@@ -31,10 +32,11 @@ func TestRunPassingTest(t *testing.T) {
 }
 
 func TestRunFailingAssertResult(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/fail.yml", testFileYAML("fail test", "fail-job", "expected"))
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -47,6 +49,7 @@ func TestRunFailingAssertResult(t *testing.T) {
 }
 
 func TestRunReturnsRunnerErrorForInvalidInput(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeRawFile(t, "tests/invalid.yml", strings.TrimSpace(`
 test-job:
@@ -59,7 +62,7 @@ test-job:
     pipeline_source: merge_request_event
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -69,6 +72,7 @@ test-job:
 }
 
 func TestRunReturnsErrorMessageForInvalidDebugPause(t *testing.T) {
+	t.Parallel()
 	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{DebugPause: "bad"})
 	if exitCode != ExitRunnerError {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitRunnerError)
@@ -79,11 +83,12 @@ func TestRunReturnsErrorMessageForInvalidDebugPause(t *testing.T) {
 }
 
 func TestRunFailFastStopsAfterFirstFailure(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/01-fail.yml", testFileYAML("first fail", "job-one", "want"))
 	env.writeTestFile(t, "tests/02-pass.yml", testFileYAML("second pass", "job-two", "ok"))
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{FailFast: true})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{FailFast: true}))
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -96,12 +101,13 @@ func TestRunFailFastStopsAfterFirstFailure(t *testing.T) {
 }
 
 func TestRunMaxFailStopsAfterLimit(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/01-fail.yml", testFileYAML("first fail", "job-one", "want"))
 	env.writeTestFile(t, "tests/02-fail.yml", testFileYAML("second fail", "job-three", "want"))
 	env.writeTestFile(t, "tests/03-pass.yml", testFileYAML("third pass", "job-two", "ok"))
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{MaxFail: 2})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{MaxFail: 2}))
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -111,11 +117,12 @@ func TestRunMaxFailStopsAfterLimit(t *testing.T) {
 }
 
 func TestListSupportsPatternAndRecursiveDiscovery(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/a/alpha.yml", testFileYAML("alpha", "job-alpha", "ok"))
 	env.writeTestFile(t, "tests/b/beta.yml", testFileYAML("beta", "job-beta", "ok"))
 
-	tests, err := List(context.Background(), []string{"tests"}, ListOptions{RunPattern: "beta"})
+	tests, err := List(context.Background(), []string{"tests"}, ListOptions{RunPattern: "beta", WorkDir: env.workDir})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -128,12 +135,13 @@ func TestListSupportsPatternAndRecursiveDiscovery(t *testing.T) {
 }
 
 func TestRunPreservesOnlyLastFailedWorkspaces(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/01.yml", testFileYAML("fail one", "job-one", "want"))
 	env.writeTestFile(t, "tests/02.yml", testFileYAML("fail two", "job-three", "want"))
 	env.writeTestFile(t, "tests/03.yml", testFileYAML("fail three", "job-four", "want"))
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{KeepLastFailed: 2})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{KeepLastFailed: 2}))
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -157,13 +165,14 @@ func TestRunPreservesOnlyLastFailedWorkspaces(t *testing.T) {
 }
 
 func TestRunProgressSinkReceivesEventsInOrder(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/pass.yml", testFileYAML("pass test", "pass-job", "ok"))
 
 	sink := &recordingSink{}
-	_, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{
+	_, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{
 		Progress: []ProgressSink{sink},
-	})
+	}))
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitOK)
 	}
@@ -175,11 +184,11 @@ func TestRunProgressSinkReceivesEventsInOrder(t *testing.T) {
 }
 
 func TestRunDebugPauseBeforePipelineContinues(t *testing.T) {
-	env := newRunnerTestEnv(t)
+	env := newRunnerTestEnv(t) // no t.Parallel — withStdinLine mutates os.Stdin (global state)
 	env.writeTestFile(t, "tests/pass.yml", testFileYAML("pass test", "pass-job", "ok"))
 
 	withStdinLine(t, func() {
-		result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{DebugPause: "before-pipeline"})
+		result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{DebugPause: "before-pipeline"}))
 		if exitCode != ExitOK {
 			t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
 		}
@@ -190,10 +199,11 @@ func TestRunDebugPauseBeforePipelineContinues(t *testing.T) {
 }
 
 func TestRunDebugKeepsFailureDiagnostics(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/fail.yml", testFileYAML("fail test", "fail-job", "expected"))
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{Debug: true})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{Debug: true}))
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -217,6 +227,7 @@ func TestRunDebugKeepsFailureDiagnostics(t *testing.T) {
 }
 
 func TestRunRecordsMockBinaryCalls(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	logger := filepath.Join(env.repoDir, "mock-logger")
 	writeExecutable(t, env.repoDir, "mock-logger", `#!/bin/sh
@@ -253,7 +264,7 @@ mock-job:
               contain-element: "--flag"
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{GlutBinPath: logger})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{GlutBinPath: logger}))
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
 	}
@@ -263,6 +274,7 @@ mock-job:
 }
 
 func TestRunChecksArtifactsAndAPICalls(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeRawFile(t, "tests/api-artifact.yml", strings.TrimSpace(`
 stages: [test]
@@ -291,7 +303,7 @@ call-api:
         times: 1
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
 	}
@@ -301,6 +313,7 @@ call-api:
 }
 
 func TestRunReportsMockBinarySetupError(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeRawFile(t, "tests/mock-setup-error.yml", strings.TrimSpace(`
 stages: [test]
@@ -323,7 +336,7 @@ mock-job:
         present: true
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{GlutBinPath: filepath.Join(env.repoDir, "missing-glut")})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{GlutBinPath: filepath.Join(env.repoDir, "missing-glut")}))
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -336,6 +349,7 @@ mock-job:
 }
 
 func TestRunReportsListJobsError(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalListErrorScript())
 	env.writeRawFile(t, "tests/list-error.yml", strings.TrimSpace(`
 stages: [test]
@@ -353,7 +367,7 @@ list-job:
         present: false
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -366,6 +380,7 @@ list-job:
 }
 
 func TestRunReportsPipelineErrorWithoutJobOutput(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalPipelineErrorScript())
 	env.writeRawFile(t, "tests/pipeline-error.yml", strings.TrimSpace(`
 stages: [test]
@@ -383,7 +398,7 @@ pipeline-job:
         exists: false
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitTestFailed {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
 	}
@@ -396,10 +411,11 @@ pipeline-job:
 }
 
 func TestRunKeepWorkspacePreservesPassingWorkspace(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeTestFile(t, "tests/pass.yml", testFileYAML("pass test", "pass-job", "ok"))
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{KeepWorkspace: true})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{KeepWorkspace: true}))
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitOK)
 	}
@@ -413,6 +429,7 @@ func TestRunKeepWorkspacePreservesPassingWorkspace(t *testing.T) {
 }
 
 func TestRunnerHelperBranches(t *testing.T) {
+	t.Parallel()
 	if got := normalizePaths(nil); len(got) != 1 || got[0] != "." {
 		t.Fatalf("normalizePaths(nil) = %#v", got)
 	}
@@ -493,6 +510,7 @@ func TestRunnerHelperBranches(t *testing.T) {
 }
 
 func TestDiscoverAndLoadErrorBranches(t *testing.T) {
+	t.Parallel()
 	env := newRunnerTestEnv(t)
 	env.writeRawFile(t, "tests/schema-error.yml", strings.TrimSpace(`
 job:
@@ -503,18 +521,18 @@ job:
   unknown_key: true
 `)+"\n")
 
-	_, err := loadTestFile(filepath.Join("tests", "schema-error.yml"))
+	_, err := loadTestFile(filepath.Join(env.workDir, "tests", "schema-error.yml"))
 	if err == nil || !strings.Contains(err.Error(), "validate schema") {
 		t.Fatalf("loadTestFile() error = %v", err)
 	}
 
-	_, err = discoverTests([]string{filepath.Join("tests", "missing.yml")}, "")
+	_, err = discoverTests([]string{filepath.Join(env.workDir, "tests", "missing.yml")}, "")
 	if err == nil || !strings.Contains(err.Error(), "stat path") {
 		t.Fatalf("discoverTests() missing path error = %v", err)
 	}
 
 	env.writeRawFile(t, "skip/no-glut.yml", "job:\n  script: echo ok\n")
-	tests, err := discoverTests([]string{"skip"}, "does-not-match")
+	tests, err := discoverTests([]string{filepath.Join(env.workDir, "skip")}, "does-not-match")
 	if err != nil {
 		t.Fatalf("discoverTests() filtered error = %v", err)
 	}
@@ -559,6 +577,19 @@ func testFileForPattern(name string, path string) *parser.TestFile {
 
 type runnerTestEnv struct {
 	repoDir string
+	hostEnv []string
+	workDir string
+}
+
+func (env runnerTestEnv) opts(extra ...RunOptions) RunOptions {
+	base := RunOptions{HostEnv: env.hostEnv, WorkDir: env.workDir}
+	if len(extra) > 0 {
+		o := extra[0]
+		o.HostEnv = base.HostEnv
+		o.WorkDir = base.WorkDir
+		return o
+	}
+	return base
 }
 
 func newRunnerTestEnv(t *testing.T) runnerTestEnv {
@@ -582,12 +613,16 @@ func newRunnerTestEnvWithScript(t *testing.T, gitlabCILocalScript string) runner
 	writeExecutable(t, binDir, "gitlab-ci-local", gitlabCILocalScript)
 	writeExecutable(t, binDir, "glut", "#!/bin/sh\nexit 0\n")
 
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HOME", root)
-	t.Setenv("TMPDIR", root)
-	t.Chdir(repoDir)
-
-	return runnerTestEnv{repoDir: repoDir}
+	hostPath := os.Getenv("PATH")
+	return runnerTestEnv{
+		repoDir: repoDir,
+		workDir: repoDir,
+		hostEnv: []string{
+			"PATH=" + binDir + string(os.PathListSeparator) + hostPath,
+			"HOME=" + root,
+			"TMPDIR=" + root,
+		},
+	}
 }
 
 func (env runnerTestEnv) writeTestFile(t *testing.T, relativePath string, content string) {

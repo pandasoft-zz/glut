@@ -2,13 +2,16 @@ package asserter
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pandasoft-zz/glut/internal/config"
 )
 
 func TestRunGitAsserts(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	origin := filepath.Join(root, "origin.git")
@@ -77,10 +80,31 @@ func TestRunGitAsserts(t *testing.T) {
 	}
 }
 
+func noSignGitEnv() []string {
+	filtered := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		switch key {
+		case "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM":
+			// replaced below
+		default:
+			filtered = append(filtered, kv)
+		}
+	}
+	return append(filtered,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+	)
+}
+
 func mustRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if _, err := runGit(dir, args...); err != nil {
-		t.Fatal(err)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = noSignGitEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run git %s in %s: %v; output: %s", strings.Join(args, " "), dir, err, strings.TrimSpace(string(out)))
 	}
 }
 

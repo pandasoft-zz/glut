@@ -13,6 +13,7 @@ import (
 )
 
 func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -29,13 +30,6 @@ func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
 		t.Fatalf("write mock gitlab-ci-local: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-	t.Setenv("HOST_SECRET", "should-not-leak")
-	t.Setenv(config.EnvMockLogDir, filepath.Join(tempDir, "mock-logs"))
-	t.Setenv(config.EnvMockBinReal, filepath.Join(tempDir, "mock-real"))
-
 	cfg := ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: echo hi\n",
@@ -43,6 +37,14 @@ func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
 			"CI_JOB_NAME": "build",
 		},
 		MockBinPath: mockDir,
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+			"HOST_SECRET=should-not-leak",
+			config.EnvMockLogDir + "=" + filepath.Join(tempDir, "mock-logs"),
+			config.EnvMockBinReal + "=" + filepath.Join(tempDir, "mock-real"),
+		},
 	}
 
 	result, err := Run(context.Background(), cfg)
@@ -80,6 +82,7 @@ func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
 }
 
 func TestRunTimeoutReturnsClearError(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -91,14 +94,15 @@ func TestRunTimeoutReturnsClearError(t *testing.T) {
 		t.Fatalf("write timeout script: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	_, err := Run(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: sleep 1\n",
 		Timeout:       50 * time.Millisecond,
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err == nil {
 		t.Fatal("expected timeout error")
@@ -109,6 +113,7 @@ func TestRunTimeoutReturnsClearError(t *testing.T) {
 }
 
 func TestRunAllowsFailedPipelineWhenJobOutputWasCaptured(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -120,13 +125,14 @@ func TestRunAllowsFailedPipelineWhenJobOutputWasCaptured(t *testing.T) {
 		t.Fatalf("write failing gitlab-ci-local: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	result, err := Run(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "failing-job:\n  script: exit 7\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil for captured job failure", err)
@@ -138,6 +144,7 @@ func TestRunAllowsFailedPipelineWhenJobOutputWasCaptured(t *testing.T) {
 }
 
 func TestRunReturnsCommandErrorWhenNoJobWasCaptured(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -149,13 +156,14 @@ func TestRunReturnsCommandErrorWhenNoJobWasCaptured(t *testing.T) {
 		t.Fatalf("write bad gitlab-ci-local: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	_, err := Run(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: echo hi\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err == nil {
 		t.Fatal("Run() error = nil, want command error")
@@ -166,6 +174,7 @@ func TestRunReturnsCommandErrorWhenNoJobWasCaptured(t *testing.T) {
 }
 
 func TestListJobsParsesNames(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -177,13 +186,14 @@ func TestListJobsParsesNames(t *testing.T) {
 		t.Fatalf("write list script: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	jobs, err := ListJobs(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: echo hi\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
@@ -196,8 +206,11 @@ func TestListJobsParsesNames(t *testing.T) {
 }
 
 func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
+	t.Parallel()
+	hostPath := os.Getenv("PATH")
+
 	t.Run("command error", func(t *testing.T) {
-		hostPath := os.Getenv("PATH")
+		t.Parallel()
 		tempDir := t.TempDir()
 		binDir := filepath.Join(tempDir, "bin")
 		if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -207,13 +220,14 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 			t.Fatalf("write bad gitlab-ci-local: %v", err)
 		}
 
-		t.Setenv("PATH", joinPath(binDir, hostPath))
-		t.Setenv("HOME", tempDir)
-		t.Setenv("TMP", tempDir)
-
 		_, err := ListJobs(context.Background(), ExecutorConfig{
 			WorkspacePath: tempDir,
 			PipelineYAML:  "job:\n  script: echo hi\n",
+			HostEnv: []string{
+				"PATH=" + joinPath(binDir, hostPath),
+				"HOME=" + tempDir,
+				"TMP=" + tempDir,
+			},
 		})
 		if err == nil || !strings.Contains(err.Error(), "list gitlab-ci-local jobs") {
 			t.Fatalf("ListJobs() error = %v", err)
@@ -221,7 +235,7 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 	})
 
 	t.Run("timeout", func(t *testing.T) {
-		hostPath := os.Getenv("PATH")
+		t.Parallel()
 		tempDir := t.TempDir()
 		binDir := filepath.Join(tempDir, "bin")
 		if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -231,14 +245,15 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 			t.Fatalf("write timeout script: %v", err)
 		}
 
-		t.Setenv("PATH", joinPath(binDir, hostPath))
-		t.Setenv("HOME", tempDir)
-		t.Setenv("TMP", tempDir)
-
 		_, err := ListJobs(context.Background(), ExecutorConfig{
 			WorkspacePath: tempDir,
 			PipelineYAML:  "job:\n  script: echo hi\n",
 			Timeout:       50 * time.Millisecond,
+			HostEnv: []string{
+				"PATH=" + joinPath(binDir, hostPath),
+				"HOME=" + tempDir,
+				"TMP=" + tempDir,
+			},
 		})
 		if err == nil || !strings.Contains(err.Error(), "test timeout after 50ms") {
 			t.Fatalf("ListJobs() error = %v", err)
@@ -247,6 +262,7 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 }
 
 func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
+	t.Parallel()
 	args := append(baseArgs(false), envArgs(map[string]string{"CI": "true"})...)
 	joined := strings.Join(args, " ")
 
@@ -265,6 +281,7 @@ func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
 }
 
 func TestParseJobOutputsFromGitLabCILocalLogs(t *testing.T) {
+	t.Parallel()
 	stdout := strings.Join([]string{
 		"build:image starting shell (test)",
 		"build:image $ echo ok",
@@ -292,6 +309,7 @@ func TestParseJobOutputsFromGitLabCILocalLogs(t *testing.T) {
 }
 
 func TestParseJobOutputsHandlesAllowFailureWarnStatus(t *testing.T) {
+	t.Parallel()
 	stdout := strings.Join([]string{
 		"check-fail starting shell (test)",
 		"check-fail $ exit 2",
@@ -312,6 +330,7 @@ func TestParseJobOutputsHandlesAllowFailureWarnStatus(t *testing.T) {
 }
 
 func TestParseJobOutputsHandlesMultilineAndMissingFailCode(t *testing.T) {
+	t.Parallel()
 	stdout := strings.Join([]string{
 		"test-job > first",
 		"test-job > second",
@@ -329,6 +348,7 @@ func TestParseJobOutputsHandlesMultilineAndMissingFailCode(t *testing.T) {
 }
 
 func TestParseJobListIgnoresToolWarningsOnStderr(t *testing.T) {
+	t.Parallel()
 	jobs := parseJobList("build\ntest\n", "Using fallback git data\n")
 	if strings.Join(jobs, ",") != "build,test" {
 		t.Fatalf("jobs = %#v", jobs)
@@ -336,6 +356,7 @@ func TestParseJobListIgnoresToolWarningsOnStderr(t *testing.T) {
 }
 
 func TestExecutorHelperErrorBranches(t *testing.T) {
+	t.Parallel()
 	if err := writePipeline(ExecutorConfig{}); err == nil {
 		t.Fatal("writePipeline should require workspace path")
 	}
@@ -363,6 +384,7 @@ func TestExecutorHelperErrorBranches(t *testing.T) {
 }
 
 func TestCheckDependenciesReportsMissingCommands(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -375,9 +397,7 @@ func TestCheckDependenciesReportsMissingCommands(t *testing.T) {
 		}
 	}
 
-	t.Setenv("PATH", binDir)
-
-	problems := CheckDependencies(context.Background())
+	problems := CheckDependencies(context.Background(), []string{"PATH=" + binDir})
 	if len(problems) != 1 {
 		t.Fatalf("CheckDependencies() problems = %#v, want one optional rsync message", problems)
 	}

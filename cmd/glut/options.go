@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"strings"
 	"time"
 )
@@ -79,8 +78,8 @@ func lintOptionsFromCommand(args []string) LintOptions {
 	return LintOptions{Paths: paths, Format: lintFormat}
 }
 
-func envList(name string) []string {
-	value := os.Getenv(name)
+func envList(env func(string) string, name string) []string {
+	value := env(name)
 	if value == "" {
 		return nil
 	}

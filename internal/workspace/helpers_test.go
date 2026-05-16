@@ -67,8 +67,9 @@ func TestWorkspaceHelpers(t *testing.T) {
 	})
 
 	t.Run("commitIfStaged", func(t *testing.T) {
+		env := noSignGitEnv(t)
 		repo := initGitRepo(t)
-		if err := commitIfStaged(repo, "nothing to commit"); err != nil {
+		if err := commitIfStaged(repo, "nothing to commit", env); err != nil {
 			t.Fatalf("commitIfStaged no-op: %v", err)
 		}
 
@@ -76,7 +77,7 @@ func TestWorkspaceHelpers(t *testing.T) {
 		if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if err := commitIfStaged(repo, "add file"); err != nil {
+		if err := commitIfStaged(repo, "add file", env); err != nil {
 			t.Fatalf("commitIfStaged commit: %v", err)
 		}
 		log := runGitOutput(t, repo, "log", "--oneline")
@@ -84,7 +85,7 @@ func TestWorkspaceHelpers(t *testing.T) {
 			t.Fatalf("git log = %q", log)
 		}
 
-		if err := commitIfStaged(t.TempDir(), "bad repo"); err == nil {
+		if err := commitIfStaged(t.TempDir(), "bad repo", nil); err == nil {
 			t.Fatal("expected commitIfStaged to fail outside repo")
 		}
 	})
@@ -94,11 +95,11 @@ func TestWorkspaceHelpers(t *testing.T) {
 		remoteRepo := filepath.Join(t.TempDir(), "remote.git")
 		mustRunGitWorkspace(t, t.TempDir(), "init", "--bare", remoteRepo)
 
-		if err := removeRemoteIfExists(repo, "origin"); err != nil {
+		if err := removeRemoteIfExists(repo, "origin", nil); err != nil {
 			t.Fatalf("removeRemoteIfExists missing remote: %v", err)
 		}
 		mustRunGitWorkspace(t, repo, "remote", "add", "origin", remoteRepo)
-		if err := removeRemoteIfExists(repo, "origin"); err != nil {
+		if err := removeRemoteIfExists(repo, "origin", nil); err != nil {
 			t.Fatalf("removeRemoteIfExists existing remote: %v", err)
 		}
 		out := runGitOutput(t, repo, "remote")
@@ -336,7 +337,7 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 					},
 				},
 			},
-		}, false, src, Options{})
+		}, false, src, Options{HostEnv: noSignGitEnv(t)})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -375,7 +376,7 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 		w := &Workspace{}
 		err := w.setupGitOrigin(root, origin, "main", &parser.GitSetupConfig{
 			Origin: &parser.GitOriginConfig{},
-		})
+		}, nil)
 		if err != nil {
 			t.Fatalf("setupGitOrigin no-op error = %v", err)
 		}
@@ -395,7 +396,7 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 			Origin: &parser.GitOriginConfig{
 				Commands: []string{"exit 7"},
 			},
-		})
+		}, nil)
 		if err == nil || !strings.Contains(err.Error(), "origin command failed") {
 			t.Fatalf("setupGitOrigin() error = %v", err)
 		}
@@ -407,7 +408,7 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 			Origin: &parser.GitOriginConfig{
 				Files: map[string]string{"a.txt": "x"},
 			},
-		})
+		}, nil)
 		if err == nil || !strings.Contains(err.Error(), "failed to clone worktree") {
 			t.Fatalf("setupGitOrigin() error = %v", err)
 		}
@@ -428,26 +429,28 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 				Branch: "bad branch name",
 				Files:  map[string]string{"hello.txt": "world"},
 			},
-		})
+		}, noSignGitEnv(t))
 		if err == nil || !strings.Contains(err.Error(), "failed to rename origin worktree branch") {
 			t.Fatalf("setupGitOrigin() error = %v", err)
 		}
 	})
 
 	t.Run("New git failure via PATH override", func(t *testing.T) {
+		t.Parallel()
 		binDir := t.TempDir()
 		fakeGit := filepath.Join(binDir, "git")
 		if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nexit 7\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
 		originalPath := os.Getenv("PATH")
-		t.Setenv("PATH", binDir+string(os.PathListSeparator)+originalPath)
 
 		src := t.TempDir()
 		if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := New(parser.SetupConfig{}, false, src, Options{})
+		_, err := New(parser.SetupConfig{}, false, src, Options{
+			HostEnv: []string{"PATH=" + binDir + string(os.PathListSeparator) + originalPath},
+		})
 		if err == nil || !strings.Contains(err.Error(), "failed to init bare origin") {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -469,10 +472,31 @@ func initGitRepo(t *testing.T) string {
 	return repo
 }
 
+// noSignGitEnv returns a process env slice with git commit signing disabled.
+// This is needed in environments where a global gitconfig enables signing.
+func noSignGitEnv(t *testing.T) []string {
+	t.Helper()
+	filtered := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		switch key {
+		case "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM":
+			// replaced below
+		default:
+			filtered = append(filtered, kv)
+		}
+	}
+	return append(filtered,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+	)
+}
+
 func mustRunGitWorkspace(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = noSignGitEnv(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v, output: %s", args, err, string(out))
@@ -483,6 +507,7 @@ func runGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = noSignGitEnv(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v failed: %v, output: %s", args, err, string(out))
