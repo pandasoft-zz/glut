@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -645,9 +646,40 @@ func (env runnerTestEnv) writeRawFile(t *testing.T, relativePath string, content
 func writeExecutable(t *testing.T, dir string, name string, content string) {
 	t.Helper()
 
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0755); err != nil {
-		t.Fatalf("write executable %s: %v", path, err)
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, name+".cmd")
+		if err := os.WriteFile(path, []byte(content), 0755); err != nil {
+			t.Fatalf("write executable %s: %v", path, err)
+		}
+		return
+	}
+	// Write via temp+rename to avoid ETXTBSY on overlayfs in Docker CI.
+	tmp, err := os.CreateTemp(dir, ".tmp-exec-*")
+	if err != nil {
+		t.Fatalf("create temp executable %s: %v", name, err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		t.Fatalf("write temp executable %s: %v", name, err)
+	}
+	if err := tmp.Chmod(0755); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		t.Fatalf("chmod temp executable %s: %v", name, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		t.Fatalf("sync temp executable %s: %v", name, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		t.Fatalf("close temp executable %s: %v", name, err)
+	}
+	if err := os.Rename(tmpPath, filepath.Join(dir, name)); err != nil {
+		t.Fatalf("rename temp executable %s: %v", name, err)
 	}
 }
 
