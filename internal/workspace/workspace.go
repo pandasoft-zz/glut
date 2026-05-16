@@ -8,9 +8,23 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/KarpelesLab/reflink"
 	"github.com/pandasoft-zz/glut/internal/config"
 	"github.com/pandasoft-zz/glut/internal/parser"
 )
+
+const tmpDirPrefix = ".glut-tmp-"
+
+const (
+	CopyStrategyAuto   = "auto"
+	CopyStrategyRsync  = "rsync"
+	CopyStrategyNative = "native"
+)
+
+type Options struct {
+	CopyStrategy string // auto, rsync, native
+	Verbose      bool
+}
 
 type Workspace struct {
 	Dir           string
@@ -19,7 +33,7 @@ type Workspace struct {
 	KeepWorkspace bool
 }
 
-func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *Workspace, err error) {
+func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options) (workspace *Workspace, err error) {
 	tmpWork, err := os.MkdirTemp("", "glut-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
@@ -39,7 +53,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *
 	originRepo := filepath.Join(tmpWork, ".glut-origin.git")
 
 	// 2. Copy host repository
-	if err := copyRepo(srcDir, stagingDir); err != nil {
+	if err := copyRepo(srcDir, stagingDir, opts); err != nil {
 		return nil, fmt.Errorf("copy repository: %w", err)
 	}
 
@@ -280,11 +294,22 @@ func removeRemoteIfExists(dir string, name string) error {
 	return runCmd(dir, "git", "remote", "remove", name)
 }
 
-// copyRepo copies src into dst using rsync when available, falling back to
-// copyDir only when rsync is not installed. If rsync is present but exits
-// non-zero (e.g. intermittent WSL2 I/O error), we clean up any partially
-// copied files and retry once before giving up.
-func copyRepo(src, dst string) error {
+// copyRepo copies src into dst, skipping .git. Strategy is selected by opts:
+// auto (default) tries rsync first and falls back to native Go copy; rsync and
+// native force the respective method. In verbose mode the chosen method is logged.
+func copyRepo(src, dst string, opts Options) error {
+	strategy := opts.CopyStrategy
+	if strategy == "" {
+		strategy = CopyStrategyAuto
+	}
+
+	if strategy == CopyStrategyNative {
+		if opts.Verbose {
+			fmt.Println("[glut] copy strategy: native")
+		}
+		return copyDir(src, dst)
+	}
+
 	srcSlash := filepath.ToSlash(filepath.Clean(src)) + "/"
 	dstSlash := filepath.ToSlash(filepath.Clean(dst)) + "/"
 
@@ -303,26 +328,37 @@ func copyRepo(src, dst string) error {
 
 	err := runRsync()
 	if err == nil {
+		if opts.Verbose {
+			fmt.Println("[glut] copy strategy: rsync")
+		}
 		return nil
 	}
 
-	// If rsync is not installed, fall back to native copy.
+	if strategy == CopyStrategyRsync {
+		return err
+	}
+
+	// auto: rsync not installed — fall back to native.
 	if isNotFound(err) {
+		if opts.Verbose {
+			fmt.Println("[glut] copy strategy: native (rsync not found)")
+		}
 		return copyDir(src, dst)
 	}
 
-	// rsync ran but failed (e.g. transient I/O error) — clean up partial
-	// files and retry once before returning the error.
+	// rsync ran but failed (e.g. transient WSL2 I/O error) — retry once.
 	_ = os.RemoveAll(dst)
 	if retryErr := runRsync(); retryErr != nil {
 		return retryErr
+	}
+	if opts.Verbose {
+		fmt.Println("[glut] copy strategy: rsync (retried)")
 	}
 	return nil
 }
 
 func isNotFound(err error) bool {
 	var exitErr *exec.ExitError
-	// exec.ErrNotFound or "no such file" means binary missing
 	if !errors.As(err, &exitErr) {
 		return true
 	}
@@ -348,7 +384,6 @@ func copyDir(src string, dst string) error {
 			return err
 		}
 
-		// Calculate relative path
 		relPath, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
@@ -367,7 +402,8 @@ func copyDir(src string, dst string) error {
 		}
 
 		if info.IsDir() {
-			if relPath == ".git" {
+			base := filepath.Base(relPath)
+			if base == ".git" || strings.HasPrefix(base, tmpDirPrefix) {
 				return filepath.SkipDir
 			}
 			return os.MkdirAll(dstPath, info.Mode())
@@ -381,13 +417,20 @@ func copyDir(src string, dst string) error {
 			return os.Symlink(target, dstPath)
 		}
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return os.WriteFile(dstPath, data, info.Mode())
+		return copyFile(path, dstPath, info.Mode())
 	})
+}
+
+// copyFile copies a single file using the fastest method available:
+// hardlink (instant, same inode) → reflink/copy_file_range/io.Copy.
+func copyFile(src, dst string, mode os.FileMode) error {
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	if err := reflink.Auto(src, dst); err != nil {
+		return err
+	}
+	return os.Chmod(dst, mode)
 }
 
 func isPathInside(path string, root string) bool {

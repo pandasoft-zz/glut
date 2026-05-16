@@ -45,6 +45,7 @@ type RunOptions struct {
 	DebugPause     string
 	KeepLastFailed int
 	GlutBinPath    string
+	CopyStrategy   string
 	Progress       []ProgressSink
 }
 
@@ -344,7 +345,10 @@ func runSingleTest(
 	}()
 
 	phaseStart := time.Now()
-	work, primaryErr = workspace.New(testFile.Glut.Setup, false, repoRoot)
+	work, primaryErr = workspace.New(testFile.Glut.Setup, false, repoRoot, workspace.Options{
+		CopyStrategy: opts.CopyStrategy,
+		Verbose:      opts.Verbose,
+	})
 	phaseTimings["workspace"] = time.Since(phaseStart)
 	if primaryErr != nil {
 		primaryErr = fmt.Errorf("create workspace: %w", primaryErr)

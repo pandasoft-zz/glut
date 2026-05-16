@@ -20,6 +20,7 @@ type RunOptions struct {
 	KeepWorkspace  bool
 	DebugPause     string
 	KeepLastFailed int
+	CopyStrategy   string
 }
 
 type LintOptions struct {
@@ -52,6 +53,7 @@ func runOptionsFromCommand(args []string) RunOptions {
 		KeepWorkspace:  runKeepWorkspace,
 		DebugPause:     runDebugPause,
 		KeepLastFailed: runKeepLastFailed,
+		CopyStrategy:   runCopyStrategy,
 	}
 }
 

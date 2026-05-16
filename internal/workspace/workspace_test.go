@@ -12,7 +12,7 @@ import (
 
 func TestWorkspace_NewAndDestroy(t *testing.T) {
 	cfg := parser.SetupConfig{}
-	w, err := New(cfg, false, ".")
+	w, err := New(cfg, false, ".", Options{})
 	if err != nil {
 		t.Fatalf("failed to create workspace: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestGitOriginFilesAndCommands(t *testing.T) {
 			},
 		},
 	}
-	w, err := New(cfg, false, ".")
+	w, err := New(cfg, false, ".", Options{})
 	if err != nil {
 		t.Fatalf("failed to create workspace: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestCopyDirPreservesSymlinks(t *testing.T) {
 	}
 }
 
-func TestCopyRepoUsesRsyncAndFallsBackWhenMissing(t *testing.T) {
+func TestCopyRepoCopiesFilesNatively(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	dst := filepath.Join(root, "dst")
@@ -312,14 +312,12 @@ func TestCopyRepoUsesRsyncAndFallsBackWhenMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// With a fake PATH that has no rsync, copyRepo must fall back to copyDir.
-	t.Setenv("PATH", t.TempDir())
-	if err := copyRepo(src, dst); err != nil {
-		t.Fatalf("copyRepo() fallback error = %v", err)
+	if err := copyRepo(src, dst, Options{}); err != nil {
+		t.Fatalf("copyRepo() error = %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dst, "file.txt"))
 	if err != nil || string(data) != "hello" {
-		t.Fatalf("fallback copy: read file error = %v, data = %q", err, data)
+		t.Fatalf("copy: read file error = %v, data = %q", err, data)
 	}
 }
 
@@ -327,7 +325,7 @@ func TestNewCleansTempWorkspaceOnError(t *testing.T) {
 	tmpRoot := t.TempDir()
 	t.Setenv("TMPDIR", tmpRoot)
 
-	_, err := New(parser.SetupConfig{}, false, filepath.Join(tmpRoot, "missing-source"))
+	_, err := New(parser.SetupConfig{}, false, filepath.Join(tmpRoot, "missing-source"), Options{})
 	if err == nil {
 		t.Fatal("expected New to fail for missing source")
 	}

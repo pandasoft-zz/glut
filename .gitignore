@@ -2,3 +2,4 @@
 /coverage.out
 /glut
 .codex/config.toml
+.glut-tmp-*/
