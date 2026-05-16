@@ -379,10 +379,7 @@ func copyRepoAll(src, dst string, opts Options) error {
 
 func isNotFound(err error) bool {
 	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return true
-	}
-	return false
+	return !errors.As(err, &exitErr)
 }
 
 func copyDir(src string, dst string) error {
