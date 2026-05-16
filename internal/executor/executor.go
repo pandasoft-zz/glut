@@ -225,10 +225,11 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 }
 
 func baseArgs(useDocker bool) []string {
-	_ = useDocker
-	// Always force shell so mock binaries, the API server, and the fake git
-	// origin remain reachable from every job, including jobs that declare image:.
-	return []string{"--force-shell-executor", "--no-color", "--file", pipelineFileName}
+	args := []string{"--no-color", "--file", pipelineFileName}
+	if !useDocker {
+		return append([]string{"--shell-executor-no-image"}, args...)
+	}
+	return args
 }
 
 func envArgs(envVars map[string]string) []string {

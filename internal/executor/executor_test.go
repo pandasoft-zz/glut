@@ -250,27 +250,17 @@ func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
 	args := append(baseArgs(false), envArgs(map[string]string{"CI": "true"})...)
 	joined := strings.Join(args, " ")
 
-	if !strings.Contains(joined, "--force-shell-executor") {
-		t.Fatalf("args = %q, want --force-shell-executor so jobs with image: reach mock resources", joined)
+	if !strings.Contains(joined, "--shell-executor-no-image") {
+		t.Fatalf("args = %q, want shell executor flag", joined)
+	}
+	if strings.Contains(joined, "--force-shell-executor") {
+		t.Fatalf("args = %q, must not use removed force shell flag", joined)
 	}
 	if !strings.Contains(joined, "--variable CI=true") {
 		t.Fatalf("args = %q, want --variable", joined)
 	}
 	if strings.Contains(joined, "--env") {
 		t.Fatalf("args = %q, must not use unsupported --env", joined)
-	}
-}
-
-func TestGitLabCILocalArgumentsForceShellForAllJobs(t *testing.T) {
-	// Jobs with image: run in Docker by default. GLUT must force shell for all
-	// jobs so that mock binaries, the API server, and the fake git origin remain
-	// reachable regardless of whether the pipeline declares an image.
-	for _, useDocker := range []bool{false, true} {
-		args := append(baseArgs(useDocker), envArgs(nil)...)
-		joined := strings.Join(args, " ")
-		if !strings.Contains(joined, "--force-shell-executor") {
-			t.Errorf("baseArgs(docker=%v) = %q: missing --force-shell-executor; jobs with image: cannot reach mock resources", useDocker, joined)
-		}
 	}
 }
 
