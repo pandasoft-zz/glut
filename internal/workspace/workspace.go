@@ -34,6 +34,10 @@ type Workspace struct {
 }
 
 func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options) (workspace *Workspace, err error) {
+	srcDir, err = filepath.Abs(srcDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve srcDir: %v", err)
+	}
 	tmpWork, err := os.MkdirTemp("", "glut-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
@@ -48,25 +52,21 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		}
 	}()
 
-	stagingDir := filepath.Join(tmpWork, "staging")
 	workspaceDir := filepath.Join(tmpWork, "workspace")
 	originRepo := filepath.Join(tmpWork, ".glut-origin.git")
+	stagingDir := filepath.Join(tmpWork, "staging")
 
-	// 2. Copy host repository
 	if err := copyRepo(srcDir, stagingDir, opts); err != nil {
 		return nil, fmt.Errorf("copy repository: %w", err)
 	}
 
-	// 3. Initialize bare git repo
 	if err := runCmd(tmpWork, "git", "init", "--bare", originRepo); err != nil {
 		return nil, fmt.Errorf("failed to init bare origin: %v", err)
 	}
-
 	if err := runCmd(stagingDir, "git", "init"); err != nil {
 		return nil, fmt.Errorf("failed to init staging repo: %v", err)
 	}
 
-	// Configure git to avoid author missing errors in the copied repo
 	userName := config.DefaultUserName
 	userEmail := config.DefaultUserEmail
 	if cfg.Git != nil && cfg.Git.User.Name != "" {
@@ -82,12 +82,10 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		return nil, fmt.Errorf("failed to configure staging git user: %v", err)
 	}
 
-	// 4. Snapshot commit
 	if err := commitIfStaged(stagingDir, "glut: workspace snapshot"); err != nil {
 		return nil, fmt.Errorf("failed to create workspace snapshot: %v", err)
 	}
 
-	// 5. Set origin remote and push snapshot to bare repo FIRST
 	if err := removeRemoteIfExists(stagingDir, "origin"); err != nil {
 		return nil, fmt.Errorf("failed to remove existing origin remote: %v", err)
 	}
@@ -107,6 +105,9 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 	if err := runCmd(tmpWork, "git", "--git-dir", originRepo, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
 		return nil, fmt.Errorf("failed to set bare origin HEAD: %v", err)
 	}
+	if err := os.RemoveAll(stagingDir); err != nil {
+		return nil, fmt.Errorf("failed to remove staging directory: %v", err)
+	}
 
 	w := &Workspace{
 		Dir:           tmpWork,
@@ -115,21 +116,14 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		KeepWorkspace: keepWorkspace,
 	}
 
-	// 6. Process setup.git.origin ON TOP of the snapshot
 	if cfg.Git != nil && cfg.Git.Origin != nil {
 		if err := w.setupGitOrigin(tmpWork, originRepo, branch, cfg.Git); err != nil {
 			return nil, err
 		}
 	}
 
-	// 7. Clone workspace from bare repo
 	if err := runCmd(tmpWork, "git", "clone", originRepo, workspaceDir); err != nil {
 		return nil, fmt.Errorf("failed to clone workspace: %v", err)
-	}
-
-	// Clean up staging directory
-	if err := os.RemoveAll(stagingDir); err != nil {
-		return nil, fmt.Errorf("failed to remove staging directory: %v", err)
 	}
 
 	created = true
@@ -432,6 +426,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	}
 	return os.Chmod(dst, mode)
 }
+
 
 func isPathInside(path string, root string) bool {
 	rel, err := filepath.Rel(root, path)

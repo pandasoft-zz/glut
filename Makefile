@@ -29,7 +29,7 @@ docker:
 
 INCONTAINER := $(shell [ -f /.dockerenv ] && echo 1 || echo 0)
 DOCKER_TEST_CONFIG ?= /tmp/glut-docker-config
-GLUT_RUN_FLAGS ?= --verbose --copy-strategy=rsync
+GLUT_RUN_FLAGS ?= --verbose --copy-strategy=auto
 
 ifeq ($(INCONTAINER),1)
 test-integration: build
