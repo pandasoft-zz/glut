@@ -209,7 +209,7 @@ func init() {
 	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration(os.Getenv, "GLUT_TIMEOUT", defaultRunTimeout), "Timeout for one test")
 	runCmd.Flags().BoolVar(&runDebug, "debug", envBool(os.Getenv, "GLUT_DEBUG"), "Enable debug mode")
 	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool(os.Getenv, "GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
-	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, after-pipeline, or on-fail")
+	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, before-asserts, after-pipeline, or on-fail")
 	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
 	runCmd.Flags().StringVar(&runCopyStrategy, "copy-strategy", "auto", "Copy strategy: auto, rsync, native")
 	runCmd.Flags().StringArrayVar(&runInclude, "include", nil, "Copy only these subdirectories into the workspace (repeatable)")

@@ -11,7 +11,7 @@ GLUT implementation packages should follow clear responsibility boundaries:
 - `cmd/glut` handles CLI wiring and process exit.
 - `internal/config` owns shared typed configuration and product vocabulary.
 - `internal/parser` reads test files and extracts GLUT config.
-- `internal/schema` embeds and validates JSON Schema.
+- `schema` embeds and validates JSON Schema.
 - `internal/workspace` prepares filesystem and git state.
 - `internal/executor` runs `gitlab-ci-local`.
 - `internal/mockserver` provides the mock GitLab API.
