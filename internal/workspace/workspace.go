@@ -3,6 +3,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -364,7 +365,9 @@ func copyRepoAll(src, dst string, opts Options) error {
 	}
 
 	// rsync ran but failed (e.g. transient WSL2 I/O error) — retry once.
-	_ = os.RemoveAll(dst)
+	if removeErr := os.RemoveAll(dst); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return removeErr
+	}
 	if retryErr := runRsync(); retryErr != nil {
 		return retryErr
 	}
@@ -392,7 +395,11 @@ func copyDir(src string, dst string) error {
 		return err
 	}
 
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}

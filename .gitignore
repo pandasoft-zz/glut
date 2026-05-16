@@ -3,3 +3,4 @@
 /glut
 .codex/config.toml
 .glut-tmp-*/
+*.test
