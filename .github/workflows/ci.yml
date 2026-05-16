@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -78,7 +79,7 @@ jobs:
           -v /var/run/docker.sock:/var/run/docker.sock \
           -v "${{ github.workspace }}:/repo" \
           -w /repo \
-          glut:dev run ./tests/passing/
+          glut:dev run --include tests ./tests/passing/
 
     - name: Run failing integration tests (expect failure)
       run: |
@@ -86,7 +87,7 @@ jobs:
           -v /var/run/docker.sock:/var/run/docker.sock \
           -v "${{ github.workspace }}:/repo" \
           -w /repo \
-          glut:dev run ./tests/failing/; then
+          glut:dev run --include tests ./tests/failing/; then
           echo "Expected integration tests to fail but they passed"
           exit 1
         fi

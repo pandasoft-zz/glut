@@ -336,7 +336,7 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 					},
 				},
 			},
-		}, false, src)
+		}, false, src, Options{})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -361,7 +361,7 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 	})
 
 	t.Run("New missing source", func(t *testing.T) {
-		_, err := New(parser.SetupConfig{}, false, filepath.Join(t.TempDir(), "missing-src"))
+		_, err := New(parser.SetupConfig{}, false, filepath.Join(t.TempDir(), "missing-src"), Options{})
 		if err == nil {
 			t.Fatal("expected New to fail for missing source")
 		}
@@ -447,7 +447,7 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := New(parser.SetupConfig{}, false, src)
+		_, err := New(parser.SetupConfig{}, false, src, Options{})
 		if err == nil || !strings.Contains(err.Error(), "failed to init bare origin") {
 			t.Fatalf("New() error = %v", err)
 		}

@@ -29,12 +29,13 @@ docker:
 
 INCONTAINER := $(shell [ -f /.dockerenv ] && echo 1 || echo 0)
 DOCKER_TEST_CONFIG ?= /tmp/glut-docker-config
+GLUT_RUN_FLAGS ?= --verbose --copy-strategy=auto --include ./tests
 
 ifeq ($(INCONTAINER),1)
 test-integration: build
 	@mkdir -p $(DOCKER_TEST_CONFIG) && printf '{}' > $(DOCKER_TEST_CONFIG)/config.json
-	DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run ./tests/passing/
-	@if DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run ./tests/failing/; then \
+	DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run $(GLUT_RUN_FLAGS) ./tests/passing/
+	@if DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run $(GLUT_RUN_FLAGS) ./tests/failing/; then \
 		echo "Expected tests to fail but they passed"; exit 1; \
 	fi
 else
@@ -43,12 +44,12 @@ test-integration: docker
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v "$(PWD):/repo" \
 		-w /repo \
-		glut:dev run ./tests/passing/
+		glut:dev run $(GLUT_RUN_FLAGS) ./tests/passing/
 	@if docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v "$(PWD):/repo" \
 		-w /repo \
-		glut:dev run ./tests/failing/; then \
+		glut:dev run $(GLUT_RUN_FLAGS) ./tests/failing/; then \
 		echo "Expected tests to fail but they passed"; exit 1; \
 	fi
 endif

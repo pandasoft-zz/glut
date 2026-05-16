@@ -137,6 +137,16 @@ Fix the assert and run again. The test should pass.
 GLUT creates an isolated workspace with a fake git remote. Your source files are
 committed to that remote before the pipeline starts.
 
+By default GLUT copies the entire repository. For a large repo where the
+pipeline only needs a subdirectory (for example `component/`), pass
+`--include` to limit what is copied:
+
+```bash
+glut run --include component ./tests/
+```
+
+This can reduce workspace setup from several seconds to under a second.
+
 GLUT derives all `CI_*` variables from the `setup` block and passes them to
 `gitlab-ci-local`. In this example, `setup.branch: "feature/my-change"` sets
 `CI_COMMIT_BRANCH` and `CI_COMMIT_REF_SLUG`.

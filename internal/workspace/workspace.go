@@ -3,14 +3,30 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/KarpelesLab/reflink"
 	"github.com/pandasoft-zz/glut/internal/config"
 	"github.com/pandasoft-zz/glut/internal/parser"
 )
+
+const tmpDirPrefix = ".glut-tmp-"
+
+const (
+	CopyStrategyAuto   = "auto"
+	CopyStrategyRsync  = "rsync"
+	CopyStrategyNative = "native"
+)
+
+type Options struct {
+	CopyStrategy string // auto, rsync, native
+	Include      []string
+	Verbose      bool
+}
 
 type Workspace struct {
 	Dir           string
@@ -19,7 +35,11 @@ type Workspace struct {
 	KeepWorkspace bool
 }
 
-func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *Workspace, err error) {
+func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options) (workspace *Workspace, err error) {
+	srcDir, err = filepath.Abs(srcDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve srcDir: %v", err)
+	}
 	tmpWork, err := os.MkdirTemp("", "glut-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
@@ -34,25 +54,21 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *
 		}
 	}()
 
-	stagingDir := filepath.Join(tmpWork, "staging")
 	workspaceDir := filepath.Join(tmpWork, "workspace")
 	originRepo := filepath.Join(tmpWork, ".glut-origin.git")
+	stagingDir := filepath.Join(tmpWork, "staging")
 
-	// 2. Copy host repository
-	if err := copyRepo(srcDir, stagingDir); err != nil {
+	if err := copyRepo(srcDir, stagingDir, opts); err != nil {
 		return nil, fmt.Errorf("copy repository: %w", err)
 	}
 
-	// 3. Initialize bare git repo
 	if err := runCmd(tmpWork, "git", "init", "--bare", originRepo); err != nil {
 		return nil, fmt.Errorf("failed to init bare origin: %v", err)
 	}
-
 	if err := runCmd(stagingDir, "git", "init"); err != nil {
 		return nil, fmt.Errorf("failed to init staging repo: %v", err)
 	}
 
-	// Configure git to avoid author missing errors in the copied repo
 	userName := config.DefaultUserName
 	userEmail := config.DefaultUserEmail
 	if cfg.Git != nil && cfg.Git.User.Name != "" {
@@ -68,12 +84,10 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *
 		return nil, fmt.Errorf("failed to configure staging git user: %v", err)
 	}
 
-	// 4. Snapshot commit
 	if err := commitIfStaged(stagingDir, "glut: workspace snapshot"); err != nil {
 		return nil, fmt.Errorf("failed to create workspace snapshot: %v", err)
 	}
 
-	// 5. Set origin remote and push snapshot to bare repo FIRST
 	if err := removeRemoteIfExists(stagingDir, "origin"); err != nil {
 		return nil, fmt.Errorf("failed to remove existing origin remote: %v", err)
 	}
@@ -93,6 +107,9 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *
 	if err := runCmd(tmpWork, "git", "--git-dir", originRepo, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
 		return nil, fmt.Errorf("failed to set bare origin HEAD: %v", err)
 	}
+	if err := os.RemoveAll(stagingDir); err != nil {
+		return nil, fmt.Errorf("failed to remove staging directory: %v", err)
+	}
 
 	w := &Workspace{
 		Dir:           tmpWork,
@@ -101,21 +118,14 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string) (workspace *
 		KeepWorkspace: keepWorkspace,
 	}
 
-	// 6. Process setup.git.origin ON TOP of the snapshot
 	if cfg.Git != nil && cfg.Git.Origin != nil {
 		if err := w.setupGitOrigin(tmpWork, originRepo, branch, cfg.Git); err != nil {
 			return nil, err
 		}
 	}
 
-	// 7. Clone workspace from bare repo
 	if err := runCmd(tmpWork, "git", "clone", originRepo, workspaceDir); err != nil {
 		return nil, fmt.Errorf("failed to clone workspace: %v", err)
-	}
-
-	// Clean up staging directory
-	if err := os.RemoveAll(stagingDir); err != nil {
-		return nil, fmt.Errorf("failed to remove staging directory: %v", err)
 	}
 
 	created = true
@@ -280,11 +290,44 @@ func removeRemoteIfExists(dir string, name string) error {
 	return runCmd(dir, "git", "remote", "remove", name)
 }
 
-// copyRepo copies src into dst using rsync when available, falling back to
-// copyDir only when rsync is not installed. If rsync is present but exits
-// non-zero (e.g. intermittent WSL2 I/O error), we clean up any partially
-// copied files and retry once before giving up.
-func copyRepo(src, dst string) error {
+// copyRepo copies src into dst, skipping .git. Strategy is selected by opts:
+// auto (default) tries rsync first and falls back to native Go copy; rsync and
+// native force the respective method. In verbose mode the chosen method is logged.
+func copyRepo(src, dst string, opts Options) error {
+	if len(opts.Include) > 0 {
+		return copyRepoIncludes(src, dst, opts)
+	}
+	return copyRepoAll(src, dst, opts)
+}
+
+// copyRepoIncludes copies only the listed subdirectories from src into dst.
+func copyRepoIncludes(src, dst string, opts Options) error {
+	for _, inc := range opts.Include {
+		incSrc := filepath.Join(src, inc)
+		incDst := filepath.Join(dst, inc)
+		if err := os.MkdirAll(filepath.Dir(incDst), 0755); err != nil {
+			return err
+		}
+		if err := copyRepoAll(incSrc, incDst, opts); err != nil {
+			return fmt.Errorf("include %q: %w", inc, err)
+		}
+	}
+	return nil
+}
+
+func copyRepoAll(src, dst string, opts Options) error {
+	strategy := opts.CopyStrategy
+	if strategy == "" {
+		strategy = CopyStrategyAuto
+	}
+
+	if strategy == CopyStrategyNative {
+		if opts.Verbose {
+			fmt.Println("[glut] copy strategy: native")
+		}
+		return copyDir(src, dst)
+	}
+
 	srcSlash := filepath.ToSlash(filepath.Clean(src)) + "/"
 	dstSlash := filepath.ToSlash(filepath.Clean(dst)) + "/"
 
@@ -303,30 +346,40 @@ func copyRepo(src, dst string) error {
 
 	err := runRsync()
 	if err == nil {
+		if opts.Verbose {
+			fmt.Println("[glut] copy strategy: rsync")
+		}
 		return nil
 	}
 
-	// If rsync is not installed, fall back to native copy.
+	if strategy == CopyStrategyRsync {
+		return err
+	}
+
+	// auto: rsync not installed — fall back to native.
 	if isNotFound(err) {
+		if opts.Verbose {
+			fmt.Println("[glut] copy strategy: native (rsync not found)")
+		}
 		return copyDir(src, dst)
 	}
 
-	// rsync ran but failed (e.g. transient I/O error) — clean up partial
-	// files and retry once before returning the error.
-	_ = os.RemoveAll(dst)
+	// rsync ran but failed (e.g. transient WSL2 I/O error) — retry once.
+	if removeErr := os.RemoveAll(dst); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return removeErr
+	}
 	if retryErr := runRsync(); retryErr != nil {
 		return retryErr
+	}
+	if opts.Verbose {
+		fmt.Println("[glut] copy strategy: rsync (retried)")
 	}
 	return nil
 }
 
 func isNotFound(err error) bool {
 	var exitErr *exec.ExitError
-	// exec.ErrNotFound or "no such file" means binary missing
-	if !errors.As(err, &exitErr) {
-		return true
-	}
-	return false
+	return !errors.As(err, &exitErr)
 }
 
 func copyDir(src string, dst string) error {
@@ -339,7 +392,11 @@ func copyDir(src string, dst string) error {
 		return err
 	}
 
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
@@ -348,7 +405,6 @@ func copyDir(src string, dst string) error {
 			return err
 		}
 
-		// Calculate relative path
 		relPath, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
@@ -367,7 +423,8 @@ func copyDir(src string, dst string) error {
 		}
 
 		if info.IsDir() {
-			if relPath == ".git" {
+			base := filepath.Base(relPath)
+			if base == ".git" || strings.HasPrefix(base, tmpDirPrefix) {
 				return filepath.SkipDir
 			}
 			return os.MkdirAll(dstPath, info.Mode())
@@ -381,14 +438,22 @@ func copyDir(src string, dst string) error {
 			return os.Symlink(target, dstPath)
 		}
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return os.WriteFile(dstPath, data, info.Mode())
+		return copyFile(path, dstPath, info.Mode())
 	})
 }
+
+// copyFile copies a single file using the fastest method available:
+// hardlink (instant, same inode) → reflink/copy_file_range/io.Copy.
+func copyFile(src, dst string, mode os.FileMode) error {
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	if err := reflink.Auto(src, dst); err != nil {
+		return err
+	}
+	return os.Chmod(dst, mode)
+}
+
 
 func isPathInside(path string, root string) bool {
 	rel, err := filepath.Rel(root, path)

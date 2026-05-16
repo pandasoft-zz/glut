@@ -37,6 +37,8 @@ var (
 	runKeepWorkspace  bool
 	runDebugPause     string
 	runKeepLastFailed int
+	runCopyStrategy   string
+	runInclude        []string
 	listPattern       string
 	lintFormat        string
 	doctorFormat      string
@@ -89,6 +91,8 @@ current directory. Each test gets its own workspace and mock services.`,
 			KeepWorkspace:  opts.KeepWorkspace,
 			DebugPause:     opts.DebugPause,
 			KeepLastFailed: opts.KeepLastFailed,
+			CopyStrategy:   opts.CopyStrategy,
+			Include:        opts.Include,
 			Progress:       sinks,
 		})
 		if result.Error != nil {
@@ -207,6 +211,8 @@ func init() {
 	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool("GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
 	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, after-pipeline, or on-fail")
 	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
+	runCmd.Flags().StringVar(&runCopyStrategy, "copy-strategy", "auto", "Copy strategy: auto, rsync, native")
+	runCmd.Flags().StringArrayVar(&runInclude, "include", nil, "Copy only these subdirectories into the workspace (repeatable)")
 
 	listCmd.Flags().StringVarP(&listPattern, "run", "k", "", "List tests matching substring or regex")
 	lintCmd.Flags().StringVar(&lintFormat, "format", "text", "Output format: text or json")
