@@ -218,7 +218,11 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	}
 
 	if len(origin.Commands) > 0 {
-		host := envSliceToMap(hostEnv)
+		effectiveEnv := hostEnv
+		if effectiveEnv == nil {
+			effectiveEnv = os.Environ()
+		}
+		host := envSliceToMap(effectiveEnv)
 		for _, cmdStr := range origin.Commands {
 			cmd := exec.Command("bash", "-c", cmdStr)
 			cmd.Dir = worktree
