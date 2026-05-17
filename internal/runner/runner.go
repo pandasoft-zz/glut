@@ -377,8 +377,9 @@ func runSingleTest(
 	}
 
 	phaseStart = time.Now()
+	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
 	if hasMockBinaries(testFile) {
-		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), testFile.Glut.Setup.Docker)
+		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), useDocker)
 	}
 	phaseTimings["mock-binaries"] = time.Since(phaseStart)
 	if primaryErr != nil {
@@ -397,7 +398,6 @@ func runSingleTest(
 	}
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
-	useDocker := testFile.Glut.Setup.Docker
 	if useDocker {
 		// BUG-3: Docker containers cannot reach 127.0.0.1; rewrite API URLs to use
 		// host.docker.internal so the mock server is reachable from inside containers.
@@ -414,6 +414,7 @@ func runSingleTest(
 		Debug:            opts.Debug,
 		Verbose:          opts.Verbose,
 		UseDocker:        useDocker,
+		ForceShell:       forceShell,
 		DockerVolumes:    dockerVolumes(useDocker, work.Dir),
 		DockerExtraHosts: dockerExtraHosts(useDocker),
 	}
@@ -697,6 +698,20 @@ func dockerExtraHosts(useDocker bool) []string {
 		return nil
 	}
 	return []string{"host.docker.internal:host-gateway"}
+}
+
+// resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
+// nil (absent) → backward-compat: Docker for image: jobs, shell otherwise.
+// &true → full Docker mode with volume/extra-host support.
+// &false → force all jobs to shell, even those with image:.
+func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
+	if docker == nil {
+		return false, false
+	}
+	if *docker {
+		return true, false
+	}
+	return false, true
 }
 
 func errorsToStrings(errs []error) []string {

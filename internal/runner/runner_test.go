@@ -708,6 +708,59 @@ docker-job:
 	}
 }
 
+// TestRunDockerFalseUsesForceShellExecutor verifies that setting docker: false in a test
+// causes GLUT to pass --force-shell-executor so image: jobs are not run with Docker.
+func TestRunDockerFalseUsesForceShellExecutor(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalForceShellScript())
+	env.writeRawFile(t, "tests/docker-false.yml", strings.TrimSpace(`
+stages: [test]
+
+shell-job:
+  image: alpine:latest
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: docker false forces shell
+  setup:
+    docker: false
+  assert:
+    job:
+      shell-job:
+        present: true
+        exit-status: 0
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
+func TestResolveDockerMode(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	useDocker, forceShell := resolveDockerMode(nil)
+	if useDocker || forceShell {
+		t.Fatalf("nil docker: useDocker=%v forceShell=%v, want both false", useDocker, forceShell)
+	}
+
+	useDocker, forceShell = resolveDockerMode(&trueVal)
+	if !useDocker || forceShell {
+		t.Fatalf("true docker: useDocker=%v forceShell=%v, want useDocker=true forceShell=false", useDocker, forceShell)
+	}
+
+	useDocker, forceShell = resolveDockerMode(&falseVal)
+	if useDocker || !forceShell {
+		t.Fatalf("false docker: useDocker=%v forceShell=%v, want useDocker=false forceShell=true", useDocker, forceShell)
+	}
+}
+
 func fakeGitLabCILocalListErrorScript() string {
 	return `#!/bin/sh
 if [ "$1" = "--list" ]; then
@@ -764,6 +817,29 @@ if grep -q 'CI_API_V4_URL' .gitlab-ci.yml; then
   curl --silent --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1" >/dev/null
 fi
 printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
+`
+}
+
+// fakeGitLabCILocalForceShellScript returns a fake gitlab-ci-local that emits a
+// successful job only when --force-shell-executor appears in the argument list.
+func fakeGitLabCILocalForceShellScript() string {
+	return `#!/bin/sh
+HAS_FORCE_SHELL=0
+for arg in "$@"; do
+  [ "$arg" = "--force-shell-executor" ] && HAS_FORCE_SHELL=1
+done
+
+if [ "$1" = "--list" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+  exit 0
+fi
+
+job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
+if [ "$HAS_FORCE_SHELL" = "0" ]; then
+  printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=expected --force-shell-executor but it was absent\n' "$job_name"
+else
+  printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
+fi
 `
 }
 

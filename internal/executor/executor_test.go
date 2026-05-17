@@ -298,20 +298,42 @@ func TestGitLabCILocalDockerModeAddsVolumeAndExtraHost(t *testing.T) {
 }
 
 func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
-	args := append(baseArgs(false), envArgs(map[string]string{"CI": "true"})...)
+	args := append(baseArgs(ExecutorConfig{}), envArgs(map[string]string{"CI": "true"})...)
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "--shell-executor-no-image") {
 		t.Fatalf("args = %q, want shell executor flag", joined)
 	}
 	if strings.Contains(joined, "--force-shell-executor") {
-		t.Fatalf("args = %q, must not use removed force shell flag", joined)
+		t.Fatalf("args = %q, must not use force-shell flag for default mode", joined)
 	}
 	if !strings.Contains(joined, "--variable CI=true") {
 		t.Fatalf("args = %q, want --variable", joined)
 	}
 	if strings.Contains(joined, "--env") {
 		t.Fatalf("args = %q, must not use unsupported --env", joined)
+	}
+}
+
+func TestGitLabCILocalForceShellUsesForceShellExecutor(t *testing.T) {
+	args := baseArgs(ExecutorConfig{ForceShell: true})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--force-shell-executor") {
+		t.Fatalf("args = %q, want --force-shell-executor", joined)
+	}
+	if strings.Contains(joined, "--shell-executor-no-image") {
+		t.Fatalf("args = %q, must not contain --shell-executor-no-image", joined)
+	}
+}
+
+func TestGitLabCILocalDockerModeHasNoShellFlag(t *testing.T) {
+	args := baseArgs(ExecutorConfig{UseDocker: true})
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--force-shell-executor") {
+		t.Fatalf("args = %q, docker mode must not use force-shell", joined)
+	}
+	if strings.Contains(joined, "--shell-executor-no-image") {
+		t.Fatalf("args = %q, docker mode must not use shell-executor-no-image", joined)
 	}
 }
 

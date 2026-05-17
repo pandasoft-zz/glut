@@ -40,6 +40,7 @@ type ExecutorConfig struct {
 	Debug            bool
 	Verbose          bool
 	UseDocker        bool
+	ForceShell       bool
 	DockerVolumes    []string
 	DockerExtraHosts []string
 }
@@ -66,7 +67,7 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	runCtx, cancel := withTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	args := append(baseArgs(cfg.UseDocker), dockerArgs(cfg)...)
+	args := append(baseArgs(cfg), dockerArgs(cfg)...)
 	args = append(args, envArgs(cfg.EnvVars)...)
 	stdout, stderr, err := runCommand(runCtx, cfg, args...)
 	result := RunResult{
@@ -227,9 +228,12 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 	return items
 }
 
-func baseArgs(useDocker bool) []string {
+func baseArgs(cfg ExecutorConfig) []string {
 	args := []string{"--no-color", "--file", pipelineFileName}
-	if !useDocker {
+	if cfg.ForceShell {
+		return append([]string{"--force-shell-executor"}, args...)
+	}
+	if !cfg.UseDocker {
 		return append([]string{"--shell-executor-no-image"}, args...)
 	}
 	return args
