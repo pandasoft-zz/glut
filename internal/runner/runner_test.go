@@ -730,6 +730,104 @@ printf 'GLUT_JOB|name=%s|exit=0|stdout=%s|stderr=\n' "$job_name" "$stdout"
 `
 }
 
+// TestRunDockerModeJobReceivesMockResources verifies BUG-2, BUG-3, and BUG-4 together:
+// when a pipeline job uses an image:, GLUT must pass --volume (BUG-2: mock binaries and
+// git origin are inside work.Dir) and --extra-host host.docker.internal:host-gateway (BUG-3:
+// so containers can reach the API server) and must set CI_API_V4_URL to use
+// host.docker.internal (BUG-3).
+func TestRunDockerModeJobReceivesMockResources(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, dockerAwareFakeGCLScript())
+
+	glutStub := filepath.Join(env.repoDir, "glut-stub")
+	writeExecutable(t, env.repoDir, "glut-stub", "#!/bin/sh\nexit 0\n")
+
+	env.writeRawFile(t, "tests/docker-mode.yml", strings.TrimSpace(`
+stages: [test]
+
+docker-job:
+  image: alpine:latest
+  stage: test
+  script:
+    - mock-tool --flag
+    - curl --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1"
+---
+.glut:
+  name: docker mode resources
+  setup:
+    docker: true
+    mocks:
+      binaries:
+        mock-tool:
+          executable: "echo mocked"
+  assert:
+    job:
+      docker-job:
+        present: true
+        exit-status: 0
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{GlutBinPath: glutStub})
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
+// TestRunDockerFalseUsesForceShellExecutor verifies that setting docker: false in a test
+// causes GLUT to pass --force-shell-executor so all jobs run in the shell regardless of image:.
+func TestRunDockerFalseUsesForceShellExecutor(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalForceShellScript())
+	env.writeRawFile(t, "tests/docker-false.yml", strings.TrimSpace(`
+stages: [test]
+
+shell-job:
+  image: alpine:latest
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: docker false forces shell
+  setup:
+    docker: false
+  assert:
+    job:
+      shell-job:
+        present: true
+        exit-status: 0
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
+func TestResolveDockerMode(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	useDocker, forceShell := resolveDockerMode(nil)
+	if useDocker || forceShell {
+		t.Fatalf("nil docker: useDocker=%v forceShell=%v, want both false", useDocker, forceShell)
+	}
+
+	useDocker, forceShell = resolveDockerMode(&trueVal)
+	if !useDocker || forceShell {
+		t.Fatalf("true docker: useDocker=%v forceShell=%v, want useDocker=true forceShell=false", useDocker, forceShell)
+	}
+
+	useDocker, forceShell = resolveDockerMode(&falseVal)
+	if useDocker || !forceShell {
+		t.Fatalf("false docker: useDocker=%v forceShell=%v, want useDocker=false forceShell=true", useDocker, forceShell)
+	}
+}
+
 func fakeGitLabCILocalListErrorScript() string {
 	return `#!/bin/sh
 if [ "$1" = "--list" ]; then
@@ -737,6 +835,78 @@ if [ "$1" = "--list" ]; then
   exit 2
 fi
 printf 'GLUT_JOB|name=list-job|exit=0|stdout=ok|stderr=\n'
+`
+}
+
+// dockerAwareFakeGCLScript returns a fake gitlab-ci-local script that simulates Docker
+// isolation failures when the required flags are absent. If the pipeline declares image:
+// and --volume / --extra-host are missing, or CI_API_V4_URL still points to 127.0.0.1,
+// the script emits a job marker with exit=127 so the runner test can detect the bug.
+func dockerAwareFakeGCLScript() string {
+	return `#!/bin/sh
+HAS_VOLUME=0
+HAS_EXTRA_HOST=0
+IS_LIST=0
+for arg in "$@"; do
+  case "$arg" in
+    --volume) HAS_VOLUME=1 ;;
+    --extra-host) HAS_EXTRA_HOST=1 ;;
+    --list) IS_LIST=1 ;;
+  esac
+done
+
+if [ "$IS_LIST" = "1" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+  exit 0
+fi
+
+job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
+
+if grep -qE '^  image:' .gitlab-ci.yml 2>/dev/null; then
+  if [ "$HAS_VOLUME" = "0" ]; then
+    printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: mock binaries not mounted (missing --volume)\n' "$job_name"
+    exit 0
+  fi
+  if [ "$HAS_EXTRA_HOST" = "0" ]; then
+    printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: host unreachable (missing --extra-host)\n' "$job_name"
+    exit 0
+  fi
+  if ! echo "$CI_API_V4_URL" | grep -q 'glut-mock'; then
+    printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: CI_API_V4_URL does not use glut-mock hostname (BUG-3)\n' "$job_name"
+    exit 0
+  fi
+fi
+
+if grep -q 'mock-tool' .gitlab-ci.yml; then
+  mock-tool --flag >/dev/null
+fi
+if grep -q 'CI_API_V4_URL' .gitlab-ci.yml; then
+  curl --silent --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1" >/dev/null
+fi
+printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
+`
+}
+
+// fakeGitLabCILocalForceShellScript returns a fake gitlab-ci-local that emits a
+// successful job only when --force-shell-executor appears in the argument list.
+func fakeGitLabCILocalForceShellScript() string {
+	return `#!/bin/sh
+HAS_FORCE_SHELL=0
+for arg in "$@"; do
+  [ "$arg" = "--force-shell-executor" ] && HAS_FORCE_SHELL=1
+done
+
+if [ "$1" = "--list" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+  exit 0
+fi
+
+job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
+if [ "$HAS_FORCE_SHELL" = "0" ]; then
+  printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=expected --force-shell-executor but it was absent\n' "$job_name"
+else
+  printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
+fi
 `
 }
 

@@ -199,14 +199,14 @@ func TestWorkspaceEnvHelperBranches(t *testing.T) {
 
 func TestMockBinaryHelpers(t *testing.T) {
 	t.Run("SetupMockBinaries no mocks", func(t *testing.T) {
-		if err := SetupMockBinaries(t.TempDir(), parser.MocksConfig{}, "missing"); err != nil {
+		if err := SetupMockBinaries(t.TempDir(), parser.MocksConfig{}, "missing", false); err != nil {
 			t.Fatalf("expected no-op, got %v", err)
 		}
 	})
 
 	t.Run("SetupMockBinaries invalid binary path", func(t *testing.T) {
 		mocks := parser.MocksConfig{Binaries: map[string]parser.BinaryMockConfig{"tool": {Executable: "echo ok"}}}
-		err := SetupMockBinaries(t.TempDir(), mocks, filepath.Join(t.TempDir(), "missing-glut"))
+		err := SetupMockBinaries(t.TempDir(), mocks, filepath.Join(t.TempDir(), "missing-glut"), false)
 		if err == nil {
 			t.Fatal("expected invalid glut path error")
 		}
@@ -220,7 +220,7 @@ func TestMockBinaryHelpers(t *testing.T) {
 		}
 		glutBin := fakeGlutBinary(t, parent)
 		mocks := parser.MocksConfig{Binaries: map[string]parser.BinaryMockConfig{"tool": {Executable: "echo ok"}}}
-		err := SetupMockBinaries(tmpWork, mocks, glutBin)
+		err := SetupMockBinaries(tmpWork, mocks, glutBin, false)
 		if err == nil || !strings.Contains(err.Error(), "create mock binary directory") {
 			t.Fatalf("SetupMockBinaries() error = %v", err)
 		}
@@ -230,7 +230,7 @@ func TestMockBinaryHelpers(t *testing.T) {
 		tmp := t.TempDir()
 		glutBin := fakeGlutBinary(t, tmp)
 		mocks := parser.MocksConfig{Binaries: map[string]parser.BinaryMockConfig{"../bad": {Executable: "echo ok"}}}
-		err := SetupMockBinaries(tmp, mocks, glutBin)
+		err := SetupMockBinaries(tmp, mocks, glutBin, false)
 		if err == nil || !strings.Contains(err.Error(), "must not contain path separators") {
 			t.Fatalf("SetupMockBinaries() error = %v", err)
 		}

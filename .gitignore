@@ -3,5 +3,6 @@
 /glut
 .codex/config.toml
 .glut-tmp-*/
+.glut-tmp/
 *.test
 /.artifacts/

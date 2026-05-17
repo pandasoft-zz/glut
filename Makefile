@@ -25,7 +25,7 @@ lint:
 	golangci-lint run
 
 docker:
-	docker build -t glut:dev .
+	docker build --target dev -t glut:dev .
 
 INCONTAINER := $(shell [ -f /.dockerenv ] && echo 1 || echo 0)
 DOCKER_TEST_CONFIG ?= /tmp/glut-docker-config
@@ -40,15 +40,20 @@ test-integration: build
 	fi
 else
 test-integration: docker
+	@mkdir -p .glut-tmp
 	docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v "$(PWD):/repo" \
 		-w /repo \
+		-e GLUT_WORK_DIR=/repo/.glut-tmp \
+		-e GLUT_HOST_WORK_DIR=$(PWD)/.glut-tmp \
 		glut:dev run $(GLUT_RUN_FLAGS) ./tests/passing/
 	@if docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v "$(PWD):/repo" \
 		-w /repo \
+		-e GLUT_WORK_DIR=/repo/.glut-tmp \
+		-e GLUT_HOST_WORK_DIR=$(PWD)/.glut-tmp \
 		glut:dev run $(GLUT_RUN_FLAGS) ./tests/failing/; then \
 		echo "Expected tests to fail but they passed"; exit 1; \
 	fi

@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/devcontainers/go:1.26-bookworm
 
 ARG GOLANGCI_LINT_VERSION=v2.11.4
-ARG GCL_VERSION=4.55.0
+ARG GCL_VERSION=4.72.0
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends bash ca-certificates curl git rsync \

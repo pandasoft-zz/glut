@@ -32,15 +32,18 @@ var (
 )
 
 type ExecutorConfig struct {
-	WorkspacePath string
-	PipelineYAML  string
-	EnvVars       map[string]string
-	MockBinPath   string
-	Timeout       time.Duration
-	Debug         bool
-	Verbose       bool
-	UseDocker     bool
-	HostEnv       []string // nil falls back to os.Environ()
+	WorkspacePath    string
+	PipelineYAML     string
+	EnvVars          map[string]string
+	MockBinPath      string
+	Timeout          time.Duration
+	Debug            bool
+	Verbose          bool
+	UseDocker        bool
+	ForceShell       bool
+	DockerVolumes    []string
+	DockerExtraHosts []string
+	HostEnv          []string // nil falls back to os.Environ()
 }
 
 type RunResult struct {
@@ -65,7 +68,8 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	runCtx, cancel := withTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	args := append(baseArgs(cfg.UseDocker), envArgs(cfg.EnvVars)...)
+	args := append(baseArgs(cfg), dockerArgs(cfg)...)
+	args = append(args, envArgs(cfg.EnvVars)...)
 	stdout, stderr, err := runCommand(runCtx, cfg, args...)
 	result := RunResult{
 		Jobs:      parseJobOutputs(stdout, stderr),
@@ -277,10 +281,24 @@ func envSliceToMap(env []string) map[string]string {
 	return m
 }
 
-func baseArgs(useDocker bool) []string {
+func baseArgs(cfg ExecutorConfig) []string {
 	args := []string{"--no-color", "--file", pipelineFileName}
-	if !useDocker {
+	if cfg.ForceShell {
+		return append([]string{"--force-shell-executor"}, args...)
+	}
+	if !cfg.UseDocker {
 		return append([]string{"--shell-executor-no-image"}, args...)
+	}
+	return args
+}
+
+func dockerArgs(cfg ExecutorConfig) []string {
+	var args []string
+	for _, vol := range cfg.DockerVolumes {
+		args = append(args, "--volume", vol)
+	}
+	for _, host := range cfg.DockerExtraHosts {
+		args = append(args, "--extra-host", host)
 	}
 	return args
 }

@@ -1,0 +1,30 @@
+stages: [test]
+
+api-in-shell:
+  image: alpine:latest
+  stage: test
+  script:
+    - 'curl -sf --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1" -o /dev/null'
+    - echo "api call ok"
+---
+.glut:
+  name: "docker:false API call works in forced shell mode"
+  setup:
+    branch: main
+    docker: false
+    api:
+      token:
+        valid: true
+      project:
+        path: "test-group/test-project"
+        default_branch: main
+  assert:
+    job:
+      api-in-shell:
+        exit-status: 0
+        stdout:
+          - "api call ok"
+    api:
+      "GET /api/v4/projects/1":
+        called: true
+        times: 1

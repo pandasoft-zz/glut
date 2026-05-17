@@ -1,0 +1,25 @@
+stages: [test]
+
+git-in-docker:
+  image: alpine:latest
+  stage: test
+  script:
+    - apk add --no-cache --quiet git
+    - git fetch origin
+    - git log --oneline -1
+    - echo "git fetch ok"
+---
+.glut:
+  name: "docker:true git origin is accessible inside Docker container (BUG-4 regression)"
+  setup:
+    branch: main
+    docker: true
+    git:
+      origin:
+        branch: main
+        files:
+          README.md: "hello\n"
+  assert:
+    job:
+      git-in-docker:
+        exit-status: 0

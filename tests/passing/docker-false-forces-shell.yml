@@ -1,0 +1,23 @@
+stages: [test]
+
+# image: is declared but docker: false must force the shell executor.
+# The GLUT container has curl; Alpine does not. If docker: false were ignored
+# this job would run inside Alpine and fail with "curl: not found".
+shell-forced:
+  image: alpine:latest
+  stage: test
+  script:
+    - curl --version
+    - echo "running in shell"
+---
+.glut:
+  name: "docker:false forces shell executor even when image: is declared"
+  setup:
+    branch: main
+    docker: false
+  assert:
+    job:
+      shell-forced:
+        exit-status: 0
+        stdout:
+          - "running in shell"
