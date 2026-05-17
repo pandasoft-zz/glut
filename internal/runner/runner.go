@@ -752,23 +752,6 @@ func outboundIP() string {
 }
 
 // toHostPath translates a workspace path from the GLUT container's perspective to
-// the Docker-daemon-visible (host) path. When GLUT_WORK_DIR and GLUT_HOST_WORK_DIR
-// are set (as in the integration-test Makefile), workspaces created under
-// GLUT_WORK_DIR are remapped so the Docker daemon can bind them into job containers.
-// If neither env var is set the path is returned unchanged (local development).
-func toHostPath(containerPath string) string {
-	glutWorkDir := os.Getenv("GLUT_WORK_DIR")
-	hostWorkDir := os.Getenv("GLUT_HOST_WORK_DIR")
-	if glutWorkDir == "" || hostWorkDir == "" {
-		return containerPath
-	}
-	rel, err := filepath.Rel(glutWorkDir, containerPath)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return containerPath
-	}
-	return filepath.Join(hostWorkDir, rel)
-}
-
 // resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
 // nil (absent) → backward-compat: Docker for image: jobs, shell otherwise.
 // &true → full Docker mode with volume/extra-host support.
