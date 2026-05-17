@@ -49,10 +49,13 @@ type RunOptions struct {
 	CopyStrategy   string
 	Include        []string
 	Progress       []ProgressSink
+	HostEnv        []string // nil falls back to os.Environ(); propagated to executor and workspace
+	WorkDir        string   // working directory for test discovery; empty falls back to os.Getwd()
 }
 
 type ListOptions struct {
 	RunPattern string
+	WorkDir    string // working directory for path resolution; empty falls back to current dir
 }
 
 type ProgressSink interface {
@@ -104,14 +107,18 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		return RunResult{Error: err}, ExitRunnerError
 	}
 
-	tests, err := discoverTests(paths, opts.RunPattern)
-	if err != nil {
-		return RunResult{Error: err}, ExitRunnerError
+	repoRoot := opts.WorkDir
+	if repoRoot == "" {
+		var err error
+		repoRoot, err = os.Getwd()
+		if err != nil {
+			return RunResult{Error: fmt.Errorf("read current directory: %w", err)}, ExitRunnerError
+		}
 	}
 
-	repoRoot, err := os.Getwd()
+	tests, err := discoverTests(absifyPaths(paths, repoRoot), opts.RunPattern)
 	if err != nil {
-		return RunResult{Error: fmt.Errorf("read current directory: %w", err)}, ExitRunnerError
+		return RunResult{Error: err}, ExitRunnerError
 	}
 
 	for _, sink := range opts.Progress {
@@ -154,7 +161,7 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, error) {
 	_ = ctx
 
-	tests, err := discoverTests(paths, opts.RunPattern)
+	tests, err := discoverTests(absifyPaths(paths, opts.WorkDir), opts.RunPattern)
 	if err != nil {
 		return nil, err
 	}
@@ -358,6 +365,7 @@ func runSingleTest(
 		CopyStrategy: opts.CopyStrategy,
 		Include:      opts.Include,
 		Verbose:      opts.Verbose,
+		HostEnv:      opts.HostEnv,
 	})
 	phaseTimings["workspace"] = time.Since(phaseStart)
 	if primaryErr != nil {
@@ -437,6 +445,7 @@ func runSingleTest(
 		ForceShell:       forceShell,
 		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName),
 		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
+		HostEnv:          opts.HostEnv,
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
@@ -521,6 +530,22 @@ func normalizePaths(paths []string) []string {
 		return []string{"."}
 	}
 	return paths
+}
+
+func absifyPaths(paths []string, workDir string) []string {
+	if workDir == "" {
+		return normalizePaths(paths)
+	}
+	normalized := normalizePaths(paths)
+	result := make([]string, len(normalized))
+	for i, p := range normalized {
+		if filepath.IsAbs(p) {
+			result[i] = p
+		} else {
+			result[i] = filepath.Join(workDir, p)
+		}
+	}
+	return result
 }
 
 func isYAMLPath(path string) bool {

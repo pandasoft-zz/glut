@@ -5,3 +5,4 @@
 .glut-tmp-*/
 .glut-tmp/
 *.test
+/.artifacts/

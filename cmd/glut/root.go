@@ -197,19 +197,19 @@ func Execute() {
 
 func init() {
 	runFormat = os.Getenv("GLUT_FORMAT")
-	runReports = envList("GLUT_REPORT")
+	runReports = envList(os.Getenv, "GLUT_REPORT")
 
 	runCmd.Flags().StringVarP(&runPattern, "run", "k", "", "Run tests matching substring or regex")
-	runCmd.Flags().BoolVarP(&runFailFast, "fail-fast", "x", envBool("GLUT_FAIL_FAST"), "Stop after first failure")
+	runCmd.Flags().BoolVarP(&runFailFast, "fail-fast", "x", envBool(os.Getenv, "GLUT_FAIL_FAST"), "Stop after first failure")
 	runCmd.Flags().IntVar(&runMaxFail, "maxfail", 0, "Stop after N failures")
-	runCmd.Flags().BoolVarP(&runVerbose, "verbose", "v", envBool("GLUT_VERBOSE"), "Verbose output")
+	runCmd.Flags().BoolVarP(&runVerbose, "verbose", "v", envBool(os.Getenv, "GLUT_VERBOSE"), "Verbose output")
 	runCmd.Flags().BoolVarP(&runQuiet, "quiet", "q", false, "Quiet output")
 	runCmd.Flags().StringVar(&runFormat, "format", runFormat, "Console output format")
 	runCmd.Flags().StringArrayVar(&runReports, "report", runReports, "Report output as <format>:<path>, repeatable")
-	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration("GLUT_TIMEOUT", defaultRunTimeout), "Timeout for one test")
-	runCmd.Flags().BoolVar(&runDebug, "debug", envBool("GLUT_DEBUG"), "Enable debug mode")
-	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool("GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
-	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, after-pipeline, or on-fail")
+	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration(os.Getenv, "GLUT_TIMEOUT", defaultRunTimeout), "Timeout for one test")
+	runCmd.Flags().BoolVar(&runDebug, "debug", envBool(os.Getenv, "GLUT_DEBUG"), "Enable debug mode")
+	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool(os.Getenv, "GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
+	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, before-asserts, after-pipeline, or on-fail")
 	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
 	runCmd.Flags().StringVar(&runCopyStrategy, "copy-strategy", "auto", "Copy strategy: auto, rsync, native")
 	runCmd.Flags().StringArrayVar(&runInclude, "include", nil, "Copy only these subdirectories into the workspace (repeatable)")
@@ -226,8 +226,8 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 }
 
-func envBool(name string) bool {
-	switch os.Getenv(name) {
+func envBool(env func(string) string, name string) bool {
+	switch env(name) {
 	case "1", "true", "TRUE", "yes", "YES":
 		return true
 	default:
@@ -235,8 +235,8 @@ func envBool(name string) bool {
 	}
 }
 
-func envDuration(name string, fallback time.Duration) time.Duration {
-	value := os.Getenv(name)
+func envDuration(env func(string) string, name string, fallback time.Duration) time.Duration {
+	value := env(name)
 	if value == "" {
 		return fallback
 	}

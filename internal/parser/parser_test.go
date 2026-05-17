@@ -685,6 +685,60 @@ assert:
 	}
 }
 
+func TestFriendlyYAMLMessage(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"cannot unmarshal !!map into string", "unexpected mapping where a string is expected"},
+		{"cannot unmarshal !!seq into string", "unexpected sequence where a string is expected"},
+		{"cannot unmarshal !!str into int", "unexpected string where int"},
+		{"cannot unmarshal !!int into string", "unexpected integer where string"},
+		{"cannot unmarshal !!bool into string", "unexpected boolean where string"},
+		{"some unknown message", "some unknown message"},
+	}
+	for _, tt := range tests {
+		got := friendlyYAMLMessage(tt.input)
+		if !strings.Contains(got, tt.want) {
+			t.Errorf("friendlyYAMLMessage(%q) = %q, want containing %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestFriendlyParseError(t *testing.T) {
+	t.Run("non_type_error_returned_as_is", func(t *testing.T) {
+		orig := errors.New("some error")
+		got := friendlyParseError(orig)
+		if got != orig {
+			t.Errorf("expected original error, got %v", got)
+		}
+	})
+
+	t.Run("yaml_type_error_is_friendly", func(t *testing.T) {
+		// Trigger a real yaml.TypeError by unmarshaling wrong type
+		type Wrapper struct {
+			Name string `yaml:"name"`
+		}
+		var w Wrapper
+		err := yaml.Unmarshal([]byte("name:\n  sub: value\n"), &w)
+		if err == nil {
+			t.Skip("yaml did not return type error")
+		}
+		got := friendlyParseError(err)
+		if got == err {
+			t.Errorf("expected friendly error, got original error")
+		}
+	})
+}
+
+func TestFileParseErrorUnwrap(t *testing.T) {
+	inner := errors.New("inner error")
+	fpe := &FileParseError{FilePath: "test.yml", Err: inner}
+	if !errors.Is(fpe, inner) {
+		t.Error("expected errors.Is to find inner error via Unwrap")
+	}
+}
+
 func TestLintReportsSchemaAndSetupErrors(t *testing.T) {
 	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
 name: "schema and setup"

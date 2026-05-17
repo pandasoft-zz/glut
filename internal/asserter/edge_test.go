@@ -144,6 +144,7 @@ func TestBinaryEdgeCases(t *testing.T) {
 }
 
 func TestGitEdgeCases(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	origin := filepath.Join(root, "origin.git")

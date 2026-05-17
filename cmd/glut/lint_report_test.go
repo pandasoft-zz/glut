@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pandasoft-zz/glut/internal/parser"
 )
 
 func TestBuildLintReportSeparatesSchemaAndSemanticIssues(t *testing.T) {
@@ -494,6 +496,158 @@ job:
 	}
 }
 
+func TestPrintLintTextFormat(t *testing.T) {
+	report := lintReport{
+		Files: []lintFileReport{
+			{
+				File: "tests/foo.yml",
+				Issues: []lintIssue{
+					{File: "tests/foo.yml", Level: "error", Category: "schema", Message: "schema error"},
+					{File: "tests/foo.yml", Level: "warning", Category: "semantic", Message: "semantic warning"},
+					{File: "tests/foo.yml", Level: "error", Category: "parse", Message: "parse error"},
+				},
+			},
+		},
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := printLintReport(&stdout, &stderr, report, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "[ERROR]") {
+		t.Errorf("stdout should contain [ERROR], got: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "[WARNING]") {
+		t.Errorf("stdout should contain [WARNING], got: %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "parse error") {
+		t.Errorf("stderr should contain parse error, got: %s", stderr.String())
+	}
+}
+
+func TestSeedEntitySummary(t *testing.T) {
+	empty := seedEntitySummary(&parser.APISeedConfig{})
+	if empty != "seeded data" {
+		t.Errorf("empty seed = %q, want 'seeded data'", empty)
+	}
+
+	relOnly := seedEntitySummary(&parser.APISeedConfig{
+		Releases: []map[string]interface{}{{"tag_name": "v1"}},
+	})
+	if !strings.Contains(relOnly, "1 release(s)") {
+		t.Errorf("releases only = %q", relOnly)
+	}
+
+	mrOnly := seedEntitySummary(&parser.APISeedConfig{
+		MergeRequests: []map[string]interface{}{{"iid": 1}},
+	})
+	if !strings.Contains(mrOnly, "1 merge request(s)") {
+		t.Errorf("MRs only = %q", mrOnly)
+	}
+
+	all := seedEntitySummary(&parser.APISeedConfig{
+		Releases:      []map[string]interface{}{{"tag_name": "v1"}},
+		MergeRequests: []map[string]interface{}{{"iid": 1}},
+		Labels:        []map[string]interface{}{{"name": "bug"}},
+	})
+	if !strings.Contains(all, "release") || !strings.Contains(all, "merge") || !strings.Contains(all, "label") {
+		t.Errorf("all seeds = %q", all)
+	}
+}
+
+func TestLintPathCoverage(t *testing.T) {
+	tests := []struct {
+		msg  string
+		want string
+	}{
+		{"glut schema: setup.branch: must be string", ".glut.setup.branch"},
+		{"missing .glut.name in file", ".glut.name"},
+		{"empty .glut.assert block", ".glut.assert"},
+		{"assert.job references missing job", ".glut.assert.job"},
+		{"setup.pipeline_source invalid", ".glut.setup"},
+		{"some other message", ""},
+	}
+	for _, tt := range tests {
+		got := lintPath(tt.msg)
+		if got != tt.want {
+			t.Errorf("lintPath(%q) = %q, want %q", tt.msg, got, tt.want)
+		}
+	}
+}
+
+func TestLintCategoryParse(t *testing.T) {
+	if got := lintCategory("invalid yaml: something"); got != "parse" {
+		t.Errorf("lintCategory parse = %q", got)
+	}
+	if got := lintCategory("invalid pipeline yaml: x"); got != "parse" {
+		t.Errorf("lintCategory pipeline yaml = %q", got)
+	}
+	if got := lintCategory("cannot read file: x"); got != "parse" {
+		t.Errorf("lintCategory read file = %q", got)
+	}
+}
+
+func TestDoctorHintForMergeRequest(t *testing.T) {
+	path := writeTempTest(t, `
+job:
+  script: echo ok
+---
+.glut:
+  name: "mr-test"
+  setup:
+    pipeline_source: "merge_request_event"
+    merge_request:
+      iid: 1
+      title: "My MR"
+      target_branch: "main"
+  assert:
+    job:
+      job:
+        exit-status: 0
+`)
+	report := buildDoctorReport([]string{path})
+	var hasMRHint bool
+	for _, hint := range report.Files[0].Hints {
+		if hint.Path == ".glut.assert.api" && strings.Contains(hint.Message, "merge request") {
+			hasMRHint = true
+		}
+	}
+	if !hasMRHint {
+		t.Fatalf("expected merge request API hint, hints = %#v", report.Files[0].Hints)
+	}
+}
+
+func TestBuildLintReportWithParseError(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "broken.yml", "job: [broken")
+	writeTestFile(t, dir, "no-glut.yml", "job:\n  script: echo ok\n")
+
+	report := buildLintReport([]string{dir})
+	var hasParseError bool
+	for _, f := range report.Files {
+		for _, issue := range f.Issues {
+			if issue.Category == "parse" {
+				hasParseError = true
+			}
+		}
+	}
+	if !hasParseError {
+		t.Fatal("expected parse error in lint report")
+	}
+}
+
+func TestCoverageForFileNoJobs(t *testing.T) {
+	tf := &parser.TestFile{
+		FilePath: "test.yml",
+		Glut: parser.GlutSection{
+			Name: "no-jobs",
+		},
+	}
+	if cov := coverageForFile(tf); cov != nil {
+		t.Errorf("expected nil coverage for file with no pipeline jobs, got %+v", cov)
+	}
+}
+
 func TestUnsupportedLintAndDoctorFormatsFail(t *testing.T) {
 	if err := printLintReport(&bytes.Buffer{}, &bytes.Buffer{}, lintReport{}, "xml"); err == nil {
 		t.Fatal("expected unsupported lint format error")
@@ -518,5 +672,17 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(strings.TrimPrefix(content, "\n")), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSortLintIssuesSameLevelDifferentCategory(t *testing.T) {
+	t.Parallel()
+	issues := []lintIssue{
+		{Level: "error", Category: "semantic", Message: "z"},
+		{Level: "error", Category: "schema", Message: "a"},
+	}
+	sortLintIssues(issues)
+	if issues[0].Category != "schema" || issues[1].Category != "semantic" {
+		t.Fatalf("expected schema before semantic, got %s and %s", issues[0].Category, issues[1].Category)
 	}
 }

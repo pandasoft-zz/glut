@@ -100,34 +100,41 @@ func TestListAndLintOptionsUseDefaultPaths(t *testing.T) {
 }
 
 func TestEnvHelpers(t *testing.T) {
-	t.Setenv("GLUT_BOOL", "yes")
-	if !envBool("GLUT_BOOL") {
-		t.Fatal("envBool should accept yes")
-	}
-	t.Setenv("GLUT_BOOL", "no")
-	if envBool("GLUT_BOOL") {
-		t.Fatal("envBool should reject no")
+	t.Parallel()
+	mkEnv := func(val string) func(string) string {
+		return func(string) string { return val }
 	}
 
-	t.Setenv("GLUT_DURATION", "2m")
-	if got := envDuration("GLUT_DURATION", time.Second); got != 2*time.Minute {
+	if !envBool(mkEnv("yes"), "ANY") {
+		t.Fatal("envBool should accept yes")
+	}
+	if !envBool(mkEnv("1"), "ANY") {
+		t.Fatal("envBool should accept 1")
+	}
+	if !envBool(mkEnv("true"), "ANY") {
+		t.Fatal("envBool should accept true")
+	}
+	if envBool(mkEnv("no"), "ANY") {
+		t.Fatal("envBool should reject no")
+	}
+	if envBool(mkEnv(""), "ANY") {
+		t.Fatal("envBool should reject empty")
+	}
+
+	if got := envDuration(mkEnv("2m"), "ANY", time.Second); got != 2*time.Minute {
 		t.Fatalf("duration = %v", got)
 	}
-	t.Setenv("GLUT_DURATION", "bad")
-	if got := envDuration("GLUT_DURATION", time.Second); got != time.Second {
+	if got := envDuration(mkEnv("bad"), "ANY", time.Second); got != time.Second {
 		t.Fatalf("fallback duration = %v", got)
 	}
-	t.Setenv("GLUT_DURATION", "")
-	if got := envDuration("GLUT_DURATION", defaultRunTimeout); got != defaultRunTimeout {
+	if got := envDuration(mkEnv(""), "ANY", defaultRunTimeout); got != defaultRunTimeout {
 		t.Fatalf("empty duration = %v", got)
 	}
 
-	t.Setenv("GLUT_LIST", " junit:a.xml, ,tap:b.tap ")
-	if got := envList("GLUT_LIST"); !reflect.DeepEqual(got, []string{"junit:a.xml", "tap:b.tap"}) {
+	if got := envList(mkEnv(" junit:a.xml, ,tap:b.tap "), "ANY"); !reflect.DeepEqual(got, []string{"junit:a.xml", "tap:b.tap"}) {
 		t.Fatalf("envList = %#v", got)
 	}
-	t.Setenv("GLUT_LIST", "")
-	if got := envList("GLUT_LIST"); got != nil {
+	if got := envList(mkEnv(""), "ANY"); got != nil {
 		t.Fatalf("empty envList = %#v", got)
 	}
 }

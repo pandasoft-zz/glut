@@ -43,6 +43,7 @@ type ExecutorConfig struct {
 	ForceShell       bool
 	DockerVolumes    []string
 	DockerExtraHosts []string
+	HostEnv          []string // nil falls back to os.Environ()
 }
 
 type RunResult struct {
@@ -108,7 +109,7 @@ func ListJobs(ctx context.Context, cfg ExecutorConfig) ([]string, error) {
 	return parseJobList(stdout, stderr), nil
 }
 
-func CheckDependencies(ctx context.Context) []string {
+func CheckDependencies(ctx context.Context, hostEnv []string) []string {
 	type check struct {
 		name     string
 		args     []string
@@ -124,7 +125,20 @@ func CheckDependencies(ctx context.Context) []string {
 
 	var problems []string
 	for _, item := range checks {
-		cmd := exec.CommandContext(ctx, item.name, item.args...)
+		binaryPath := resolveExecutable(item.name, hostEnv)
+		// When a custom hostEnv is provided, resolveExecutable returns the bare
+		// name when the binary is absent from that PATH. Avoid exec.Command
+		// falling back to the process PATH in that case.
+		if hostEnv != nil && binaryPath == item.name {
+			if item.optional {
+				problems = append(problems, fmt.Sprintf("%s: not available (not in PATH, GLUT can use native copy fallback)", item.name))
+			} else {
+				problems = append(problems, fmt.Sprintf("%s: not available (not in PATH)", item.name))
+			}
+			continue
+		}
+		cmd := exec.CommandContext(ctx, binaryPath, item.args...)
+		cmd.Env = hostEnv // nil = inherit process env
 		if output, err := cmd.CombinedOutput(); err != nil {
 			if item.optional {
 				problems = append(problems, fmt.Sprintf("%s: not available (%s, GLUT can use native copy fallback)", item.name, strings.TrimSpace(firstLine(string(output), err.Error()))))
@@ -157,32 +171,47 @@ func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, c
 }
 
 func runCommand(ctx context.Context, cfg ExecutorConfig, args ...string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, "gitlab-ci-local", args...)
-	cmd.Dir = cfg.WorkspacePath
-	cmd.Env = buildCommandEnv(cfg)
+	binaryPath := resolveExecutable("gitlab-ci-local", cfg.HostEnv)
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		cmd := exec.CommandContext(ctx, binaryPath, args...)
+		cmd.Dir = cfg.WorkspacePath
+		cmd.Env = buildCommandEnv(cfg)
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return stdout.String(), stderr.String(), ctx.Err()
+		if err := cmd.Run(); err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return stdout.String(), stderr.String(), ctx.Err()
+			}
+			// Retry on ETXTBSY (overlayfs write-reference not yet cleared).
+			if attempt < maxAttempts-1 && strings.Contains(err.Error(), "text file busy") {
+				time.Sleep(time.Duration(1<<uint(attempt)) * 10 * time.Millisecond)
+				continue
+			}
+			return stdout.String(), stderr.String(), fmt.Errorf("%w; stdout: %s; stderr: %s", err, tailForError(stdout.String()), tailForError(stderr.String()))
 		}
-		return stdout.String(), stderr.String(), fmt.Errorf("%w; stdout: %s; stderr: %s", err, tailForError(stdout.String()), tailForError(stderr.String()))
+		return stdout.String(), stderr.String(), nil
 	}
-
-	return stdout.String(), stderr.String(), nil
+	return "", "", fmt.Errorf("executor: runCommand: could not exec binary after %d attempts", maxAttempts)
 }
 
 func buildCommandEnv(cfg ExecutorConfig) []string {
-	env := make(map[string]string, len(cfg.EnvVars)+4)
+	env := make(map[string]string, len(cfg.EnvVars)+8)
 	for key, value := range cfg.EnvVars {
 		env[key] = value
 	}
 
-	basePath := os.Getenv("PATH")
+	hostEnv := cfg.HostEnv
+	if hostEnv == nil {
+		hostEnv = os.Environ()
+	}
+	host := envSliceToMap(hostEnv)
+
+	basePath := host["PATH"]
 	if basePath == "" {
 		basePath = defaultSystemPATH
 	}
@@ -191,27 +220,20 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 	}
 	env["PATH"] = basePath
 
-	if home := os.Getenv("HOME"); home != "" {
-		env["HOME"] = home
-	}
-	if tmpDir := os.Getenv("TMPDIR"); tmpDir != "" {
-		env["TMPDIR"] = tmpDir
-	}
-	if tmp := os.Getenv("TMP"); tmp != "" {
-		env["TMP"] = tmp
-	}
-	if dockerConfig := os.Getenv("DOCKER_CONFIG"); dockerConfig != "" {
-		env["DOCKER_CONFIG"] = dockerConfig
+	for _, key := range []string{"HOME", "TMPDIR", "TMP", "DOCKER_CONFIG"} {
+		if v := host[key]; v != "" {
+			env[key] = v
+		}
 	}
 
 	if _, ok := env[config.EnvMockLogDir]; !ok {
-		if value := os.Getenv(config.EnvMockLogDir); value != "" {
-			env[config.EnvMockLogDir] = value
+		if v := host[config.EnvMockLogDir]; v != "" {
+			env[config.EnvMockLogDir] = v
 		}
 	}
 	if _, ok := env[config.EnvMockBinReal]; !ok {
-		if value := os.Getenv(config.EnvMockBinReal); value != "" {
-			env[config.EnvMockBinReal] = value
+		if v := host[config.EnvMockBinReal]; v != "" {
+			env[config.EnvMockBinReal] = v
 		}
 	}
 
@@ -226,6 +248,37 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 		items = append(items, key+"="+env[key])
 	}
 	return items
+}
+
+// resolveExecutable looks up name in hostEnv's PATH when hostEnv is non-nil,
+// falling back to exec.LookPath (process PATH) when hostEnv is nil.
+func resolveExecutable(name string, hostEnv []string) string {
+	if hostEnv == nil {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
+		return name
+	}
+	host := envSliceToMap(hostEnv)
+	for _, dir := range filepath.SplitList(host["PATH"]) {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return name
+}
+
+func envSliceToMap(env []string) map[string]string {
+	m := make(map[string]string, len(env))
+	for _, kv := range env {
+		key, value, _ := strings.Cut(kv, "=")
+		m[key] = value
+	}
+	return m
 }
 
 func baseArgs(cfg ExecutorConfig) []string {

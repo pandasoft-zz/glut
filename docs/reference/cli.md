@@ -174,6 +174,9 @@ glut lint ./tests/release.yml
 glut lint --format=json ./tests/release.yml
 ```
 
+When no path is given, `glut lint` defaults to `./tests/` (not the current
+directory, unlike `glut run` and `glut list`).
+
 Lint checks include:
 
 - YAML syntax.

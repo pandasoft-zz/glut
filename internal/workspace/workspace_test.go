@@ -11,8 +11,9 @@ import (
 )
 
 func TestWorkspace_NewAndDestroy(t *testing.T) {
+	t.Parallel()
 	cfg := parser.SetupConfig{}
-	w, err := New(cfg, false, ".", Options{})
+	w, err := New(cfg, false, ".", Options{HostEnv: noSignGitEnv(t)})
 	if err != nil {
 		t.Fatalf("failed to create workspace: %v", err)
 	}
@@ -154,6 +155,7 @@ func TestEnvVars(t *testing.T) {
 }
 
 func TestGitOriginFilesAndCommands(t *testing.T) {
+	t.Parallel()
 	cfg := parser.SetupConfig{
 		Git: &parser.GitSetupConfig{
 			Origin: &parser.GitOriginConfig{
@@ -167,7 +169,7 @@ func TestGitOriginFilesAndCommands(t *testing.T) {
 			},
 		},
 	}
-	w, err := New(cfg, false, ".", Options{})
+	w, err := New(cfg, false, ".", Options{HostEnv: noSignGitEnv(t)})
 	if err != nil {
 		t.Fatalf("failed to create workspace: %v", err)
 	}
@@ -230,16 +232,16 @@ func TestGitHelpersNoopBranches(t *testing.T) {
 		t.Fatalf("git config name: %v", err)
 	}
 
-	if err := commitIfStaged(dir, "empty"); err != nil {
+	if err := commitIfStaged(dir, "empty", nil); err != nil {
 		t.Fatalf("commitIfStaged empty repo error = %v", err)
 	}
-	if err := removeRemoteIfExists(dir, "origin"); err != nil {
+	if err := removeRemoteIfExists(dir, "origin", nil); err != nil {
 		t.Fatalf("remove missing remote error = %v", err)
 	}
 	if err := runCmd(dir, "git", "remote", "add", "origin", "/tmp/origin.git"); err != nil {
 		t.Fatalf("add remote: %v", err)
 	}
-	if err := removeRemoteIfExists(dir, "origin"); err != nil {
+	if err := removeRemoteIfExists(dir, "origin", nil); err != nil {
 		t.Fatalf("remove remote error = %v", err)
 	}
 }
@@ -321,11 +323,200 @@ func TestCopyRepoCopiesFilesNatively(t *testing.T) {
 	}
 }
 
-func TestNewCleansTempWorkspaceOnError(t *testing.T) {
-	tmpRoot := t.TempDir()
-	t.Setenv("TMPDIR", tmpRoot)
+func TestCopyDirSkipsGitDir(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(filepath.Join(src, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".git", "config"), []byte("git config"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-	_, err := New(parser.SetupConfig{}, false, filepath.Join(tmpRoot, "missing-source"), Options{})
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
+		t.Error(".git dir should be skipped by copyDir")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "file.txt")); err != nil {
+		t.Errorf("regular file should be copied: %v", err)
+	}
+}
+
+func TestCopyRepoNativeVerbose(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("v"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyNative, Verbose: true}); err != nil {
+		t.Fatalf("copyRepo verbose native: %v", err)
+	}
+}
+
+func TestCopyRepoAutoVerboseFallbackToNative(t *testing.T) {
+	if _, err := exec.LookPath("rsync"); err == nil {
+		t.Skip("rsync is available; this test covers the rsync-not-found fallback")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("v"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyAuto, Verbose: true}); err != nil {
+		t.Fatalf("copyRepo auto verbose: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "f.txt")); err != nil {
+		t.Errorf("copied file missing: %v", err)
+	}
+}
+
+func TestCopyRepoAutoVerboseWithRsync(t *testing.T) {
+	if _, err := exec.LookPath("rsync"); err != nil {
+		t.Skip("rsync not available; this test covers the rsync-success verbose path")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("v"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyAuto, Verbose: true}); err != nil {
+		t.Fatalf("copyRepo auto verbose with rsync: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "f.txt")); err != nil {
+		t.Errorf("copied file missing: %v", err)
+	}
+}
+
+func TestCopyRepoWithIncludes(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+
+	if err := os.MkdirAll(filepath.Join(src, "sub", "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sub", "a.txt"), []byte("aaa"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "other.txt"), []byte("bbb"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyRepo(src, dst, Options{Include: []string{"sub"}, CopyStrategy: CopyStrategyNative}); err != nil {
+		t.Fatalf("copyRepo with includes: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "sub", "a.txt")); err != nil {
+		t.Errorf("included file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "other.txt")); err == nil {
+		t.Errorf("excluded file should not be present")
+	}
+}
+
+func TestCopyRepoNativeStrategy(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("native"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyNative}); err != nil {
+		t.Fatalf("copyRepo native: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "file.txt"))
+	if err != nil || string(data) != "native" {
+		t.Fatalf("native copy: read file error = %v, data = %q", err, data)
+	}
+}
+
+func TestWorkspaceResolveExecutable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_hostenv_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("sh", nil)
+		if result == "" {
+			t.Error("expected non-empty result for sh")
+		}
+	})
+
+	t.Run("nil_hostenv_not_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("no-such-binary-xyzzy-9999", nil)
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("custom_path_found", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "mybin")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		env := []string{"PATH=" + dir}
+		result := resolveExecutable("mybin", env)
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
+
+	t.Run("custom_path_not_found", func(t *testing.T) {
+		t.Parallel()
+		env := []string{"PATH=/tmp"}
+		result := resolveExecutable("no-such-binary-xyzzy-9999", env)
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("empty_dir_in_path", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "mybin2")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		env := []string{"PATH=:" + dir}
+		result := resolveExecutable("mybin2", env)
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
+}
+
+func TestNewCleansTempWorkspaceOnError(t *testing.T) {
+	t.Parallel()
+	tmpRoot := t.TempDir()
+
+	_, err := New(parser.SetupConfig{}, false, filepath.Join(tmpRoot, "missing-source"), Options{TempDir: tmpRoot})
 	if err == nil {
 		t.Fatal("expected New to fail for missing source")
 	}
@@ -336,5 +527,105 @@ func TestNewCleansTempWorkspaceOnError(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected temp root to be empty after failed New, got %d entries", len(entries))
+	}
+}
+
+func TestWriteExecutableFileErrors(t *testing.T) {
+	t.Parallel()
+	if err := writeExecutableFile("/nonexistent-dir/file.sh", "#!/bin/sh\necho hi\n"); err == nil {
+		t.Fatal("expected error writing to non-existent directory")
+	}
+}
+
+func TestWriteExecutableFileSuccess(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "script.sh")
+	if err := writeExecutableFile(path, "#!/bin/sh\necho hi\n"); err != nil {
+		t.Fatalf("writeExecutableFile() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "#!/bin/sh\necho hi\n" {
+		t.Fatalf("file content = %q", string(data))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Fatalf("file not executable: %s", info.Mode())
+	}
+}
+
+func TestCopyFileMissingSrcReturnsError(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	dst := filepath.Join(root, "dst.txt")
+	if err := copyFile(filepath.Join(root, "nonexistent.txt"), dst, 0644); err == nil {
+		t.Fatal("expected error copying non-existent source")
+	}
+}
+
+func TestCopyFileCrossFilesystem(t *testing.T) {
+	t.Parallel()
+	// /dev/shm is a tmpfs separate from the ext4 / overlay root fs.
+	// os.Link fails cross-device (EXDEV), but reflink.Auto falls back to io.Copy.
+	shmDir := "/dev/shm"
+	if _, statErr := os.Stat(shmDir); statErr != nil {
+		t.Skip("/dev/shm not available")
+	}
+	srcFile, err := os.CreateTemp(shmDir, "glut-test-src-*")
+	if err != nil {
+		t.Skip("cannot create temp file in /dev/shm: " + err.Error())
+	}
+	srcPath := srcFile.Name()
+	defer func() { _ = os.Remove(srcPath) }()
+	if _, err := srcFile.WriteString("cross-fs data"); err != nil {
+		_ = srcFile.Close()
+		t.Fatal(err)
+	}
+	if err := srcFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "dst.txt")
+	if err := copyFile(srcFile.Name(), dst, 0644); err != nil {
+		t.Fatalf("copyFile cross-filesystem: %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil || string(data) != "cross-fs data" {
+		t.Fatalf("data = %q, err = %v", data, err)
+	}
+}
+
+func TestCopyDirDstInsideSrc(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(src, "dst") // dst is nested inside src
+
+	if err := os.MkdirAll(filepath.Join(src, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "data", "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir with dst inside src: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "data", "file.txt"))
+	if err != nil {
+		t.Fatalf("copied file missing: %v", err)
+	}
+	if string(data) != "content" {
+		t.Fatalf("data = %q", string(data))
+	}
+	// The dst directory inside src should not have been recursively copied into itself.
+	if _, err := os.Stat(filepath.Join(dst, "dst")); err == nil {
+		t.Error("dst should not have been recursively copied")
 	}
 }

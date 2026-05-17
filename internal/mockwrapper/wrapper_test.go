@@ -18,10 +18,10 @@ import (
 )
 
 func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
+	t.Parallel()
 	logDir := t.TempDir()
 	realDir := t.TempDir()
 	linkHelperBinary(t, filepath.Join(realDir, helperBinaryName("release-cli")))
-	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -37,6 +37,7 @@ func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
 		Stdout: &stdout,
 		Stderr: &stderr,
 		Environ: append(os.Environ(),
+			"GO_WANT_HELPER_PROCESS=1",
 			config.EnvMockLogDir+"="+logDir,
 			config.EnvMockBinReal+"="+realDir,
 		),
@@ -76,10 +77,10 @@ func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
 }
 
 func TestRunWithOptionsPropagatesExitCode(t *testing.T) {
+	t.Parallel()
 	logDir := t.TempDir()
 	realDir := t.TempDir()
 	linkHelperBinary(t, filepath.Join(realDir, helperBinaryName("tool")))
-	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 
 	var stderr bytes.Buffer
 	code := RunWithOptions(RunOptions{
@@ -93,6 +94,7 @@ func TestRunWithOptionsPropagatesExitCode(t *testing.T) {
 		Stdin:  strings.NewReader(""),
 		Stderr: &stderr,
 		Environ: append(os.Environ(),
+			"GO_WANT_HELPER_PROCESS=1",
 			config.EnvMockLogDir+"="+logDir,
 			config.EnvMockBinReal+"="+realDir,
 		),
@@ -140,6 +142,7 @@ func TestAppendBinaryCallKeepsJSONLValidForConcurrentWrites(t *testing.T) {
 }
 
 func TestRunWithOptionsContinuesWhenLogWriteFails(t *testing.T) {
+	t.Parallel()
 	parent := t.TempDir()
 	logPath := filepath.Join(parent, "not-a-dir")
 	if err := os.WriteFile(logPath, []byte("file"), 0644); err != nil {
@@ -147,7 +150,6 @@ func TestRunWithOptionsContinuesWhenLogWriteFails(t *testing.T) {
 	}
 	realDir := t.TempDir()
 	linkHelperBinary(t, filepath.Join(realDir, helperBinaryName("tool")))
-	t.Setenv("GO_WANT_HELPER_PROCESS", "1")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -162,6 +164,7 @@ func TestRunWithOptionsContinuesWhenLogWriteFails(t *testing.T) {
 		Stdout: &stdout,
 		Stderr: &stderr,
 		Environ: append(os.Environ(),
+			"GO_WANT_HELPER_PROCESS=1",
 			config.EnvMockLogDir+"="+logPath,
 			config.EnvMockBinReal+"="+realDir,
 		),

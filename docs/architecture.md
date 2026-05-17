@@ -42,7 +42,7 @@ Reads YAML files and extracts the GLUT test definition. It should not execute
 tests, create workspaces, or contain runner behavior. It may expose lint helpers,
 but lint rules should remain separated from basic parsing.
 
-`internal/schema`
+`schema`
 
 Embeds and validates `schema/glut.schema.json`. Schema validation is part of the
 runtime binary and must not depend on external files being present.

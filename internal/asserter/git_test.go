@@ -2,13 +2,16 @@ package asserter
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pandasoft-zz/glut/internal/config"
 )
 
 func TestRunGitAsserts(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	source := filepath.Join(root, "source")
 	origin := filepath.Join(root, "origin.git")
@@ -77,10 +80,42 @@ func TestRunGitAsserts(t *testing.T) {
 	}
 }
 
+func noSignGitEnv() []string {
+	filtered := make([]string, 0, len(os.Environ())+5)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		switch {
+		case key == "GIT_CONFIG_NOSYSTEM",
+			key == "GIT_CONFIG_GLOBAL",
+			key == "GIT_CONFIG_SYSTEM",
+			key == "GIT_CONFIG_COUNT",
+			key == "GIT_DIR",
+			key == "GIT_WORK_TREE",
+			key == "GIT_INDEX_FILE",
+			strings.HasPrefix(key, "GIT_CONFIG_KEY_"),
+			strings.HasPrefix(key, "GIT_CONFIG_VALUE_"):
+			// filtered out; replaced below
+		default:
+			filtered = append(filtered, kv)
+		}
+	}
+	return append(filtered,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=commit.gpgSign",
+		"GIT_CONFIG_VALUE_0=false",
+	)
+}
+
 func mustRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if _, err := runGit(dir, args...); err != nil {
-		t.Fatal(err)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = noSignGitEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run git %s in %s: %v; output: %s", strings.Join(args, " "), dir, err, strings.TrimSpace(string(out)))
 	}
 }
 

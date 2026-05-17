@@ -19,7 +19,11 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 	applyProjectEnv(env, setup)
 	applyPipelineEnv(env, setup, defaultBranch)
 	if setup.Mocks != nil && len(setup.Mocks.Binaries) > 0 {
-		env["PATH"] = os.Getenv("PATH")
+		effectiveHostEnv := w.hostEnv
+		if effectiveHostEnv == nil {
+			effectiveHostEnv = os.Environ()
+		}
+		env["PATH"] = envSliceToMap(effectiveHostEnv)["PATH"]
 		AddMockBinaryEnv(env, w.Dir)
 	}
 	return env

@@ -44,6 +44,24 @@ func TestStringSliceUnmarshal(t *testing.T) {
 		},
 	}
 
+	errorCases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "mapping node returns error",
+			input: "key: value\n",
+		},
+	}
+	for _, tc := range errorCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got StringSlice
+			if err := yaml.Unmarshal([]byte(tc.input), &got); err == nil {
+				t.Fatal("expected error for mapping node, got nil")
+			}
+		})
+	}
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var got StringSlice

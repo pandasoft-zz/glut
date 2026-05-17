@@ -13,6 +13,7 @@ import (
 )
 
 func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -29,13 +30,6 @@ func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
 		t.Fatalf("write mock gitlab-ci-local: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-	t.Setenv("HOST_SECRET", "should-not-leak")
-	t.Setenv(config.EnvMockLogDir, filepath.Join(tempDir, "mock-logs"))
-	t.Setenv(config.EnvMockBinReal, filepath.Join(tempDir, "mock-real"))
-
 	cfg := ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: echo hi\n",
@@ -43,6 +37,14 @@ func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
 			"CI_JOB_NAME": "build",
 		},
 		MockBinPath: mockDir,
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+			"HOST_SECRET=should-not-leak",
+			config.EnvMockLogDir + "=" + filepath.Join(tempDir, "mock-logs"),
+			config.EnvMockBinReal + "=" + filepath.Join(tempDir, "mock-real"),
+		},
 	}
 
 	result, err := Run(context.Background(), cfg)
@@ -80,6 +82,7 @@ func TestRunIsolatesEnvironmentAndCapturesJobs(t *testing.T) {
 }
 
 func TestRunTimeoutReturnsClearError(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -91,14 +94,15 @@ func TestRunTimeoutReturnsClearError(t *testing.T) {
 		t.Fatalf("write timeout script: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	_, err := Run(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: sleep 1\n",
 		Timeout:       50 * time.Millisecond,
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err == nil {
 		t.Fatal("expected timeout error")
@@ -109,6 +113,7 @@ func TestRunTimeoutReturnsClearError(t *testing.T) {
 }
 
 func TestRunAllowsFailedPipelineWhenJobOutputWasCaptured(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -120,13 +125,14 @@ func TestRunAllowsFailedPipelineWhenJobOutputWasCaptured(t *testing.T) {
 		t.Fatalf("write failing gitlab-ci-local: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	result, err := Run(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "failing-job:\n  script: exit 7\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil for captured job failure", err)
@@ -138,6 +144,7 @@ func TestRunAllowsFailedPipelineWhenJobOutputWasCaptured(t *testing.T) {
 }
 
 func TestRunReturnsCommandErrorWhenNoJobWasCaptured(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -149,13 +156,14 @@ func TestRunReturnsCommandErrorWhenNoJobWasCaptured(t *testing.T) {
 		t.Fatalf("write bad gitlab-ci-local: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	_, err := Run(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: echo hi\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err == nil {
 		t.Fatal("Run() error = nil, want command error")
@@ -166,6 +174,7 @@ func TestRunReturnsCommandErrorWhenNoJobWasCaptured(t *testing.T) {
 }
 
 func TestListJobsParsesNames(t *testing.T) {
+	t.Parallel()
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
@@ -177,13 +186,14 @@ func TestListJobsParsesNames(t *testing.T) {
 		t.Fatalf("write list script: %v", err)
 	}
 
-	t.Setenv("PATH", joinPath(binDir, hostPath))
-	t.Setenv("HOME", tempDir)
-	t.Setenv("TMP", tempDir)
-
 	jobs, err := ListJobs(context.Background(), ExecutorConfig{
 		WorkspacePath: tempDir,
 		PipelineYAML:  "job:\n  script: echo hi\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
 	})
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
@@ -196,8 +206,11 @@ func TestListJobsParsesNames(t *testing.T) {
 }
 
 func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
+	t.Parallel()
+	hostPath := os.Getenv("PATH")
+
 	t.Run("command error", func(t *testing.T) {
-		hostPath := os.Getenv("PATH")
+		t.Parallel()
 		tempDir := t.TempDir()
 		binDir := filepath.Join(tempDir, "bin")
 		if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -207,13 +220,14 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 			t.Fatalf("write bad gitlab-ci-local: %v", err)
 		}
 
-		t.Setenv("PATH", joinPath(binDir, hostPath))
-		t.Setenv("HOME", tempDir)
-		t.Setenv("TMP", tempDir)
-
 		_, err := ListJobs(context.Background(), ExecutorConfig{
 			WorkspacePath: tempDir,
 			PipelineYAML:  "job:\n  script: echo hi\n",
+			HostEnv: []string{
+				"PATH=" + joinPath(binDir, hostPath),
+				"HOME=" + tempDir,
+				"TMP=" + tempDir,
+			},
 		})
 		if err == nil || !strings.Contains(err.Error(), "list gitlab-ci-local jobs") {
 			t.Fatalf("ListJobs() error = %v", err)
@@ -221,7 +235,7 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 	})
 
 	t.Run("timeout", func(t *testing.T) {
-		hostPath := os.Getenv("PATH")
+		t.Parallel()
 		tempDir := t.TempDir()
 		binDir := filepath.Join(tempDir, "bin")
 		if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -231,14 +245,15 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 			t.Fatalf("write timeout script: %v", err)
 		}
 
-		t.Setenv("PATH", joinPath(binDir, hostPath))
-		t.Setenv("HOME", tempDir)
-		t.Setenv("TMP", tempDir)
-
 		_, err := ListJobs(context.Background(), ExecutorConfig{
 			WorkspacePath: tempDir,
 			PipelineYAML:  "job:\n  script: echo hi\n",
 			Timeout:       50 * time.Millisecond,
+			HostEnv: []string{
+				"PATH=" + joinPath(binDir, hostPath),
+				"HOME=" + tempDir,
+				"TMP=" + tempDir,
+			},
 		})
 		if err == nil || !strings.Contains(err.Error(), "test timeout after 50ms") {
 			t.Fatalf("ListJobs() error = %v", err)
@@ -298,6 +313,7 @@ func TestGitLabCILocalDockerModeAddsVolumeAndExtraHost(t *testing.T) {
 }
 
 func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
+	t.Parallel()
 	args := append(baseArgs(ExecutorConfig{}), envArgs(map[string]string{"CI": "true"})...)
 	joined := strings.Join(args, " ")
 
@@ -338,6 +354,7 @@ func TestGitLabCILocalDockerModeHasNoShellFlag(t *testing.T) {
 }
 
 func TestParseJobOutputsFromGitLabCILocalLogs(t *testing.T) {
+	t.Parallel()
 	stdout := strings.Join([]string{
 		"build:image starting shell (test)",
 		"build:image $ echo ok",
@@ -365,6 +382,7 @@ func TestParseJobOutputsFromGitLabCILocalLogs(t *testing.T) {
 }
 
 func TestParseJobOutputsHandlesAllowFailureWarnStatus(t *testing.T) {
+	t.Parallel()
 	stdout := strings.Join([]string{
 		"check-fail starting shell (test)",
 		"check-fail $ exit 2",
@@ -385,6 +403,7 @@ func TestParseJobOutputsHandlesAllowFailureWarnStatus(t *testing.T) {
 }
 
 func TestParseJobOutputsHandlesMultilineAndMissingFailCode(t *testing.T) {
+	t.Parallel()
 	stdout := strings.Join([]string{
 		"test-job > first",
 		"test-job > second",
@@ -402,6 +421,7 @@ func TestParseJobOutputsHandlesMultilineAndMissingFailCode(t *testing.T) {
 }
 
 func TestParseJobListIgnoresToolWarningsOnStderr(t *testing.T) {
+	t.Parallel()
 	jobs := parseJobList("build\ntest\n", "Using fallback git data\n")
 	if strings.Join(jobs, ",") != "build,test" {
 		t.Fatalf("jobs = %#v", jobs)
@@ -409,6 +429,7 @@ func TestParseJobListIgnoresToolWarningsOnStderr(t *testing.T) {
 }
 
 func TestExecutorHelperErrorBranches(t *testing.T) {
+	t.Parallel()
 	if err := writePipeline(ExecutorConfig{}); err == nil {
 		t.Fatal("writePipeline should require workspace path")
 	}
@@ -436,6 +457,7 @@ func TestExecutorHelperErrorBranches(t *testing.T) {
 }
 
 func TestCheckDependenciesReportsMissingCommands(t *testing.T) {
+	t.Parallel()
 	tempDir := t.TempDir()
 	binDir := filepath.Join(tempDir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -448,14 +470,61 @@ func TestCheckDependenciesReportsMissingCommands(t *testing.T) {
 		}
 	}
 
-	t.Setenv("PATH", binDir)
-
-	problems := CheckDependencies(context.Background())
+	problems := CheckDependencies(context.Background(), []string{"PATH=" + binDir})
 	if len(problems) != 1 {
 		t.Fatalf("CheckDependencies() problems = %#v, want one optional rsync message", problems)
 	}
 	if !strings.Contains(problems[0], "rsync") {
 		t.Fatalf("expected rsync warning, got %#v", problems)
+	}
+}
+
+func TestCheckDependenciesReportsMissingRequiredCommand(t *testing.T) {
+	t.Parallel()
+	problems := CheckDependencies(context.Background(), []string{"PATH="})
+	required := []string{"gitlab-ci-local", "git", "bash"}
+	for _, name := range required {
+		found := false
+		for _, p := range problems {
+			if strings.Contains(p, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected problem for required binary %q, got %#v", name, problems)
+		}
+	}
+}
+
+func TestCheckDependenciesReportsBrokenCommands(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+	failScript := "#!/bin/sh\nexit 42\n"
+	for _, name := range []string{"gitlab-ci-local", "git", "bash", "rsync"} {
+		if err := writeExecutable(binDir, name, failScript); err != nil {
+			t.Fatalf("write fail script %s: %v", name, err)
+		}
+	}
+	problems := CheckDependencies(context.Background(), []string{"PATH=" + binDir})
+	if len(problems) < 4 {
+		t.Fatalf("CheckDependencies() problems = %#v, want problems for all 4 binaries", problems)
+	}
+	for _, name := range []string{"gitlab-ci-local", "git", "bash", "rsync"} {
+		found := false
+		for _, p := range problems {
+			if strings.Contains(p, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected problem for binary %q, got %#v", name, problems)
+		}
 	}
 }
 
@@ -471,8 +540,32 @@ func writeExecutable(dir string, name string, content string) error {
 		path := filepath.Join(dir, name+".cmd")
 		return os.WriteFile(path, []byte(content), 0755)
 	}
-	path := filepath.Join(dir, name)
-	return os.WriteFile(path, []byte(content), 0755)
+	// Write via temp+rename to avoid ETXTBSY on overlayfs in Docker CI.
+	tmp, err := os.CreateTemp(dir, ".tmp-exec-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Chmod(0755); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, filepath.Join(dir, name))
 }
 
 func runScript(mockDir string) string {
@@ -534,4 +627,71 @@ func joinPath(first string, rest string) string {
 		return first
 	}
 	return first + string(os.PathListSeparator) + rest
+}
+
+func TestBaseArgsDockerMode(t *testing.T) {
+	t.Parallel()
+	args := baseArgs(ExecutorConfig{UseDocker: true})
+	for _, a := range args {
+		if a == "--shell-executor-no-image" {
+			t.Error("docker mode should not include --shell-executor-no-image")
+		}
+	}
+	if len(args) == 0 {
+		t.Error("expected non-empty args in docker mode")
+	}
+}
+
+func TestResolveExecutable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil_hostenv_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("sh", nil)
+		if result == "" {
+			t.Error("expected non-empty result for sh")
+		}
+	})
+
+	t.Run("nil_hostenv_not_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("no-such-binary-xyzzy-9999", nil)
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("custom_path_found", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "myexec")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		result := resolveExecutable("myexec", []string{"PATH=" + dir})
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
+
+	t.Run("custom_path_not_found", func(t *testing.T) {
+		t.Parallel()
+		result := resolveExecutable("no-such-binary-xyzzy-9999", []string{"PATH=/tmp"})
+		if result != "no-such-binary-xyzzy-9999" {
+			t.Errorf("expected fallback name, got %q", result)
+		}
+	})
+
+	t.Run("empty_dir_in_path_skipped", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "myexec2")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		result := resolveExecutable("myexec2", []string{"PATH=:" + dir})
+		if result != bin {
+			t.Errorf("expected %q, got %q", bin, result)
+		}
+	})
 }
