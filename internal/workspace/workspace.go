@@ -98,6 +98,9 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 	if err := runGit(stagingDir, "config", "user.name", userName); err != nil {
 		return nil, fmt.Errorf("failed to configure staging git user: %v", err)
 	}
+	if err := runGit(stagingDir, "config", "commit.gpgSign", "false"); err != nil {
+		return nil, fmt.Errorf("failed to disable staging git signing: %v", err)
+	}
 
 	if err := commitIfStaged(stagingDir, "glut: workspace snapshot", opts.HostEnv); err != nil {
 		return nil, fmt.Errorf("failed to create workspace snapshot: %v", err)
@@ -189,6 +192,9 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	}
 	if err := runGit(worktree, "config", "user.name", userName); err != nil {
 		return fmt.Errorf("failed to configure origin worktree git user: %v", err)
+	}
+	if err := runGit(worktree, "config", "commit.gpgSign", "false"); err != nil {
+		return fmt.Errorf("failed to disable origin worktree git signing: %v", err)
 	}
 	if err := runGit(worktree, "remote", "set-url", "origin", originRepo); err != nil {
 		return fmt.Errorf("failed to set origin worktree remote: %v", err)

@@ -414,6 +414,38 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 		}
 	})
 
+	t.Run("setupGitOrigin signing fails", func(t *testing.T) {
+		realGit, err := exec.LookPath("git")
+		if err != nil {
+			t.Skip("git not available")
+		}
+		root := t.TempDir()
+		source := initGitRepo(t)
+		origin := filepath.Join(root, "origin.git")
+		mustRunGitWorkspace(t, root, "init", "--bare", origin)
+		mustRunGitWorkspace(t, source, "remote", "add", "origin", origin)
+		mustRunGitWorkspace(t, source, "push", "-u", "origin", "main")
+		mustRunGitWorkspace(t, root, "--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/main")
+
+		binDir := t.TempDir()
+		fakeGit := filepath.Join(binDir, "git")
+		script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"commit.gpgSign\" ] && exit 7; done\nexec " + realGit + " \"$@\"\n"
+		if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
+		hostEnv := []string{"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
+
+		w := &Workspace{}
+		err = w.setupGitOrigin(root, origin, "main", &parser.GitSetupConfig{
+			Origin: &parser.GitOriginConfig{
+				Files: map[string]string{"seed.txt": "content"},
+			},
+		}, hostEnv)
+		if err == nil || !strings.Contains(err.Error(), "failed to disable origin worktree git signing") {
+			t.Fatalf("setupGitOrigin() error = %v", err)
+		}
+	})
+
 	t.Run("setupGitOrigin invalid branch rename", func(t *testing.T) {
 		root := t.TempDir()
 		source := initGitRepo(t)
@@ -452,6 +484,33 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 			HostEnv: []string{"PATH=" + binDir + string(os.PathListSeparator) + originalPath},
 		})
 		if err == nil || !strings.Contains(err.Error(), "failed to init bare origin") {
+			t.Fatalf("New() error = %v", err)
+		}
+	})
+
+	t.Run("New git config signing fails", func(t *testing.T) {
+		t.Parallel()
+		realGit, err := exec.LookPath("git")
+		if err != nil {
+			t.Skip("git not available")
+		}
+		binDir := t.TempDir()
+		originalPath := os.Getenv("PATH")
+		// Fake git: fail when asked to set commit.gpgSign; delegate all other commands
+		// to the real git binary using its absolute path to avoid PATH recursion.
+		fakeGit := filepath.Join(binDir, "git")
+		script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"commit.gpgSign\" ] && exit 7; done\nexec " + realGit + " \"$@\"\n"
+		if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
+		src := t.TempDir()
+		if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, err = New(parser.SetupConfig{}, false, src, Options{
+			HostEnv: []string{"PATH=" + binDir + string(os.PathListSeparator) + originalPath},
+		})
+		if err == nil || !strings.Contains(err.Error(), "failed to disable staging git signing") {
 			t.Fatalf("New() error = %v", err)
 		}
 	})
