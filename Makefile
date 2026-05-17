@@ -25,7 +25,7 @@ lint:
 	golangci-lint run
 
 docker:
-	docker build -t glut:dev .
+	docker build --target dev -t glut:dev .
 
 INCONTAINER := $(shell [ -f /.dockerenv ] && echo 1 || echo 0)
 DOCKER_TEST_CONFIG ?= /tmp/glut-docker-config
