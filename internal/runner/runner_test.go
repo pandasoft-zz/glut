@@ -804,8 +804,8 @@ if grep -qE '^  image:' .gitlab-ci.yml 2>/dev/null; then
     printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: host unreachable (missing --extra-host)\n' "$job_name"
     exit 0
   fi
-  if echo "$CI_API_V4_URL" | grep -q '127\.0\.0\.1'; then
-    printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: CI_API_V4_URL still uses 127.0.0.1 (BUG-3)\n' "$job_name"
+  if ! echo "$CI_API_V4_URL" | grep -q 'glut-mock'; then
+    printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: CI_API_V4_URL does not use glut-mock hostname (BUG-3)\n' "$job_name"
     exit 0
   fi
 fi

@@ -405,12 +405,12 @@ func runSingleTest(
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
 	if useDocker {
-		// BUG-3: Docker containers cannot reach 127.0.0.1; rewrite API URLs to the
-		// GLUT container's own bridge IP so the mock server is reachable from inside
-		// job containers via the same Docker bridge network.
+		// BUG-3: Docker containers cannot reach 127.0.0.1. Rewrite API URLs to use
+		// glut-mock, GLUT's own --extra-host alias, so the mock server is reachable
+		// from inside job containers regardless of the Docker setup (DinD or native).
 		port := server.Port()
-		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://%s:%d", mockHostIP, port)
-		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://%s:%d/api/v4", mockHostIP, port)
+		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://glut-mock:%d", port)
+		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://glut-mock:%d/api/v4", port)
 	}
 	execCfg := executor.ExecutorConfig{
 		WorkspacePath:    work.WorkspaceDir,
@@ -702,13 +702,19 @@ func dockerVolumes(useDocker bool, workDir string) []string {
 
 // dockerExtraHosts returns the --extra-host entries needed for Docker executor jobs.
 // ip is the address of the GLUT process (mock server) reachable from inside containers.
-// In DinD setups outboundIP() returns the GLUT container's bridge IP rather than
-// the host gateway, which is what job containers must use to reach the mock server.
+// Two entries are injected:
+//   - host.docker.internal — standard Docker Desktop alias; we set it explicitly so it
+//     works on Linux too (where Docker Desktop is absent).
+//   - glut-mock — GLUT's own stable hostname used in CI_API_V4_URL / CI_SERVER_URL,
+//     isolated from any unintended side-effects of the host.docker.internal alias.
 func dockerExtraHosts(useDocker bool, ip string) []string {
 	if !useDocker {
 		return nil
 	}
-	return []string{"host.docker.internal:" + ip}
+	return []string{
+		"host.docker.internal:" + ip,
+		"glut-mock:" + ip,
+	}
 }
 
 // outboundIP returns the local IP address that would be used to reach an external
