@@ -295,14 +295,15 @@ func runSingleTest(
 	}
 
 	var (
-		work          *workspace.Workspace
-		server        *mockserver.Server
-		execResult    executor.RunResult
-		phaseTimings  = map[string]time.Duration{}
-		binaryLogs    = map[string][]mockwrapper.BinaryCall{}
-		apiCalls      []mockserver.APICall
-		cleanupErrors []error
-		primaryErr    error
+		work             *workspace.Workspace
+		server           *mockserver.Server
+		execResult       executor.RunResult
+		phaseTimings     = map[string]time.Duration{}
+		binaryLogs       = map[string][]mockwrapper.BinaryCall{}
+		apiCalls         []mockserver.APICall
+		cleanupErrors    []error
+		primaryErr       error
+		dockerVolumeName string
 	)
 
 	defer func() {
@@ -311,6 +312,12 @@ func runSingleTest(
 				cleanupErrors = append(cleanupErrors, fmt.Errorf("stop mock server: %w", err))
 			}
 			apiCalls = server.Recorder().Calls()
+		}
+
+		if dockerVolumeName != "" {
+			if err := workspace.DestroyDockerVolume(dockerVolumeName); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("destroy docker volume: %w", err))
+			}
 		}
 
 		if work != nil {
@@ -379,8 +386,14 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
-	if hasMockBinaries(testFile) {
-		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), useDocker)
+	if useDocker {
+		var mocks *parser.MocksConfig
+		if hasMockBinaries(testFile) {
+			mocks = testFile.Glut.Setup.Mocks
+		}
+		dockerVolumeName, primaryErr = workspace.CreateDockerVolume(work.Dir, work.OriginRepo, mocks)
+	} else if hasMockBinaries(testFile) {
+		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), false)
 	}
 	phaseTimings["mock-binaries"] = time.Since(phaseStart)
 	if primaryErr != nil {
@@ -422,7 +435,7 @@ func runSingleTest(
 		Verbose:          opts.Verbose,
 		UseDocker:        useDocker,
 		ForceShell:       forceShell,
-		DockerVolumes:    dockerVolumes(useDocker, work.Dir),
+		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName),
 		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
 	}
 
@@ -459,6 +472,11 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	if hasMockBinaries(testFile) {
+		if dockerVolumeName != "" {
+			if syncErr := workspace.ReadLogsFromDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
+				primaryErr = fmt.Errorf("sync mock logs from docker volume: %w", syncErr)
+			}
+		}
 		binaryLogs, err = mockwrapper.ReadBinaryLogs(workspace.MockBinaryLogDir(work.Dir))
 	}
 	phaseTimings["mock-logs"] = time.Since(phaseStart)
@@ -688,16 +706,20 @@ func copyPhaseTimings(values map[string]time.Duration) map[string]time.Duration 
 }
 
 // dockerVolumes returns the --volume mounts needed for Docker executor jobs.
-// work.Dir contains mock binaries (BUG-2), mock logs, and the bare git origin
-// (BUG-4), so mounting it at the same path gives containers full access.
-// toHostPath translates the container-side path to the host-side path so that
-// the Docker daemon (which always sees host paths) can bind the correct directory.
-func dockerVolumes(useDocker bool, workDir string) []string {
+// When a named Docker volume has been created (volName != ""), it is mounted
+// at workDir inside the container — this is the reliable path that works in
+// devcontainers and DinD environments where host bind-mounts are invisible to
+// the Docker daemon. The volume contains mock binaries (BUG-2), the bare git
+// origin (BUG-4), and the mock-logs directory.
+func dockerVolumes(useDocker bool, workDir string, volName string) []string {
 	if !useDocker {
 		return nil
 	}
-	hostDir := toHostPath(workDir)
-	return []string{hostDir + ":" + workDir}
+	if volName != "" {
+		return []string{volName + ":" + workDir}
+	}
+	// Fallback: no volume was created (volume creation failed or was skipped).
+	return nil
 }
 
 // dockerExtraHosts returns the --extra-host entries needed for Docker executor jobs.
@@ -725,7 +747,7 @@ func outboundIP() string {
 	if err != nil {
 		return "host.docker.internal"
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 

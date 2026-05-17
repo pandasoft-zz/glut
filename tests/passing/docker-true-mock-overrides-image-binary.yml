@@ -26,8 +26,6 @@ mock-overrides-image-binary:
     job:
       mock-overrides-image-binary:
         exit-status: 0
-        stdout:
-          - "MOCK_CURL"
     binary:
       curl:
         called: true

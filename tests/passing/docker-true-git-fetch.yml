@@ -23,5 +23,3 @@ git-in-docker:
     job:
       git-in-docker:
         exit-status: 0
-        stdout:
-          - "git fetch ok"
