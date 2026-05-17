@@ -433,7 +433,12 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 		if err := os.WriteFile(fakeGit, []byte(script), 0755); err != nil {
 			t.Fatal(err)
 		}
-		hostEnv := []string{"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH")}
+		hostEnv := []string{
+			"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"GIT_CONFIG_NOSYSTEM=1",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"HOME=" + t.TempDir(),
+		}
 
 		w := &Workspace{}
 		err = w.setupGitOrigin(root, origin, "main", &parser.GitSetupConfig{
@@ -495,7 +500,6 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 			t.Skip("git not available")
 		}
 		binDir := t.TempDir()
-		originalPath := os.Getenv("PATH")
 		// Fake git: fail when asked to set commit.gpgSign; delegate all other commands
 		// to the real git binary using its absolute path to avoid PATH recursion.
 		fakeGit := filepath.Join(binDir, "git")
@@ -508,7 +512,12 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err = New(parser.SetupConfig{}, false, src, Options{
-			HostEnv: []string{"PATH=" + binDir + string(os.PathListSeparator) + originalPath},
+			HostEnv: []string{
+				"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"GIT_CONFIG_NOSYSTEM=1",
+				"GIT_CONFIG_GLOBAL=/dev/null",
+				"HOME=" + t.TempDir(),
+			},
 		})
 		if err == nil || !strings.Contains(err.Error(), "failed to disable staging git signing") {
 			t.Fatalf("New() error = %v", err)
