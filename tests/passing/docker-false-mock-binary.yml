@@ -1,0 +1,35 @@
+stages: [test]
+
+mock-in-shell:
+  image: alpine:latest
+  stage: test
+  script:
+    - my-tool --version
+    - echo "mock called ok"
+---
+.glut:
+  name: "docker:false mock binary works in forced shell mode"
+  setup:
+    branch: main
+    docker: false
+    mocks:
+      binaries:
+        my-tool:
+          executable: |
+            #!/bin/sh
+            echo "my-tool mock $*"
+            exit 0
+  assert:
+    job:
+      mock-in-shell:
+        exit-status: 0
+        stdout:
+          - "my-tool mock"
+          - "mock called ok"
+    binary:
+      my-tool:
+        called: true
+        times: 1
+        calls:
+          - args:
+              contain-element: "--version"

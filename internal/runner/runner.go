@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -294,14 +295,15 @@ func runSingleTest(
 	}
 
 	var (
-		work          *workspace.Workspace
-		server        *mockserver.Server
-		execResult    executor.RunResult
-		phaseTimings  = map[string]time.Duration{}
-		binaryLogs    = map[string][]mockwrapper.BinaryCall{}
-		apiCalls      []mockserver.APICall
-		cleanupErrors []error
-		primaryErr    error
+		work             *workspace.Workspace
+		server           *mockserver.Server
+		execResult       executor.RunResult
+		phaseTimings     = map[string]time.Duration{}
+		binaryLogs       = map[string][]mockwrapper.BinaryCall{}
+		apiCalls         []mockserver.APICall
+		cleanupErrors    []error
+		primaryErr       error
+		dockerVolumeName string
 	)
 
 	defer func() {
@@ -310,6 +312,12 @@ func runSingleTest(
 				cleanupErrors = append(cleanupErrors, fmt.Errorf("stop mock server: %w", err))
 			}
 			apiCalls = server.Recorder().Calls()
+		}
+
+		if dockerVolumeName != "" {
+			if err := workspace.DestroyDockerVolume(dockerVolumeName); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("destroy docker volume: %w", err))
+			}
 		}
 
 		if work != nil {
@@ -377,8 +385,15 @@ func runSingleTest(
 	}
 
 	phaseStart = time.Now()
-	if hasMockBinaries(testFile) {
-		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath))
+	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
+	if useDocker {
+		var mocks *parser.MocksConfig
+		if hasMockBinaries(testFile) {
+			mocks = testFile.Glut.Setup.Mocks
+		}
+		dockerVolumeName, primaryErr = workspace.CreateDockerVolume(work.Dir, work.OriginRepo, mocks)
+	} else if hasMockBinaries(testFile) {
+		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), false)
 	}
 	phaseTimings["mock-binaries"] = time.Since(phaseStart)
 	if primaryErr != nil {
@@ -396,16 +411,32 @@ func runSingleTest(
 		return
 	}
 
+	var mockHostIP string
+	if useDocker {
+		mockHostIP = outboundIP()
+	}
+
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
+	if useDocker {
+		// BUG-3: Docker containers cannot reach 127.0.0.1. Rewrite API URLs to use
+		// glut-mock, GLUT's own --extra-host alias, so the mock server is reachable
+		// from inside job containers regardless of the Docker setup (DinD or native).
+		port := server.Port()
+		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://glut-mock:%d", port)
+		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://glut-mock:%d/api/v4", port)
+	}
 	execCfg := executor.ExecutorConfig{
-		WorkspacePath: work.WorkspaceDir,
-		PipelineYAML:  testFile.PipelineYAML,
-		EnvVars:       envVars,
-		MockBinPath:   workspace.MockBinaryBinDir(work.Dir),
-		Timeout:       opts.Timeout,
-		Debug:         opts.Debug,
-		Verbose:       opts.Verbose,
-		UseDocker:     testFile.Glut.Setup.Docker,
+		WorkspacePath:    work.WorkspaceDir,
+		PipelineYAML:     testFile.PipelineYAML,
+		EnvVars:          envVars,
+		MockBinPath:      workspace.MockBinaryBinDir(work.Dir),
+		Timeout:          opts.Timeout,
+		Debug:            opts.Debug,
+		Verbose:          opts.Verbose,
+		UseDocker:        useDocker,
+		ForceShell:       forceShell,
+		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName),
+		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
@@ -441,6 +472,11 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	if hasMockBinaries(testFile) {
+		if dockerVolumeName != "" {
+			if syncErr := workspace.ReadLogsFromDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
+				primaryErr = fmt.Errorf("sync mock logs from docker volume: %w", syncErr)
+			}
+		}
 		binaryLogs, err = mockwrapper.ReadBinaryLogs(workspace.MockBinaryLogDir(work.Dir))
 	}
 	phaseTimings["mock-logs"] = time.Since(phaseStart)
@@ -667,6 +703,67 @@ func copyPhaseTimings(values map[string]time.Duration) map[string]time.Duration 
 		out[key] = value
 	}
 	return out
+}
+
+// dockerVolumes returns the --volume mounts needed for Docker executor jobs.
+// When a named Docker volume has been created (volName != ""), it is mounted
+// at workDir inside the container — this is the reliable path that works in
+// devcontainers and DinD environments where host bind-mounts are invisible to
+// the Docker daemon. The volume contains mock binaries (BUG-2), the bare git
+// origin (BUG-4), and the mock-logs directory.
+func dockerVolumes(useDocker bool, workDir string, volName string) []string {
+	if !useDocker {
+		return nil
+	}
+	if volName != "" {
+		return []string{volName + ":" + workDir}
+	}
+	// Fallback: no volume was created (volume creation failed or was skipped).
+	return nil
+}
+
+// dockerExtraHosts returns the --extra-host entries needed for Docker executor jobs.
+// ip is the address of the GLUT process (mock server) reachable from inside containers.
+// Two entries are injected:
+//   - host.docker.internal — standard Docker Desktop alias; we set it explicitly so it
+//     works on Linux too (where Docker Desktop is absent).
+//   - glut-mock — GLUT's own stable hostname used in CI_API_V4_URL / CI_SERVER_URL,
+//     isolated from any unintended side-effects of the host.docker.internal alias.
+func dockerExtraHosts(useDocker bool, ip string) []string {
+	if !useDocker {
+		return nil
+	}
+	return []string{
+		"host.docker.internal:" + ip,
+		"glut-mock:" + ip,
+	}
+}
+
+// outboundIP returns the local IP address that would be used to reach an external
+// host. In DinD (Docker-in-Docker via socket) this is the GLUT container's bridge
+// IP, which is reachable from sibling job containers on the same bridge network.
+func outboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "host.docker.internal"
+	}
+	defer func() { _ = conn.Close() }()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// toHostPath translates a workspace path from the GLUT container's perspective to
+// resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
+// nil (absent) → backward-compat: Docker for image: jobs, shell otherwise.
+// &true → full Docker mode with volume/extra-host support.
+// &false → force all jobs to shell, even those with image:.
+func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
+	if docker == nil {
+		return false, false
+	}
+	if *docker {
+		return true, false
+	}
+	return false, true
 }
 
 func errorsToStrings(errs []error) []string {

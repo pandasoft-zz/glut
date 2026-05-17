@@ -1568,7 +1568,7 @@ to stderr. JSON output groups issues, hints, and coverage by file.
 ```bash
 glut version
 # glut v1.0.0 (commit: abc1234, built: 2026-04-25)
-# gitlab-ci-local: v4.55.0 (vendored in Docker image)
+# gitlab-ci-local: v4.72.0 (vendored in Docker image)
 ```
 
 ### 15.3 Exit Codes

@@ -62,7 +62,8 @@
         },
         "docker": {
           "type": "boolean",
-          "description": "Enable Docker executor. When true, gitlab-ci-local uses Docker for jobs with image:. Default false uses shell executor (faster, no Docker daemon required). Enable when testing components that require a specific runtime image."
+          "default": true,
+          "description": "Controls Docker executor behaviour. Omit (default) or set true: jobs with image: run in Docker; jobs without image: run in the shell. Set false: all jobs run in the shell regardless of image: (--force-shell-executor). Use true when your pipeline requires a specific runtime image. Use false to force shell for all jobs."
         }
       },
       "not": {

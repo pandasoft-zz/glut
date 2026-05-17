@@ -23,11 +23,12 @@ type Server struct {
 	store    *InMemoryStore
 	recorder *Recorder
 
-	mu      sync.Mutex
-	http    *http.Server
-	port    int
-	started bool
-	stopped bool
+	mu         sync.Mutex
+	http       *http.Server
+	port       int
+	listenAddr string
+	started    bool
+	stopped    bool
 }
 
 func New(cfg config.APISetupConfig) (*Server, error) {
@@ -51,7 +52,7 @@ func (s *Server) Start() error {
 		return nil
 	}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return fmt.Errorf("server start: listen on local port: %w", err)
 	}
@@ -64,6 +65,7 @@ func (s *Server) Start() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	s.port = listener.Addr().(*net.TCPAddr).Port
+	s.listenAddr = listener.Addr().String()
 	s.started = true
 	s.stopped = false
 
@@ -98,6 +100,13 @@ func (s *Server) Port() int {
 	defer s.mu.Unlock()
 
 	return s.port
+}
+
+func (s *Server) ListenAddr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.listenAddr
 }
 
 func (s *Server) Recorder() *Recorder {

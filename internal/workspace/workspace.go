@@ -40,7 +40,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve srcDir: %v", err)
 	}
-	tmpWork, err := os.MkdirTemp("", "glut-*")
+	tmpWork, err := os.MkdirTemp(os.Getenv("GLUT_WORK_DIR"), "glut-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
 	}

@@ -36,7 +36,7 @@ dockers_v2:
   - id: glut
     ids:
       - glut
-    dockerfile: Dockerfile.goreleaser
+    dockerfile: Dockerfile
     images:
       - ghcr.io/pandasoft-zz/glut
     tags:

@@ -311,6 +311,38 @@ setup:
           echo "release-cli $*"
 ```
 
+### Docker Executor
+
+By default GLUT uses `--shell-executor-no-image`: jobs that declare `image:` run
+in Docker; jobs without `image:` run in the shell. This matches normal
+`gitlab-ci-local` behaviour.
+
+Set `docker: true` to enable full Docker mode. GLUT mounts the temporary
+workspace into each container so mock binaries and the fake git origin are
+reachable from inside Docker, and rewrites `CI_API_V4_URL` to use
+`host.docker.internal` so containers can reach the mock API server on the host.
+
+```yaml
+setup:
+  docker: true
+```
+
+Set `docker: false` to force all jobs to the shell executor regardless of
+`image:` declarations (`--force-shell-executor`). This is useful when you want a
+fast shell run of a pipeline that normally targets a specific Docker image, or
+when Docker is unavailable.
+
+```yaml
+setup:
+  docker: false
+```
+
+| Value | Behaviour |
+| --- | --- |
+| omitted | jobs with `image:` use Docker; others use shell (default) |
+| `true` | Docker with volume/extra-host support for mocks |
+| `false` | all jobs forced to shell, `image:` ignored |
+
 ## `assert`
 
 `assert` describes the expected result. It can check jobs, artifacts, git state,
