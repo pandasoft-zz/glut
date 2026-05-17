@@ -1,0 +1,43 @@
+stages: [test]
+
+mock-in-docker:
+  image: alpine:latest
+  stage: test
+  script:
+    - release-cli create --tag-name "v1.0.0" --name "Release v1.0.0"
+    - release-cli upload --tag-name "v1.0.0" --file dist/app.tar.gz
+---
+.glut:
+  name: "docker:true mock binary is callable from inside Docker container (BUG-2 regression)"
+  setup:
+    branch: main
+    docker: true
+    mocks:
+      binaries:
+        release-cli:
+          executable: |
+            #!/bin/sh
+            echo "release-cli called: $*"
+            exit 0
+  assert:
+    job:
+      mock-in-docker:
+        exit-status: 0
+        stdout:
+          - "release-cli called"
+    binary:
+      release-cli:
+        called: true
+        times:
+          equal: 2
+        calls:
+          - args:
+              contain-elements:
+                - "create"
+                - "--tag-name"
+                - "v1.0.0"
+          - args:
+              contain-elements:
+                - "upload"
+                - "--tag-name"
+                - "v1.0.0"
