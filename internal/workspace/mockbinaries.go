@@ -47,7 +47,7 @@ func SetupMockBinaries(tmpWork string, mocks parser.MocksConfig, glutBinPath str
 		}
 
 		realPath := filepath.Join(realDir, name)
-		if err := os.WriteFile(realPath, []byte(shellScript(mock.Executable)), 0755); err != nil {
+		if err := writeExecutableFile(realPath, shellScript(mock.Executable)); err != nil {
 			return fmt.Errorf("write real mock binary %s: %w", name, err)
 		}
 

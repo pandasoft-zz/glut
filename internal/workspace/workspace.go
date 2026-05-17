@@ -531,6 +531,37 @@ func copyFile(src, dst string, mode os.FileMode) error {
 }
 
 
+// writeExecutableFile writes content to path using a temp+rename pattern to
+// avoid ETXTBSY on overlayfs (Docker) when the file is immediately exec'd.
+func writeExecutableFile(path string, content string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-exec-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Chmod(0755); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 func isPathInside(path string, root string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {

@@ -81,12 +81,20 @@ func TestRunGitAsserts(t *testing.T) {
 }
 
 func noSignGitEnv() []string {
-	filtered := make([]string, 0, len(os.Environ())+2)
+	filtered := make([]string, 0, len(os.Environ())+5)
 	for _, kv := range os.Environ() {
 		key, _, _ := strings.Cut(kv, "=")
-		switch key {
-		case "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM":
-			// replaced below
+		switch {
+		case key == "GIT_CONFIG_NOSYSTEM",
+			key == "GIT_CONFIG_GLOBAL",
+			key == "GIT_CONFIG_SYSTEM",
+			key == "GIT_CONFIG_COUNT",
+			key == "GIT_DIR",
+			key == "GIT_WORK_TREE",
+			key == "GIT_INDEX_FILE",
+			strings.HasPrefix(key, "GIT_CONFIG_KEY_"),
+			strings.HasPrefix(key, "GIT_CONFIG_VALUE_"):
+			// filtered out; replaced below
 		default:
 			filtered = append(filtered, kv)
 		}
@@ -94,6 +102,9 @@ func noSignGitEnv() []string {
 	return append(filtered,
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=commit.gpgSign",
+		"GIT_CONFIG_VALUE_0=false",
 	)
 }
 
