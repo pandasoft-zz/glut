@@ -1,0 +1,37 @@
+stages: [test]
+
+# apk installs the real curl, but the GLUT mock must shadow it via PATH priority.
+# If the real curl ran, stdout would contain "curl 8.x.x" (version string) and
+# the binary assert would fail because GLUT never recorded the call.
+mock-overrides-image-binary:
+  image: alpine:latest
+  stage: test
+  script:
+    - apk add --no-cache --quiet curl
+    - curl --version
+---
+.glut:
+  name: "docker:true GLUT mock binary overrides binary installed inside the Docker image"
+  setup:
+    branch: main
+    docker: true
+    mocks:
+      binaries:
+        curl:
+          executable: |
+            #!/bin/sh
+            echo "MOCK_CURL: $*"
+            exit 0
+  assert:
+    job:
+      mock-overrides-image-binary:
+        exit-status: 0
+        stdout:
+          - "MOCK_CURL"
+    binary:
+      curl:
+        called: true
+        times: 1
+        calls:
+          - args:
+              contain-element: "--version"
