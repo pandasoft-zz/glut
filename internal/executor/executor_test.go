@@ -631,7 +631,7 @@ func joinPath(first string, rest string) string {
 
 func TestBaseArgsDockerMode(t *testing.T) {
 	t.Parallel()
-	args := baseArgs(true)
+	args := baseArgs(ExecutorConfig{UseDocker: true})
 	for _, a := range args {
 		if a == "--shell-executor-no-image" {
 			t.Error("docker mode should not include --shell-executor-no-image")

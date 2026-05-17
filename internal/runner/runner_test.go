@@ -766,7 +766,7 @@ docker-job:
         exit-status: 0
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{GlutBinPath: glutStub})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{GlutBinPath: glutStub}))
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
 	}
@@ -799,7 +799,7 @@ shell-job:
         exit-status: 0
 `)+"\n")
 
-	result, exitCode := Run(context.Background(), []string{"tests"}, RunOptions{})
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitOK {
 		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
 	}
