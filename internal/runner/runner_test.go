@@ -708,9 +708,9 @@ docker-job:
 	}
 }
 
-// TestRunDockerFalseUsesForceShellExecutor verifies that setting docker: false in a test
-// causes GLUT to pass --force-shell-executor so image: jobs are not run with Docker.
-func TestRunDockerFalseUsesForceShellExecutor(t *testing.T) {
+// TestRunDockerFalseStripsImageFromPipeline verifies that setting docker: false in a test
+// causes GLUT to strip image: keys from the pipeline YAML so all jobs run in the shell.
+func TestRunDockerFalseStripsImageFromPipeline(t *testing.T) {
 	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalForceShellScript())
 	env.writeRawFile(t, "tests/docker-false.yml", strings.TrimSpace(`
 stages: [test]
@@ -804,7 +804,7 @@ if grep -qE '^  image:' .gitlab-ci.yml 2>/dev/null; then
     printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: host unreachable (missing --extra-host)\n' "$job_name"
     exit 0
   fi
-  if ! echo "$CI_API_V4_URL" | grep -q 'host.docker.internal'; then
+  if echo "$CI_API_V4_URL" | grep -q '127\.0\.0\.1'; then
     printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: CI_API_V4_URL still uses 127.0.0.1 (BUG-3)\n' "$job_name"
     exit 0
   fi
@@ -821,22 +821,19 @@ printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
 }
 
 // fakeGitLabCILocalForceShellScript returns a fake gitlab-ci-local that emits a
-// successful job only when --force-shell-executor appears in the argument list.
+// successful job only when the pipeline YAML has no image: keys.
+// docker: false strips image: from the YAML before writing it, so this verifies
+// that stripping actually happened rather than checking for a non-existent flag.
 func fakeGitLabCILocalForceShellScript() string {
 	return `#!/bin/sh
-HAS_FORCE_SHELL=0
-for arg in "$@"; do
-  [ "$arg" = "--force-shell-executor" ] && HAS_FORCE_SHELL=1
-done
-
 if [ "$1" = "--list" ]; then
   grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
   exit 0
 fi
 
 job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
-if [ "$HAS_FORCE_SHELL" = "0" ]; then
-  printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=expected --force-shell-executor but it was absent\n' "$job_name"
+if grep -q 'image:' .gitlab-ci.yml; then
+  printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=image: key was not stripped from pipeline YAML\n' "$job_name"
 else
   printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
 fi

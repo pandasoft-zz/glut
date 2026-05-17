@@ -3,7 +3,7 @@ ARG VERSION=v0.0.0-dev
 ARG COMMIT=unknown
 WORKDIR /src
 COPY . .
-RUN go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /glut ./cmd/glut
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /glut ./cmd/glut
 
 FROM node:22-slim
 ARG GCL_VERSION=4.55.0

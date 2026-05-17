@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -397,13 +398,19 @@ func runSingleTest(
 		return
 	}
 
+	var mockHostIP string
+	if useDocker {
+		mockHostIP = outboundIP()
+	}
+
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
 	if useDocker {
-		// BUG-3: Docker containers cannot reach 127.0.0.1; rewrite API URLs to use
-		// host.docker.internal so the mock server is reachable from inside containers.
+		// BUG-3: Docker containers cannot reach 127.0.0.1; rewrite API URLs to the
+		// GLUT container's own bridge IP so the mock server is reachable from inside
+		// job containers via the same Docker bridge network.
 		port := server.Port()
-		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://host.docker.internal:%d", port)
-		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://host.docker.internal:%d/api/v4", port)
+		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://%s:%d", mockHostIP, port)
+		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://%s:%d/api/v4", mockHostIP, port)
 	}
 	execCfg := executor.ExecutorConfig{
 		WorkspacePath:    work.WorkspaceDir,
@@ -416,7 +423,7 @@ func runSingleTest(
 		UseDocker:        useDocker,
 		ForceShell:       forceShell,
 		DockerVolumes:    dockerVolumes(useDocker, work.Dir),
-		DockerExtraHosts: dockerExtraHosts(useDocker),
+		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
@@ -683,21 +690,55 @@ func copyPhaseTimings(values map[string]time.Duration) map[string]time.Duration 
 // dockerVolumes returns the --volume mounts needed for Docker executor jobs.
 // work.Dir contains mock binaries (BUG-2), mock logs, and the bare git origin
 // (BUG-4), so mounting it at the same path gives containers full access.
+// toHostPath translates the container-side path to the host-side path so that
+// the Docker daemon (which always sees host paths) can bind the correct directory.
 func dockerVolumes(useDocker bool, workDir string) []string {
 	if !useDocker {
 		return nil
 	}
-	return []string{workDir + ":" + workDir}
+	hostDir := toHostPath(workDir)
+	return []string{hostDir + ":" + workDir}
 }
 
 // dockerExtraHosts returns the --extra-host entries needed for Docker executor jobs.
-// host.docker.internal resolves to the host IP inside containers so they can reach
-// the mock API server that GLUT starts on the host (BUG-3).
-func dockerExtraHosts(useDocker bool) []string {
+// ip is the address of the GLUT process (mock server) reachable from inside containers.
+// In DinD setups outboundIP() returns the GLUT container's bridge IP rather than
+// the host gateway, which is what job containers must use to reach the mock server.
+func dockerExtraHosts(useDocker bool, ip string) []string {
 	if !useDocker {
 		return nil
 	}
-	return []string{"host.docker.internal:host-gateway"}
+	return []string{"host.docker.internal:" + ip}
+}
+
+// outboundIP returns the local IP address that would be used to reach an external
+// host. In DinD (Docker-in-Docker via socket) this is the GLUT container's bridge
+// IP, which is reachable from sibling job containers on the same bridge network.
+func outboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "host.docker.internal"
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// toHostPath translates a workspace path from the GLUT container's perspective to
+// the Docker-daemon-visible (host) path. When GLUT_WORK_DIR and GLUT_HOST_WORK_DIR
+// are set (as in the integration-test Makefile), workspaces created under
+// GLUT_WORK_DIR are remapped so the Docker daemon can bind them into job containers.
+// If neither env var is set the path is returned unchanged (local development).
+func toHostPath(containerPath string) string {
+	glutWorkDir := os.Getenv("GLUT_WORK_DIR")
+	hostWorkDir := os.Getenv("GLUT_HOST_WORK_DIR")
+	if glutWorkDir == "" || hostWorkDir == "" {
+		return containerPath
+	}
+	rel, err := filepath.Rel(glutWorkDir, containerPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return containerPath
+	}
+	return filepath.Join(hostWorkDir, rel)
 }
 
 // resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
