@@ -142,45 +142,11 @@ func writePipeline(cfg ExecutorConfig) error {
 		return fmt.Errorf("write pipeline file: workspace path is required")
 	}
 
-	yaml := cfg.PipelineYAML
-	if cfg.ForceShell {
-		yaml = stripDockerImages(yaml)
-	}
 	pipelinePath := filepath.Join(cfg.WorkspacePath, pipelineFileName)
-	if err := os.WriteFile(pipelinePath, []byte(yaml), 0644); err != nil {
+	if err := os.WriteFile(pipelinePath, []byte(cfg.PipelineYAML), 0644); err != nil {
 		return fmt.Errorf("write pipeline file %s: %w", pipelinePath, err)
 	}
 	return nil
-}
-
-// stripDockerImages removes all image: keys (and their multiline continuations)
-// from a pipeline YAML string so that --shell-executor-no-image forces all jobs
-// to the shell even when image: was declared in the original pipeline.
-func stripDockerImages(pipelineYAML string) string {
-	var result []string
-	skipIndent := -1
-	for _, line := range strings.Split(pipelineYAML, "\n") {
-		trimmed := strings.TrimLeft(line, " \t")
-		indent := len(line) - len(trimmed)
-
-		if skipIndent >= 0 {
-			if trimmed != "" && indent <= skipIndent {
-				skipIndent = -1
-			} else {
-				continue
-			}
-		}
-
-		if strings.HasPrefix(trimmed, "image:") {
-			rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "image:"))
-			if rest == "" {
-				skipIndent = indent
-			}
-			continue
-		}
-		result = append(result, line)
-	}
-	return strings.Join(result, "\n")
 }
 
 func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -264,6 +230,9 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 
 func baseArgs(cfg ExecutorConfig) []string {
 	args := []string{"--no-color", "--file", pipelineFileName}
+	if cfg.ForceShell {
+		return append([]string{"--force-shell-executor"}, args...)
+	}
 	if !cfg.UseDocker {
 		return append([]string{"--shell-executor-no-image"}, args...)
 	}

@@ -708,9 +708,9 @@ docker-job:
 	}
 }
 
-// TestRunDockerFalseStripsImageFromPipeline verifies that setting docker: false in a test
-// causes GLUT to strip image: keys from the pipeline YAML so all jobs run in the shell.
-func TestRunDockerFalseStripsImageFromPipeline(t *testing.T) {
+// TestRunDockerFalseUsesForceShellExecutor verifies that setting docker: false in a test
+// causes GLUT to pass --force-shell-executor so all jobs run in the shell regardless of image:.
+func TestRunDockerFalseUsesForceShellExecutor(t *testing.T) {
 	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalForceShellScript())
 	env.writeRawFile(t, "tests/docker-false.yml", strings.TrimSpace(`
 stages: [test]
@@ -821,19 +821,22 @@ printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
 }
 
 // fakeGitLabCILocalForceShellScript returns a fake gitlab-ci-local that emits a
-// successful job only when the pipeline YAML has no image: keys.
-// docker: false strips image: from the YAML before writing it, so this verifies
-// that stripping actually happened rather than checking for a non-existent flag.
+// successful job only when --force-shell-executor appears in the argument list.
 func fakeGitLabCILocalForceShellScript() string {
 	return `#!/bin/sh
+HAS_FORCE_SHELL=0
+for arg in "$@"; do
+  [ "$arg" = "--force-shell-executor" ] && HAS_FORCE_SHELL=1
+done
+
 if [ "$1" = "--list" ]; then
   grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
   exit 0
 fi
 
 job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
-if grep -q 'image:' .gitlab-ci.yml; then
-  printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=image: key was not stripped from pipeline YAML\n' "$job_name"
+if [ "$HAS_FORCE_SHELL" = "0" ]; then
+  printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=expected --force-shell-executor but it was absent\n' "$job_name"
 else
   printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
 fi

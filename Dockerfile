@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /glut ./cmd/glut
 
 FROM node:22-slim
-ARG GCL_VERSION=4.55.0
+ARG GCL_VERSION=4.72.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash ca-certificates curl docker.io git rsync \
     && npm install -g gitlab-ci-local@${GCL_VERSION} \

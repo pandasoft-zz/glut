@@ -315,44 +315,14 @@ func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
 	}
 }
 
-func TestGitLabCILocalForceShellUsesShellExecutorNoImage(t *testing.T) {
+func TestGitLabCILocalForceShellUsesForceShellExecutor(t *testing.T) {
 	args := baseArgs(ExecutorConfig{ForceShell: true})
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--shell-executor-no-image") {
-		t.Fatalf("args = %q, want --shell-executor-no-image for force-shell mode", joined)
+	if !strings.Contains(joined, "--force-shell-executor") {
+		t.Fatalf("args = %q, want --force-shell-executor", joined)
 	}
-	if strings.Contains(joined, "--force-shell-executor") {
-		t.Fatalf("args = %q, must not use non-existent --force-shell-executor flag", joined)
-	}
-}
-
-func TestStripDockerImagesRemovesImageKeys(t *testing.T) {
-	input := "stages: [test]\n\njob:\n  image: alpine:latest\n  stage: test\n  script:\n    - echo hi\n"
-	got := stripDockerImages(input)
-	if strings.Contains(got, "image:") {
-		t.Fatalf("stripDockerImages() still contains image:; got %q", got)
-	}
-	if !strings.Contains(got, "stage: test") {
-		t.Fatalf("stripDockerImages() removed too much; got %q", got)
-	}
-}
-
-func TestStripDockerImagesHandlesMultilineImageBlock(t *testing.T) {
-	input := "job:\n  image:\n    name: alpine:latest\n    entrypoint: [\"\"]\n  stage: test\n"
-	got := stripDockerImages(input)
-	if strings.Contains(got, "image") {
-		t.Fatalf("stripDockerImages() still contains image block; got %q", got)
-	}
-	if !strings.Contains(got, "stage: test") {
-		t.Fatalf("stripDockerImages() removed too much; got %q", got)
-	}
-}
-
-func TestStripDockerImagesPreservesYAMLWithoutImage(t *testing.T) {
-	input := "job:\n  stage: test\n  script:\n    - echo hi\n"
-	got := stripDockerImages(input)
-	if got != input {
-		t.Fatalf("stripDockerImages() modified YAML without image:; got %q", got)
+	if strings.Contains(joined, "--shell-executor-no-image") {
+		t.Fatalf("args = %q, --shell-executor-no-image must not appear alongside --force-shell-executor", joined)
 	}
 }
 
