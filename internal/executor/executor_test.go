@@ -406,6 +406,55 @@ func TestCheckDependenciesReportsMissingCommands(t *testing.T) {
 	}
 }
 
+func TestCheckDependenciesReportsMissingRequiredCommand(t *testing.T) {
+	t.Parallel()
+	problems := CheckDependencies(context.Background(), []string{"PATH="})
+	required := []string{"gitlab-ci-local", "git", "bash"}
+	for _, name := range required {
+		found := false
+		for _, p := range problems {
+			if strings.Contains(p, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected problem for required binary %q, got %#v", name, problems)
+		}
+	}
+}
+
+func TestCheckDependenciesReportsBrokenCommands(t *testing.T) {
+	t.Parallel()
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+	failScript := "#!/bin/sh\nexit 42\n"
+	for _, name := range []string{"gitlab-ci-local", "git", "bash", "rsync"} {
+		if err := writeExecutable(binDir, name, failScript); err != nil {
+			t.Fatalf("write fail script %s: %v", name, err)
+		}
+	}
+	problems := CheckDependencies(context.Background(), []string{"PATH=" + binDir})
+	if len(problems) < 4 {
+		t.Fatalf("CheckDependencies() problems = %#v, want problems for all 4 binaries", problems)
+	}
+	for _, name := range []string{"gitlab-ci-local", "git", "bash", "rsync"} {
+		found := false
+		for _, p := range problems {
+			if strings.Contains(p, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected problem for binary %q, got %#v", name, problems)
+		}
+	}
+}
+
 func writeExecutable(dir string, name string, content string) error {
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(dir, name+".cmd")

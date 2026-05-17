@@ -122,6 +122,17 @@ func CheckDependencies(ctx context.Context, hostEnv []string) []string {
 	var problems []string
 	for _, item := range checks {
 		binaryPath := resolveExecutable(item.name, hostEnv)
+		// When a custom hostEnv is provided, resolveExecutable returns the bare
+		// name when the binary is absent from that PATH. Avoid exec.Command
+		// falling back to the process PATH in that case.
+		if hostEnv != nil && binaryPath == item.name {
+			if item.optional {
+				problems = append(problems, fmt.Sprintf("%s: not available (not in PATH, GLUT can use native copy fallback)", item.name))
+			} else {
+				problems = append(problems, fmt.Sprintf("%s: not available (not in PATH)", item.name))
+			}
+			continue
+		}
 		cmd := exec.CommandContext(ctx, binaryPath, item.args...)
 		cmd.Env = hostEnv // nil = inherit process env
 		if output, err := cmd.CombinedOutput(); err != nil {
