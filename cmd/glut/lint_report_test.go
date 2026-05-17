@@ -674,3 +674,15 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestSortLintIssuesSameLevelDifferentCategory(t *testing.T) {
+	t.Parallel()
+	issues := []lintIssue{
+		{Level: "error", Category: "semantic", Message: "z"},
+		{Level: "error", Category: "schema", Message: "a"},
+	}
+	sortLintIssues(issues)
+	if issues[0].Category != "schema" || issues[1].Category != "semantic" {
+		t.Fatalf("expected schema before semantic, got %s and %s", issues[0].Category, issues[1].Category)
+	}
+}

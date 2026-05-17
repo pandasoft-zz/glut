@@ -364,6 +364,27 @@ func TestCopyRepoNativeVerbose(t *testing.T) {
 	}
 }
 
+func TestCopyRepoAutoVerboseFallbackToNative(t *testing.T) {
+	if _, err := exec.LookPath("rsync"); err == nil {
+		t.Skip("rsync is available; this test covers the rsync-not-found fallback")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("v"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyAuto, Verbose: true}); err != nil {
+		t.Fatalf("copyRepo auto verbose: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "f.txt")); err != nil {
+		t.Errorf("copied file missing: %v", err)
+	}
+}
+
 func TestCopyRepoWithIncludes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -485,5 +506,102 @@ func TestNewCleansTempWorkspaceOnError(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected temp root to be empty after failed New, got %d entries", len(entries))
+	}
+}
+
+func TestWriteExecutableFileErrors(t *testing.T) {
+	t.Parallel()
+	if err := writeExecutableFile("/nonexistent-dir/file.sh", "#!/bin/sh\necho hi\n"); err == nil {
+		t.Fatal("expected error writing to non-existent directory")
+	}
+}
+
+func TestWriteExecutableFileSuccess(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "script.sh")
+	if err := writeExecutableFile(path, "#!/bin/sh\necho hi\n"); err != nil {
+		t.Fatalf("writeExecutableFile() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "#!/bin/sh\necho hi\n" {
+		t.Fatalf("file content = %q", string(data))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Fatalf("file not executable: %s", info.Mode())
+	}
+}
+
+func TestCopyFileMissingSrcReturnsError(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	dst := filepath.Join(root, "dst.txt")
+	if err := copyFile(filepath.Join(root, "nonexistent.txt"), dst, 0644); err == nil {
+		t.Fatal("expected error copying non-existent source")
+	}
+}
+
+func TestCopyFileCrossFilesystem(t *testing.T) {
+	t.Parallel()
+	// /dev/shm is a tmpfs separate from the ext4 / overlay root fs.
+	// os.Link fails cross-device (EXDEV), but reflink.Auto falls back to io.Copy.
+	shmDir := "/dev/shm"
+	if _, statErr := os.Stat(shmDir); statErr != nil {
+		t.Skip("/dev/shm not available")
+	}
+	srcFile, err := os.CreateTemp(shmDir, "glut-test-src-*")
+	if err != nil {
+		t.Skip("cannot create temp file in /dev/shm: " + err.Error())
+	}
+	defer os.Remove(srcFile.Name())
+	if _, err := srcFile.WriteString("cross-fs data"); err != nil {
+		srcFile.Close()
+		t.Fatal(err)
+	}
+	srcFile.Close()
+
+	dst := filepath.Join(t.TempDir(), "dst.txt")
+	if err := copyFile(srcFile.Name(), dst, 0644); err != nil {
+		t.Fatalf("copyFile cross-filesystem: %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil || string(data) != "cross-fs data" {
+		t.Fatalf("data = %q, err = %v", data, err)
+	}
+}
+
+func TestCopyDirDstInsideSrc(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(src, "dst") // dst is nested inside src
+
+	if err := os.MkdirAll(filepath.Join(src, "data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "data", "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir with dst inside src: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "data", "file.txt"))
+	if err != nil {
+		t.Fatalf("copied file missing: %v", err)
+	}
+	if string(data) != "content" {
+		t.Fatalf("data = %q", string(data))
+	}
+	// The dst directory inside src should not have been recursively copied into itself.
+	if _, err := os.Stat(filepath.Join(dst, "dst")); err == nil {
+		t.Error("dst should not have been recursively copied")
 	}
 }
