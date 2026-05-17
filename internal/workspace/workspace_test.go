@@ -385,6 +385,27 @@ func TestCopyRepoAutoVerboseFallbackToNative(t *testing.T) {
 	}
 }
 
+func TestCopyRepoAutoVerboseWithRsync(t *testing.T) {
+	if _, err := exec.LookPath("rsync"); err != nil {
+		t.Skip("rsync not available; this test covers the rsync-success verbose path")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("v"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyAuto, Verbose: true}); err != nil {
+		t.Fatalf("copyRepo auto verbose with rsync: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "f.txt")); err != nil {
+		t.Errorf("copied file missing: %v", err)
+	}
+}
+
 func TestCopyRepoWithIncludes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -560,12 +581,15 @@ func TestCopyFileCrossFilesystem(t *testing.T) {
 	if err != nil {
 		t.Skip("cannot create temp file in /dev/shm: " + err.Error())
 	}
-	defer os.Remove(srcFile.Name())
+	srcPath := srcFile.Name()
+	defer func() { _ = os.Remove(srcPath) }()
 	if _, err := srcFile.WriteString("cross-fs data"); err != nil {
-		srcFile.Close()
+		_ = srcFile.Close()
 		t.Fatal(err)
 	}
-	srcFile.Close()
+	if err := srcFile.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	dst := filepath.Join(t.TempDir(), "dst.txt")
 	if err := copyFile(srcFile.Name(), dst, 0644); err != nil {
