@@ -247,6 +247,7 @@ mock-job:
 .glut:
   name: mock binary test
   setup:
+    docker: false
     mocks:
       binaries:
         mock-tool:
@@ -288,6 +289,8 @@ call-api:
 ---
 .glut:
   name: api and artifact test
+  setup:
+    docker: false
   assert:
     job:
       call-api:
@@ -327,6 +330,7 @@ mock-job:
 .glut:
   name: mock setup error
   setup:
+    docker: false
     mocks:
       binaries:
         mock-tool:
@@ -885,9 +889,9 @@ shell-job:
 }
 
 // TestRunNilDockerModeUsesNonLocalhostAPIURL verifies that when docker: is absent (nil),
-// CI_API_V4_URL is rewritten to the bridge IP so Docker executor jobs (those with image:)
-// can reach the mock API server. Regression test for issue #46.
-func TestRunNilDockerModeUsesNonLocalhostAPIURL(t *testing.T) {
+// CI_API_V4_URL uses glut-mock (same as docker:true) so Docker executor jobs can reach
+// the mock API server. Regression test for issue #46.
+func TestRunNilDockerModeUsesGlutMockAPIURL(t *testing.T) {
 	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalEnvEchoScript("CI_API_V4_URL"))
 	env.writeRawFile(t, "tests/nil-docker.yml", strings.TrimSpace(`
 stages: [test]
@@ -917,11 +921,8 @@ image-job:
 		t.Fatalf("Run() tests = %#v", result.Tests)
 	}
 	url := result.Tests[0].JobOutputs["image-job"].Stdout
-	if strings.Contains(url, "127.0.0.1") {
-		t.Errorf("nil docker: CI_API_V4_URL = %q still uses 127.0.0.1; Docker job containers cannot reach localhost", url)
-	}
-	if url == "" {
-		t.Error("nil docker: CI_API_V4_URL is empty")
+	if !strings.Contains(url, "glut-mock") {
+		t.Errorf("nil docker: CI_API_V4_URL = %q does not use glut-mock; want same behaviour as docker:true", url)
 	}
 }
 
@@ -930,8 +931,8 @@ func TestResolveDockerMode(t *testing.T) {
 	falseVal := false
 
 	useDocker, forceShell := resolveDockerMode(nil)
-	if useDocker || forceShell {
-		t.Fatalf("nil docker: useDocker=%v forceShell=%v, want both false", useDocker, forceShell)
+	if !useDocker || forceShell {
+		t.Fatalf("nil docker: useDocker=%v forceShell=%v, want useDocker=true forceShell=false", useDocker, forceShell)
 	}
 
 	useDocker, forceShell = resolveDockerMode(&trueVal)

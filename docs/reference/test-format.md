@@ -356,8 +356,8 @@ setup:
 
 | Value | Behaviour |
 | --- | --- |
-| omitted | jobs with `image:` use Docker; others use shell. `CI_API_V4_URL` is rewritten to the GLUT bridge IP so Docker jobs can reach the mock server. |
-| `true` | Docker with volume/extra-host support for mocks. `CI_API_V4_URL` uses the `glut-mock` hostname. |
+| omitted | same as `true` — full Docker mode |
+| `true` | Docker with volume/extra-host support. `CI_API_V4_URL` uses the `glut-mock` hostname. |
 | `false` | all jobs forced to shell, `image:` ignored |
 
 ## `assert`

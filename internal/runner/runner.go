@@ -420,28 +420,18 @@ func runSingleTest(
 	}
 
 	var mockHostIP string
-	// Compute outbound IP for docker:true and docker:nil.
-	// docker:nil uses --shell-executor-no-image which still runs image: jobs in Docker,
-	// so those containers also need an address to reach the mock server.
-	if useDocker || !forceShell {
+	if useDocker {
 		mockHostIP = outboundIP()
 	}
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
 	if useDocker {
-		// docker:true — use glut-mock hostname injected via --extra-host so the URL
-		// is stable and independent of the bridge IP.
+		// BUG-3: Docker containers cannot reach 127.0.0.1. Rewrite API URLs to use
+		// glut-mock, GLUT's own --extra-host alias, so the mock server is reachable
+		// from inside job containers regardless of the Docker setup (DinD or native).
 		port := server.Port()
 		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://glut-mock:%d", port)
 		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://glut-mock:%d/api/v4", port)
-	} else if !forceShell {
-		// docker:nil — image: jobs run in Docker via --shell-executor-no-image while
-		// jobs without image: run in shell. A numeric bridge IP works for both: Docker
-		// containers reach the GLUT mock on its bridge interface; shell jobs reach it
-		// via the same interface (mock server binds to 0.0.0.0).
-		port := server.Port()
-		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://%s:%d", mockHostIP, port)
-		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://%s:%d/api/v4", mockHostIP, port)
 	}
 	execCfg := executor.ExecutorConfig{
 		WorkspacePath:    work.WorkspaceDir,
@@ -817,14 +807,11 @@ func outboundIP() string {
 
 // toHostPath translates a workspace path from the GLUT container's perspective to
 // resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
-// nil (absent) → backward-compat: Docker for image: jobs, shell otherwise.
+// nil (absent) → full Docker mode, same as &true.
 // &true → full Docker mode with volume/extra-host support.
 // &false → force all jobs to shell, even those with image:.
 func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
-	if docker == nil {
-		return false, false
-	}
-	if *docker {
+	if docker == nil || *docker {
 		return true, false
 	}
 	return false, true
