@@ -48,21 +48,15 @@ func TestWorkspaceHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("git branch helpers", func(t *testing.T) {
+	t.Run("getDefaultBranchFromRepo reads origin/HEAD", func(t *testing.T) {
 		repo := initGitRepo(t)
 		mustRunGitWorkspace(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-		if branch := getDefaultBranch(repo); branch != "main" {
-			t.Fatalf("getDefaultBranch(origin HEAD) = %q", branch)
+		if branch := getDefaultBranchFromRepo(repo); branch != "main" {
+			t.Fatalf("getDefaultBranchFromRepo(origin HEAD) = %q", branch)
 		}
 
-		other := initGitRepo(t)
-		mustRunGitWorkspace(t, other, "config", "init.defaultBranch", "trunk")
-		if branch := getDefaultBranch(other); branch != "trunk" {
-			t.Fatalf("getDefaultBranch(config) = %q", branch)
-		}
-
-		if branch := getDefaultBranch(t.TempDir()); branch != config.DefaultBranchName {
-			t.Fatalf("getDefaultBranch(fallback) = %q", branch)
+		if branch := getDefaultBranchFromRepo(t.TempDir()); branch != "" {
+			t.Fatalf("getDefaultBranchFromRepo(no origin) = %q, want empty", branch)
 		}
 	})
 
@@ -134,8 +128,175 @@ func TestWorkspaceHelpers(t *testing.T) {
 	})
 }
 
+func TestCIDefaultBranchResolution(t *testing.T) {
+	newSrc := func(t *testing.T) string {
+		t.Helper()
+		src := t.TempDir()
+		if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return src
+	}
+	newWorkspace := func(t *testing.T, setup parser.SetupConfig, src string) *Workspace {
+		t.Helper()
+		w, err := New(setup, false, src, Options{HostEnv: noSignGitEnv(t)})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		t.Cleanup(func() { _ = w.Destroy() })
+		return w
+	}
+	envVars := func(w *Workspace, setup parser.SetupConfig) map[string]string {
+		return w.EnvVars(setup, 8080, "abc123abc123abc123abc123abc123abc123abc123", "abc123ab", "test")
+	}
+
+	t.Run("setup.default_branch takes priority", func(t *testing.T) {
+		setup := parser.SetupConfig{DefaultBranch: "release"}
+		w := newWorkspace(t, setup, newSrc(t))
+		env := envVars(w, setup)
+		if env["CI_DEFAULT_BRANCH"] != "release" {
+			t.Errorf("CI_DEFAULT_BRANCH = %q, want release", env["CI_DEFAULT_BRANCH"])
+		}
+	})
+
+	t.Run("setup.default_branch overrides api.project.default_branch", func(t *testing.T) {
+		setup := parser.SetupConfig{
+			DefaultBranch: "release",
+			API: &parser.APISetupConfig{
+				Project: &parser.ProjectConfig{DefaultBranch: "master"},
+			},
+		}
+		w := newWorkspace(t, setup, newSrc(t))
+		env := envVars(w, setup)
+		if env["CI_DEFAULT_BRANCH"] != "release" {
+			t.Errorf("CI_DEFAULT_BRANCH = %q, want release", env["CI_DEFAULT_BRANCH"])
+		}
+	})
+
+	t.Run("api.project.default_branch used when setup.default_branch absent", func(t *testing.T) {
+		setup := parser.SetupConfig{
+			API: &parser.APISetupConfig{
+				Project: &parser.ProjectConfig{DefaultBranch: "master"},
+			},
+		}
+		w := newWorkspace(t, setup, newSrc(t))
+		env := envVars(w, setup)
+		if env["CI_DEFAULT_BRANCH"] != "master" {
+			t.Errorf("CI_DEFAULT_BRANCH = %q, want master", env["CI_DEFAULT_BRANCH"])
+		}
+	})
+
+	t.Run("git.origin.branch does not influence CI_DEFAULT_BRANCH", func(t *testing.T) {
+		// Regression: previously setting git.origin.branch to a feature branch
+		// caused CI_DEFAULT_BRANCH to equal the feature branch name.
+		setup := parser.SetupConfig{
+			Branch: "feature/my-feature",
+			Git: &parser.GitSetupConfig{
+				Origin: &parser.GitOriginConfig{Branch: "feature/my-feature"},
+			},
+		}
+		w := newWorkspace(t, setup, newSrc(t))
+		env := envVars(w, setup)
+		if env["CI_DEFAULT_BRANCH"] != config.DefaultBranchName {
+			t.Errorf("CI_DEFAULT_BRANCH = %q, want %q", env["CI_DEFAULT_BRANCH"], config.DefaultBranchName)
+		}
+		if env["CI_COMMIT_BRANCH"] != "feature/my-feature" {
+			t.Errorf("CI_COMMIT_BRANCH = %q, want feature/my-feature", env["CI_COMMIT_BRANCH"])
+		}
+	})
+
+	t.Run("auto-detected from source repo origin/HEAD", func(t *testing.T) {
+		// Source repo has refs/remotes/origin/HEAD pointing to "develop".
+		srcRoot := t.TempDir()
+		src := filepath.Join(srcRoot, "project")
+		remote := filepath.Join(srcRoot, "remote.git")
+		if err := os.MkdirAll(src, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		mustRunGitWorkspace(t, srcRoot, "init", "--bare", remote)
+		mustRunGitWorkspace(t, src, "init")
+		mustRunGitWorkspace(t, src, "config", "user.email", "test@example.com")
+		mustRunGitWorkspace(t, src, "config", "user.name", "Test")
+		mustRunGitWorkspace(t, src, "add", "README.md")
+		mustRunGitWorkspace(t, src, "commit", "-m", "init")
+		mustRunGitWorkspace(t, src, "branch", "-M", "develop")
+		mustRunGitWorkspace(t, src, "remote", "add", "origin", remote)
+		mustRunGitWorkspace(t, src, "push", "-u", "origin", "develop")
+		// Set refs/remotes/origin/HEAD in the source repo (simulates a cloned repo).
+		mustRunGitWorkspace(t, src, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+
+		setup := parser.SetupConfig{}
+		w := newWorkspace(t, setup, src)
+		env := envVars(w, setup)
+		if env["CI_DEFAULT_BRANCH"] != "develop" {
+			t.Errorf("CI_DEFAULT_BRANCH = %q, want develop", env["CI_DEFAULT_BRANCH"])
+		}
+	})
+
+	t.Run("fallback to main when no origin/HEAD in source repo", func(t *testing.T) {
+		setup := parser.SetupConfig{}
+		w := newWorkspace(t, setup, newSrc(t))
+		env := envVars(w, setup)
+		if env["CI_DEFAULT_BRANCH"] != config.DefaultBranchName {
+			t.Errorf("CI_DEFAULT_BRANCH = %q, want %q", env["CI_DEFAULT_BRANCH"], config.DefaultBranchName)
+		}
+	})
+}
+
+func TestResolveDefaultBranch(t *testing.T) {
+	t.Run("setup.default_branch wins", func(t *testing.T) {
+		got := resolveDefaultBranch(parser.SetupConfig{
+			DefaultBranch: "release",
+			API:           &parser.APISetupConfig{Project: &parser.ProjectConfig{DefaultBranch: "master"}},
+		}, t.TempDir())
+		if got != "release" {
+			t.Fatalf("got %q, want release", got)
+		}
+	})
+
+	t.Run("api.project.default_branch used when setup.default_branch absent", func(t *testing.T) {
+		got := resolveDefaultBranch(parser.SetupConfig{
+			API: &parser.APISetupConfig{Project: &parser.ProjectConfig{DefaultBranch: "master"}},
+		}, t.TempDir())
+		if got != "master" {
+			t.Fatalf("got %q, want master", got)
+		}
+	})
+
+	t.Run("detects from source repo origin/HEAD", func(t *testing.T) {
+		repo := initGitRepo(t)
+		remote := filepath.Join(t.TempDir(), "remote.git")
+		mustRunGitWorkspace(t, t.TempDir(), "init", "--bare", remote)
+		mustRunGitWorkspace(t, repo, "remote", "add", "origin", remote)
+		mustRunGitWorkspace(t, repo, "push", "-u", "origin", "main")
+		// Set refs/remotes/origin/HEAD in the source repo itself (not the bare remote).
+		mustRunGitWorkspace(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+		if got := getDefaultBranchFromRepo(repo); got != "main" {
+			t.Fatalf("getDefaultBranchFromRepo = %q, want main", got)
+		}
+
+		got := resolveDefaultBranch(parser.SetupConfig{}, repo)
+		if got != "main" {
+			t.Fatalf("resolveDefaultBranch via srcDir = %q, want main", got)
+		}
+	})
+
+	t.Run("fallback to main when no origin configured", func(t *testing.T) {
+		got := resolveDefaultBranch(parser.SetupConfig{}, t.TempDir())
+		if got != config.DefaultBranchName {
+			t.Fatalf("got %q, want %q", got, config.DefaultBranchName)
+		}
+	})
+}
+
 func TestWorkspaceEnvHelperBranches(t *testing.T) {
-	t.Run("defaultBranch api override and detached fallback", func(t *testing.T) {
+	t.Run("defaultBranch backward compat: api override on direct-constructed workspace", func(t *testing.T) {
+		// Workspace created directly (not via New()) still honours
+		// api.project.default_branch as fallback when w.DefaultBranch is empty.
 		w := &Workspace{WorkspaceDir: t.TempDir()}
 		if got := w.defaultBranch(parser.SetupConfig{
 			API: &parser.APISetupConfig{Project: &parser.ProjectConfig{DefaultBranch: "release"}},

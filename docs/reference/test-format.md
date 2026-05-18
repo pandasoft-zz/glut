@@ -50,6 +50,20 @@ setup:
   branch: "main"
 ```
 
+Use `default_branch` to set `CI_DEFAULT_BRANCH`. GLUT auto-detects this from
+the source repository's `refs/remotes/origin/HEAD`. Set it explicitly when the
+detection gives the wrong result or when you need a specific value for the test.
+
+```yaml
+setup:
+  branch: "feature/my-thing"
+  default_branch: "main"
+```
+
+`branch` and `default_branch` are independent. `branch` controls which branch
+the pipeline runs on. `default_branch` controls `CI_DEFAULT_BRANCH`. A typical
+feature-branch test sets both to different values.
+
 Use `tag` for tag pipelines.
 
 ```yaml
@@ -181,7 +195,7 @@ variable values in scripts or tests.
 | `CI_PROJECT_NAMESPACE` | namespace prefix of project path |
 | `CI_COMMIT_SHA` | real SHA of workspace HEAD |
 | `CI_COMMIT_SHORT_SHA` | short SHA of workspace HEAD |
-| `CI_DEFAULT_BRANCH` | `"main"` (or `setup.api.project.default_branch`) |
+| `CI_DEFAULT_BRANCH` | `setup.default_branch`, or auto-detected from source repo, or `"main"` |
 | `CI_PIPELINE_SOURCE` | from `setup.pipeline_source`, default `"push"` |
 | `CI_PIPELINE_ID` | `"1"` |
 | `CI_JOB_TOKEN` | `"mock-job-token"` |
@@ -284,7 +298,7 @@ setup:
       scopes:
         - "api"
     project:
-      default_branch: "main"
+      default_branch: "main"   # deprecated: use setup.default_branch
       path: "test-group/test-project"
     seed:
       releases:

@@ -33,6 +33,7 @@ func (s *StringSlice) UnmarshalYAML(value *yaml.Node) error {
 
 type SetupConfig struct {
 	Branch         string          `yaml:"branch"`
+	DefaultBranch  string          `yaml:"default_branch"`
 	Tag            string          `yaml:"tag"`
 	PipelineSource string          `yaml:"pipeline_source"`
 	Docker         *bool           `yaml:"docker"`

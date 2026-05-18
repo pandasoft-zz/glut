@@ -38,6 +38,29 @@ Examples that still need Go lint rules:
 The schema is part of the runtime behavior. The released binary must validate
 tests without needing external schema files on disk.
 
+## CI_DEFAULT_BRANCH Is Not Derived From The Test Branch
+
+`CI_DEFAULT_BRANCH` represents the project's default branch, not the branch
+the test runs on. GLUT determines it with this priority:
+
+1. `setup.default_branch` — explicit value in the test file.
+2. `setup.api.project.default_branch` — deprecated; still accepted.
+3. Auto-detection from `refs/remotes/origin/HEAD` in the source repository.
+4. `"main"` — hard fallback.
+
+`setup.git.origin.branch` never influences `CI_DEFAULT_BRANCH`. That field
+controls only which branch the workspace is cloned from. A test that simulates
+a feature-branch pipeline must set both fields independently:
+
+```yaml
+setup:
+  branch: "feature/my-thing"        # CI_COMMIT_BRANCH
+  default_branch: "main"            # CI_DEFAULT_BRANCH
+  git:
+    origin:
+      branch: "feature/my-thing"    # workspace checkout branch
+```
+
 ## CI Variable Semantics Are Product Behavior
 
 The values and presence of `CI_*` variables are not implementation details.
