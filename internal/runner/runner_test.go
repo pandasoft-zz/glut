@@ -885,6 +885,47 @@ shell-job:
 	}
 }
 
+// TestRunNilDockerModeUsesNonLocalhostAPIURL verifies that when docker: is absent (nil),
+// CI_API_V4_URL is rewritten to the bridge IP so Docker executor jobs (those with image:)
+// can reach the mock API server. Regression test for issue #46.
+func TestRunNilDockerModeUsesNonLocalhostAPIURL(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalEnvEchoScript("CI_API_V4_URL"))
+	env.writeRawFile(t, "tests/nil-docker.yml", strings.TrimSpace(`
+stages: [test]
+
+image-job:
+  image: alpine:latest
+  stage: test
+  script:
+    - echo "$CI_API_V4_URL"
+---
+.glut:
+  name: nil docker url
+  setup:
+    branch: main
+  assert:
+    job:
+      image-job:
+        present: true
+        exit-status: 0
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+	url := result.Tests[0].JobOutputs["image-job"].Stdout
+	if strings.Contains(url, "127.0.0.1") {
+		t.Errorf("nil docker: CI_API_V4_URL = %q still uses 127.0.0.1; Docker job containers cannot reach localhost", url)
+	}
+	if url == "" {
+		t.Error("nil docker: CI_API_V4_URL is empty")
+	}
+}
+
 func TestResolveDockerMode(t *testing.T) {
 	trueVal := true
 	falseVal := false
