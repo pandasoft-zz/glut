@@ -730,6 +730,83 @@ printf 'GLUT_JOB|name=%s|exit=0|stdout=%s|stderr=\n' "$job_name" "$stdout"
 `
 }
 
+// TestRunSetupDefaultBranch verifies that setup.default_branch sets CI_DEFAULT_BRANCH
+// correctly and that git.origin.branch does not interfere.
+func TestRunSetupDefaultBranch(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalEnvEchoScript("CI_DEFAULT_BRANCH"))
+
+	env.writeRawFile(t, "tests/default-branch.yml", strings.TrimSpace(`
+stages: [test]
+
+check-branch:
+  stage: test
+  script:
+    - echo "$CI_DEFAULT_BRANCH"
+---
+.glut:
+  name: setup.default_branch sets CI_DEFAULT_BRANCH
+  setup:
+    branch: "feature/my-thing"
+    default_branch: "release"
+    git:
+      origin:
+        branch: "feature/my-thing"
+  assert:
+    job:
+      check-branch:
+        present: true
+        exit-status: 0
+        stdout: "release"
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
+// TestRunDefaultBranchFallback verifies that CI_DEFAULT_BRANCH defaults to "main"
+// when setup.default_branch is not set and the source repo has no origin/HEAD.
+func TestRunDefaultBranchFallback(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalEnvEchoScript("CI_DEFAULT_BRANCH"))
+
+	env.writeRawFile(t, "tests/default-branch-fallback.yml", strings.TrimSpace(`
+stages: [test]
+
+check-branch:
+  stage: test
+  script:
+    - echo "$CI_DEFAULT_BRANCH"
+---
+.glut:
+  name: CI_DEFAULT_BRANCH defaults to main
+  setup:
+    branch: "feature/xyz"
+    git:
+      origin:
+        branch: "feature/xyz"
+  assert:
+    job:
+      check-branch:
+        present: true
+        exit-status: 0
+        stdout: "main"
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; result = %#v", exitCode, ExitOK, result)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
 // TestRunDockerModeJobReceivesMockResources verifies BUG-2, BUG-3, and BUG-4 together:
 // when a pipeline job uses an image:, GLUT must pass --volume (BUG-2: mock binaries and
 // git origin are inside work.Dir) and --extra-host host.docker.internal:host-gateway (BUG-3:
@@ -993,6 +1070,19 @@ func TestAbsifyPaths(t *testing.T) {
 			t.Errorf("expected /absolute/path, got %q", got[0])
 		}
 	})
+}
+
+// fakeGitLabCILocalEnvEchoScript returns a fake gitlab-ci-local that emits the
+// value of the named environment variable as the job's stdout field.
+func fakeGitLabCILocalEnvEchoScript(envVar string) string {
+	return `#!/bin/sh
+if [ "$1" = "--list" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+  exit 0
+fi
+job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
+printf 'GLUT_JOB|name=%s|exit=0|stdout=%s|stderr=\n' "$job_name" "$` + envVar + `"
+`
 }
 
 func TestResolveGlutBinPath(t *testing.T) {

@@ -23,6 +23,10 @@
         "branch": {
           "type": "string"
         },
+        "default_branch": {
+          "type": "string",
+          "description": "Sets CI_DEFAULT_BRANCH. Overrides auto-detection from the source repository. Use this when your project uses a non-standard default branch name or when you need a specific value in the test."
+        },
         "tag": {
           "type": "string"
         },
@@ -219,7 +223,8 @@
       "additionalProperties": false,
       "properties": {
         "default_branch": {
-          "type": "string"
+          "type": "string",
+          "description": "Deprecated: use setup.default_branch instead. Sets CI_DEFAULT_BRANCH and the default_branch field in mock API project responses."
         },
         "path": {
           "type": "string"

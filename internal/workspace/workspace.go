@@ -49,10 +49,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
 	}
 
-	defaultBranch := config.DefaultBranchName
-	if cfg.API != nil && cfg.API.Project != nil && cfg.API.Project.DefaultBranch != "" {
-		defaultBranch = cfg.API.Project.DefaultBranch
-	}
+	defaultBranch := resolveDefaultBranch(cfg, srcDir)
 
 	gitBin := resolveExecutable("git", opts.HostEnv)
 	runGit := func(dir string, args ...string) error {
@@ -326,8 +323,28 @@ func envSliceToMap(env []string) map[string]string {
 	return m
 }
 
-func getDefaultBranch(dir string) string {
-	// Try to detect default branch from origin/HEAD
+// resolveDefaultBranch returns the effective CI_DEFAULT_BRANCH value for a
+// workspace. Priority: setup.default_branch > setup.api.project.default_branch
+// (deprecated) > origin/HEAD detected from the source repo > "main".
+func resolveDefaultBranch(cfg parser.SetupConfig, srcDir string) string {
+	if cfg.DefaultBranch != "" {
+		return cfg.DefaultBranch
+	}
+	if cfg.API != nil && cfg.API.Project != nil && cfg.API.Project.DefaultBranch != "" {
+		return cfg.API.Project.DefaultBranch
+	}
+	detected := getDefaultBranchFromRepo(srcDir)
+	if detected != "" && detected != DetachedHead {
+		return detected
+	}
+	return config.DefaultBranchName
+}
+
+// getDefaultBranchFromRepo detects the default branch of a git repository by
+// reading refs/remotes/origin/HEAD. This works on the real source repo, giving
+// an accurate result regardless of what branch the test workspace is configured
+// to use.
+func getDefaultBranchFromRepo(dir string) string {
 	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -337,19 +354,7 @@ func getDefaultBranch(dir string) string {
 			return strings.TrimPrefix(ref, "refs/remotes/origin/")
 		}
 	}
-
-	// Try to get default branch from git config
-	cmd = exec.Command("git", "config", "--get", "init.defaultBranch")
-	cmd.Dir = dir
-	out, err = cmd.Output()
-	if err == nil {
-		cfgBranch := strings.TrimSpace(string(out))
-		if cfgBranch != "" {
-			return cfgBranch
-		}
-	}
-
-	return config.DefaultBranchName
+	return ""
 }
 
 func commitIfStaged(dir string, message string, hostEnv []string) error {

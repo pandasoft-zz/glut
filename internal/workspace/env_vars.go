@@ -30,15 +30,16 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 }
 
 func (w *Workspace) defaultBranch(setup parser.SetupConfig) string {
-	if setup.API != nil && setup.API.Project != nil && setup.API.Project.DefaultBranch != "" {
-		return setup.API.Project.DefaultBranch
-	}
+	// w.DefaultBranch is set by New() via resolveDefaultBranch(), which already
+	// covers setup.default_branch, api.project.default_branch (deprecated), and
+	// origin/HEAD detection from the real source repo.
 	if w.DefaultBranch != "" {
 		return w.DefaultBranch
 	}
-	detected := getDefaultBranch(w.WorkspaceDir)
-	if detected != "" && detected != DetachedHead {
-		return detected
+	// Fallback for Workspace instances not created via New() (e.g. direct test
+	// construction). Still honour the deprecated api.project.default_branch.
+	if setup.API != nil && setup.API.Project != nil && setup.API.Project.DefaultBranch != "" {
+		return setup.API.Project.DefaultBranch
 	}
 	return config.DefaultBranchName
 }
