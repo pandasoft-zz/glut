@@ -35,6 +35,7 @@ type Workspace struct {
 	WorkspaceDir  string
 	OriginRepo    string
 	KeepWorkspace bool
+	DefaultBranch string   // effective default branch for CI_DEFAULT_BRANCH
 	hostEnv       []string // stored from Options.HostEnv for use in EnvVars
 }
 
@@ -46,6 +47,11 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 	tmpWork, err := os.MkdirTemp(opts.TempDir, "glut-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
+	}
+
+	defaultBranch := config.DefaultBranchName
+	if cfg.API != nil && cfg.API.Project != nil && cfg.API.Project.DefaultBranch != "" {
+		defaultBranch = cfg.API.Project.DefaultBranch
 	}
 
 	gitBin := resolveExecutable("git", opts.HostEnv)
@@ -134,6 +140,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		WorkspaceDir:  workspaceDir,
 		OriginRepo:    originRepo,
 		KeepWorkspace: keepWorkspace,
+		DefaultBranch: defaultBranch,
 		hostEnv:       opts.HostEnv,
 	}
 

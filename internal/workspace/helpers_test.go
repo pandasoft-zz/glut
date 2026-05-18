@@ -134,6 +134,39 @@ func TestWorkspaceHelpers(t *testing.T) {
 	})
 }
 
+func TestCIDefaultBranchNotFollowsOriginBranch(t *testing.T) {
+	// Regression test for: CI_DEFAULT_BRANCH incorrectly set to current branch
+	// When git.origin.branch is a feature branch, CI_DEFAULT_BRANCH must still
+	// be the project default branch (main), not the origin branch.
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	setup := parser.SetupConfig{
+		Branch: "feature/my-feature",
+		Git: &parser.GitSetupConfig{
+			Origin: &parser.GitOriginConfig{
+				Branch: "feature/my-feature",
+			},
+		},
+	}
+
+	w, err := New(setup, false, src, Options{HostEnv: noSignGitEnv(t)})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = w.Destroy() })
+
+	env := w.EnvVars(setup, 8080, "abc123abc123abc123abc123abc123abc123abc123", "abc123ab", "test")
+	if env["CI_DEFAULT_BRANCH"] != config.DefaultBranchName {
+		t.Errorf("CI_DEFAULT_BRANCH = %q, want %q", env["CI_DEFAULT_BRANCH"], config.DefaultBranchName)
+	}
+	if env["CI_COMMIT_BRANCH"] != "feature/my-feature" {
+		t.Errorf("CI_COMMIT_BRANCH = %q, want feature/my-feature", env["CI_COMMIT_BRANCH"])
+	}
+}
+
 func TestWorkspaceEnvHelperBranches(t *testing.T) {
 	t.Run("defaultBranch api override and detached fallback", func(t *testing.T) {
 		w := &Workspace{WorkspaceDir: t.TempDir()}
