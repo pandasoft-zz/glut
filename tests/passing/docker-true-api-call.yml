@@ -9,7 +9,7 @@ api-in-docker:
     - echo "api call ok"
 ---
 .glut:
-  name: "docker:true CI_API_V4_URL resolves via glut-mock hostname (BUG-3 regression)"
+  name: "docker:true CI_API_V4_URL uses bridge IP reachable from containers (BUG-3 regression)"
   setup:
     branch: main
     docker: true

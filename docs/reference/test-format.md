@@ -327,17 +327,13 @@ setup:
 
 ### Docker Executor
 
-By default GLUT uses `--shell-executor-no-image`: jobs that declare `image:` run
-in Docker; jobs without `image:` run in the shell. This matches normal
-`gitlab-ci-local` behaviour.
-
-Set `docker: true` to enable full Docker mode. GLUT mounts the temporary
-workspace into each container so mock binaries and the fake git origin are
-reachable from inside Docker, and rewrites `CI_API_V4_URL` to use `glut-mock`
-— GLUT's own stable hostname injected via `--extra-host` — so containers can
-reach the mock API server regardless of how Docker networking is configured.
-`host.docker.internal` is also injected for compatibility, but `glut-mock` is
-the address that `CI_API_V4_URL` uses.
+By default GLUT uses full Docker mode: jobs with `image:` run in Docker
+containers; jobs without `image:` run in the shell. Both can reach the mock API
+server because `CI_API_V4_URL` uses the bridge IP address — a numeric address
+reachable from Docker containers (same bridge network) and from shell jobs
+(server binds to `0.0.0.0`). GLUT also injects `glut-mock` and
+`host.docker.internal` as `/etc/hosts` aliases via `--extra-host` for
+compatibility, but the URL uses the bridge IP directly.
 
 ```yaml
 setup:
@@ -357,7 +353,7 @@ setup:
 | Value | Behaviour |
 | --- | --- |
 | omitted | same as `true` — full Docker mode |
-| `true` | Docker with volume/extra-host support. `CI_API_V4_URL` uses the `glut-mock` hostname. |
+| `true` | Docker with volume/extra-host support. `CI_API_V4_URL` uses the bridge IP (reachable from Docker and shell). |
 | `false` | all jobs forced to shell, `image:` ignored |
 
 ## `assert`

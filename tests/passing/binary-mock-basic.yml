@@ -10,7 +10,6 @@ build:
   setup:
     branch: "main"
     pipeline_source: "push"
-    docker: false
     mocks:
       binaries:
         my-tool:

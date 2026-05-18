@@ -400,7 +400,11 @@ func runSingleTest(
 			mocks = testFile.Glut.Setup.Mocks
 		}
 		dockerVolumeName, primaryErr = workspace.CreateDockerVolume(work.Dir, work.OriginRepo, mocks)
-	} else if hasMockBinaries(testFile) {
+	}
+	// Always inject mock binaries into shell PATH so jobs without image: can find
+	// them regardless of docker mode. For docker:true this runs alongside the volume;
+	// for docker:false this is the only setup path.
+	if primaryErr == nil && hasMockBinaries(testFile) {
 		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), false)
 	}
 	phaseTimings["mock-binaries"] = time.Since(phaseStart)
@@ -426,12 +430,12 @@ func runSingleTest(
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
 	if useDocker {
-		// BUG-3: Docker containers cannot reach 127.0.0.1. Rewrite API URLs to use
-		// glut-mock, GLUT's own --extra-host alias, so the mock server is reachable
-		// from inside job containers regardless of the Docker setup (DinD or native).
+		// BUG-3: Docker containers cannot reach 127.0.0.1. Use the bridge IP directly
+		// so the URL works for both Docker jobs (container on same bridge) and shell jobs
+		// (same host or container). glut-mock remains an alias via --extra-host.
 		port := server.Port()
-		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://glut-mock:%d", port)
-		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://glut-mock:%d/api/v4", port)
+		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://%s:%d", mockHostIP, port)
+		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://%s:%d/api/v4", mockHostIP, port)
 	}
 	execCfg := executor.ExecutorConfig{
 		WorkspacePath:    work.WorkspaceDir,
