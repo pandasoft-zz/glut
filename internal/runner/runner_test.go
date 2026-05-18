@@ -247,6 +247,7 @@ mock-job:
 .glut:
   name: mock binary test
   setup:
+    docker: false
     mocks:
       binaries:
         mock-tool:
@@ -288,6 +289,8 @@ call-api:
 ---
 .glut:
   name: api and artifact test
+  setup:
+    docker: false
   assert:
     job:
       call-api:
@@ -327,6 +330,7 @@ mock-job:
 .glut:
   name: mock setup error
   setup:
+    docker: false
     mocks:
       binaries:
         mock-tool:
@@ -809,9 +813,8 @@ check-branch:
 
 // TestRunDockerModeJobReceivesMockResources verifies BUG-2, BUG-3, and BUG-4 together:
 // when a pipeline job uses an image:, GLUT must pass --volume (BUG-2: mock binaries and
-// git origin are inside work.Dir) and --extra-host host.docker.internal:host-gateway (BUG-3:
-// so containers can reach the API server) and must set CI_API_V4_URL to use
-// host.docker.internal (BUG-3).
+// git origin are inside work.Dir) and --extra-host glut-mock:<ip> (BUG-3: so containers
+// can reach the API server) and must set CI_API_V4_URL to use glut-mock (BUG-3).
 func TestRunDockerModeJobReceivesMockResources(t *testing.T) {
 	env := newRunnerTestEnvWithScript(t, dockerAwareFakeGCLScript())
 
@@ -885,13 +888,51 @@ shell-job:
 	}
 }
 
+// TestRunNilDockerModeUsesNonLocalhostAPIURL verifies that when docker: is absent (nil),
+// CI_API_V4_URL uses a non-localhost address (bridge IP) so Docker executor jobs can reach
+// the mock API server. Regression test for issue #46.
+func TestRunNilDockerModeUsesNonLocalhostAPIURL(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalEnvEchoScript("CI_API_V4_URL"))
+	env.writeRawFile(t, "tests/nil-docker.yml", strings.TrimSpace(`
+stages: [test]
+
+image-job:
+  image: alpine:latest
+  stage: test
+  script:
+    - echo "$CI_API_V4_URL"
+---
+.glut:
+  name: nil docker url
+  setup:
+    branch: main
+  assert:
+    job:
+      image-job:
+        present: true
+        exit-status: 0
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+	url := result.Tests[0].JobOutputs["image-job"].Stdout
+	if strings.Contains(url, "127.0.0.1") || strings.Contains(url, "localhost") {
+		t.Errorf("nil docker: CI_API_V4_URL = %q uses localhost; want bridge IP so Docker jobs can reach the mock server", url)
+	}
+}
+
 func TestResolveDockerMode(t *testing.T) {
 	trueVal := true
 	falseVal := false
 
 	useDocker, forceShell := resolveDockerMode(nil)
-	if useDocker || forceShell {
-		t.Fatalf("nil docker: useDocker=%v forceShell=%v, want both false", useDocker, forceShell)
+	if !useDocker || forceShell {
+		t.Fatalf("nil docker: useDocker=%v forceShell=%v, want useDocker=true forceShell=false", useDocker, forceShell)
 	}
 
 	useDocker, forceShell = resolveDockerMode(&trueVal)
@@ -917,8 +958,8 @@ printf 'GLUT_JOB|name=list-job|exit=0|stdout=ok|stderr=\n'
 
 // dockerAwareFakeGCLScript returns a fake gitlab-ci-local script that simulates Docker
 // isolation failures when the required flags are absent. If the pipeline declares image:
-// and --volume / --extra-host are missing, or CI_API_V4_URL still points to 127.0.0.1,
-// the script emits a job marker with exit=127 so the runner test can detect the bug.
+// and --volume / --extra-host are missing, or CI_API_V4_URL uses 127.0.0.1 (unreachable
+// from containers), the script emits a job marker with exit=127.
 func dockerAwareFakeGCLScript() string {
 	return `#!/bin/sh
 HAS_VOLUME=0
@@ -948,8 +989,8 @@ if grep -qE '^  image:' .gitlab-ci.yml 2>/dev/null; then
     printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: host unreachable (missing --extra-host)\n' "$job_name"
     exit 0
   fi
-  if ! echo "$CI_API_V4_URL" | grep -q 'glut-mock'; then
-    printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: CI_API_V4_URL does not use glut-mock hostname (BUG-3)\n' "$job_name"
+  if echo "$CI_API_V4_URL" | grep -q '127.0.0.1'; then
+    printf 'GLUT_JOB|name=%s|exit=127|stdout=|stderr=docker: CI_API_V4_URL uses 127.0.0.1 which is unreachable from containers (BUG-3)\n' "$job_name"
     exit 0
   fi
 fi

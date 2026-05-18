@@ -1,18 +1,17 @@
 stages: [test]
 
-api-in-docker:
+api-call:
   image: alpine:latest
   stage: test
   script:
     - apk add --no-cache --quiet curl
-    - curl -sf --header "PRIVATE-TOKEN:$CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1" -o /dev/null
+    - 'curl -sf --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1" -o /dev/null'
     - echo "api call ok"
 ---
 .glut:
-  name: "docker:true CI_API_V4_URL uses bridge IP reachable from containers (BUG-3 regression)"
+  name: "nil docker: image: job reaches mock API via bridge IP (BUG-46 regression)"
   setup:
     branch: main
-    docker: true
     api:
       token:
         valid: true
@@ -21,7 +20,7 @@ api-in-docker:
         default_branch: main
   assert:
     job:
-      api-in-docker:
+      api-call:
         exit-status: 0
     api:
       "GET /api/v4/projects/1":

@@ -400,7 +400,11 @@ func runSingleTest(
 			mocks = testFile.Glut.Setup.Mocks
 		}
 		dockerVolumeName, primaryErr = workspace.CreateDockerVolume(work.Dir, work.OriginRepo, mocks)
-	} else if hasMockBinaries(testFile) {
+	}
+	// Always inject mock binaries into shell PATH so jobs without image: can find
+	// them regardless of docker mode. For docker:true this runs alongside the volume;
+	// for docker:false this is the only setup path.
+	if primaryErr == nil && hasMockBinaries(testFile) {
 		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), false)
 	}
 	phaseTimings["mock-binaries"] = time.Since(phaseStart)
@@ -426,12 +430,12 @@ func runSingleTest(
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
 	if useDocker {
-		// BUG-3: Docker containers cannot reach 127.0.0.1. Rewrite API URLs to use
-		// glut-mock, GLUT's own --extra-host alias, so the mock server is reachable
-		// from inside job containers regardless of the Docker setup (DinD or native).
+		// BUG-3: Docker containers cannot reach 127.0.0.1. Use the bridge IP directly
+		// so the URL works for both Docker jobs (container on same bridge) and shell jobs
+		// (same host or container). glut-mock remains an alias via --extra-host.
 		port := server.Port()
-		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://glut-mock:%d", port)
-		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://glut-mock:%d/api/v4", port)
+		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://%s:%d", mockHostIP, port)
+		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://%s:%d/api/v4", mockHostIP, port)
 	}
 	execCfg := executor.ExecutorConfig{
 		WorkspacePath:    work.WorkspaceDir,
@@ -769,23 +773,49 @@ func dockerExtraHosts(useDocker bool, ip string) []string {
 // IP, which is reachable from sibling job containers on the same bridge network.
 func outboundIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err == nil {
+		defer func() { _ = conn.Close() }()
+		return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	}
+	// Fallback: scan network interfaces for the first non-loopback IPv4 address.
+	// host.docker.internal is intentionally avoided here: when GLUT runs as a
+	// container that hostname resolves to the Docker Desktop gateway, not to the
+	// GLUT container itself, making it unreachable from sibling job containers.
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "host.docker.internal"
 	}
-	defer func() { _ = conn.Close() }()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
+				return ip.String()
+			}
+		}
+	}
+	return "host.docker.internal"
 }
 
 // toHostPath translates a workspace path from the GLUT container's perspective to
 // resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
-// nil (absent) → backward-compat: Docker for image: jobs, shell otherwise.
+// nil (absent) → full Docker mode, same as &true.
 // &true → full Docker mode with volume/extra-host support.
 // &false → force all jobs to shell, even those with image:.
 func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
-	if docker == nil {
-		return false, false
-	}
-	if *docker {
+	if docker == nil || *docker {
 		return true, false
 	}
 	return false, true

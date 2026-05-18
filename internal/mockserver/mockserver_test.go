@@ -314,8 +314,8 @@ func TestConcurrentRequestsAreSafe(t *testing.T) {
 }
 
 // TestServerDoesNotBindToLocalhostOnly verifies BUG-3: the mock API server must listen on
-// all network interfaces so Docker sibling containers can reach it via host.docker.internal.
-// Binding to 127.0.0.1 makes the server unreachable from inside Docker containers.
+// all network interfaces so Docker sibling containers can reach it via glut-mock or the
+// bridge IP. Binding to 127.0.0.1 makes the server unreachable from inside Docker containers.
 func TestServerDoesNotBindToLocalhostOnly(t *testing.T) {
 	server := startTestServer(t, config.APISetupConfig{})
 	addr := server.ListenAddr()
