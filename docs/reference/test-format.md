@@ -333,8 +333,11 @@ in Docker; jobs without `image:` run in the shell. This matches normal
 
 Set `docker: true` to enable full Docker mode. GLUT mounts the temporary
 workspace into each container so mock binaries and the fake git origin are
-reachable from inside Docker, and rewrites `CI_API_V4_URL` to use
-`host.docker.internal` so containers can reach the mock API server on the host.
+reachable from inside Docker, and rewrites `CI_API_V4_URL` to use `glut-mock`
+— GLUT's own stable hostname injected via `--extra-host` — so containers can
+reach the mock API server regardless of how Docker networking is configured.
+`host.docker.internal` is also injected for compatibility, but `glut-mock` is
+the address that `CI_API_V4_URL` uses.
 
 ```yaml
 setup:
@@ -353,8 +356,8 @@ setup:
 
 | Value | Behaviour |
 | --- | --- |
-| omitted | jobs with `image:` use Docker; others use shell (default) |
-| `true` | Docker with volume/extra-host support for mocks |
+| omitted | jobs with `image:` use Docker; others use shell. `CI_API_V4_URL` is rewritten to the GLUT bridge IP so Docker jobs can reach the mock server. |
+| `true` | Docker with volume/extra-host support for mocks. `CI_API_V4_URL` uses the `glut-mock` hostname. |
 | `false` | all jobs forced to shell, `image:` ignored |
 
 ## `assert`

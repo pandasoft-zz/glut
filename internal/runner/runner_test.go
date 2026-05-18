@@ -809,9 +809,8 @@ check-branch:
 
 // TestRunDockerModeJobReceivesMockResources verifies BUG-2, BUG-3, and BUG-4 together:
 // when a pipeline job uses an image:, GLUT must pass --volume (BUG-2: mock binaries and
-// git origin are inside work.Dir) and --extra-host host.docker.internal:host-gateway (BUG-3:
-// so containers can reach the API server) and must set CI_API_V4_URL to use
-// host.docker.internal (BUG-3).
+// git origin are inside work.Dir) and --extra-host glut-mock:<ip> (BUG-3: so containers
+// can reach the API server) and must set CI_API_V4_URL to use glut-mock (BUG-3).
 func TestRunDockerModeJobReceivesMockResources(t *testing.T) {
 	env := newRunnerTestEnvWithScript(t, dockerAwareFakeGCLScript())
 

@@ -264,7 +264,7 @@ func TestListJobsReportsCommandAndTimeoutErrors(t *testing.T) {
 // TestGitLabCILocalDockerModeAddsVolumeAndExtraHost verifies BUG-2 and BUG-4: when
 // UseDocker is true the executor must pass --volume (so mock binaries and the git
 // origin inside work.Dir are reachable from inside Docker containers) and --extra-host
-// (so containers can reach the host via host.docker.internal).
+// (glut-mock and host.docker.internal aliases pointing to the GLUT bridge IP).
 func TestGitLabCILocalDockerModeAddsVolumeAndExtraHost(t *testing.T) {
 	hostPath := os.Getenv("PATH")
 	tempDir := t.TempDir()
