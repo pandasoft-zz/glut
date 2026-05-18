@@ -12,6 +12,7 @@ variables:
   setup:
     branch: "main"
     pipeline_source: "push"
+    docker: false
     api:
       token:
         valid: true

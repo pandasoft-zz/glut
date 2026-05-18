@@ -11,6 +11,7 @@ release:
   setup:
     branch: "main"
     pipeline_source: "push"
+    docker: false
     mocks:
       binaries:
         release-cli:
