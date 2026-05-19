@@ -58,6 +58,9 @@
         "git": {
           "$ref": "#/definitions/git"
         },
+        "pipeline": {
+          "$ref": "#/definitions/pipeline"
+        },
         "api": {
           "$ref": "#/definitions/api"
         },
@@ -149,6 +152,34 @@
         },
         "origin": {
           "$ref": "#/definitions/git_origin"
+        }
+      }
+    },
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "user": {
+          "$ref": "#/definitions/pipeline_user"
+        }
+      }
+    },
+    "pipeline_user": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Simulated GitLab pipeline trigger user. Sets GITLAB_USER_NAME, GITLAB_USER_EMAIL, and GITLAB_USER_LOGIN. When absent, these variables are derived from setup.git.user.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Sets GITLAB_USER_NAME. Overrides setup.git.user.name."
+        },
+        "email": {
+          "type": "string",
+          "description": "Sets GITLAB_USER_EMAIL. Overrides setup.git.user.email."
+        },
+        "login": {
+          "type": "string",
+          "description": "Sets GITLAB_USER_LOGIN."
         }
       }
     },

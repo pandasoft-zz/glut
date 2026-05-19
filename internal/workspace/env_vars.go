@@ -18,6 +18,7 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 	env := w.baseEnv(port, sha, shortSha, glutName, defaultBranch)
 	applyProjectEnv(env, setup)
 	applyPipelineEnv(env, setup, defaultBranch)
+	applyPipelineUserEnv(env, setup)
 	if setup.Mocks != nil && len(setup.Mocks.Binaries) > 0 {
 		effectiveHostEnv := w.hostEnv
 		if effectiveHostEnv == nil {
@@ -68,7 +69,7 @@ func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName stri
 		"CI_REGISTRY_IMAGE":    "registry.example.com/test-group/test-project",
 		"GITLAB_USER_NAME":     config.DefaultUserName,
 		"GITLAB_USER_EMAIL":    config.DefaultUserEmail,
-		"GITLAB_USER_LOGIN":    "test-user",
+		"GITLAB_USER_LOGIN":    config.DefaultUserLogin,
 		"GLUT_WORKSPACE":       workspacePath,
 		"GLUT_TEST_NAME":       glutName,
 		"GLUT_ORIGIN_REPO":     w.OriginRepo,
@@ -142,6 +143,43 @@ func applyBranchOrTagEnv(env map[string]string, setup parser.SetupConfig, defaul
 	env["CI_COMMIT_REF_SLUG"] = slugify(branch)
 	env["CI_COMMIT_REF_PROTECTED"] = "false"
 	env["CI_COMMIT_BEFORE_SHA"] = "0000000000000000000000000000000000000000"
+}
+
+// applyPipelineUserEnv sets GITLAB_USER_NAME, GITLAB_USER_EMAIL, and
+// GITLAB_USER_LOGIN using the following priority chain:
+//
+//  1. setup.pipeline.user  — explicit pipeline user config
+//  2. setup.git.user       — git committer identity (same person, shared by default)
+//  3. config defaults      — "Test User" / "test@example.com" / "test-user"
+func applyPipelineUserEnv(env map[string]string, setup parser.SetupConfig) {
+	name := config.DefaultUserName
+	email := config.DefaultUserEmail
+	login := config.DefaultUserLogin
+
+	if setup.Git != nil {
+		if setup.Git.User.Name != "" {
+			name = setup.Git.User.Name
+		}
+		if setup.Git.User.Email != "" {
+			email = setup.Git.User.Email
+		}
+	}
+
+	if setup.Pipeline != nil && setup.Pipeline.User != nil {
+		if setup.Pipeline.User.Name != "" {
+			name = setup.Pipeline.User.Name
+		}
+		if setup.Pipeline.User.Email != "" {
+			email = setup.Pipeline.User.Email
+		}
+		if setup.Pipeline.User.Login != "" {
+			login = setup.Pipeline.User.Login
+		}
+	}
+
+	env["GITLAB_USER_NAME"] = name
+	env["GITLAB_USER_EMAIL"] = email
+	env["GITLAB_USER_LOGIN"] = login
 }
 
 func applyMergeRequestEnv(env map[string]string, setup parser.SetupConfig) {

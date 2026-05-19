@@ -154,6 +154,103 @@ func TestEnvVars(t *testing.T) {
 	})
 }
 
+func TestPipelineUserEnv(t *testing.T) {
+	w := &Workspace{
+		Dir:          "/tmp/work",
+		WorkspaceDir: "/tmp/work/workspace",
+		OriginRepo:   "/tmp/work/.glut-origin.git",
+	}
+
+	t.Run("defaults when nothing is set", func(t *testing.T) {
+		env := w.EnvVars(parser.SetupConfig{}, 8080, "sha", "sha", "test")
+		if env["GITLAB_USER_NAME"] != "Test User" {
+			t.Errorf("GITLAB_USER_NAME = %q, want Test User", env["GITLAB_USER_NAME"])
+		}
+		if env["GITLAB_USER_EMAIL"] != "test@example.com" {
+			t.Errorf("GITLAB_USER_EMAIL = %q, want test@example.com", env["GITLAB_USER_EMAIL"])
+		}
+		if env["GITLAB_USER_LOGIN"] != "test-user" {
+			t.Errorf("GITLAB_USER_LOGIN = %q, want test-user", env["GITLAB_USER_LOGIN"])
+		}
+	})
+
+	t.Run("git.user drives GITLAB_USER_NAME and GITLAB_USER_EMAIL", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			Git: &parser.GitSetupConfig{
+				User: parser.GitUserConfig{Name: "ci-bot", Email: "ci-bot@example.com"},
+			},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "test")
+		if env["GITLAB_USER_NAME"] != "ci-bot" {
+			t.Errorf("GITLAB_USER_NAME = %q, want ci-bot", env["GITLAB_USER_NAME"])
+		}
+		if env["GITLAB_USER_EMAIL"] != "ci-bot@example.com" {
+			t.Errorf("GITLAB_USER_EMAIL = %q, want ci-bot@example.com", env["GITLAB_USER_EMAIL"])
+		}
+		if env["GITLAB_USER_LOGIN"] != "test-user" {
+			t.Errorf("GITLAB_USER_LOGIN = %q, want test-user (unchanged)", env["GITLAB_USER_LOGIN"])
+		}
+	})
+
+	t.Run("pipeline.user overrides git.user", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			Git: &parser.GitSetupConfig{
+				User: parser.GitUserConfig{Name: "ci-bot", Email: "ci-bot@example.com"},
+			},
+			Pipeline: &parser.PipelineConfig{
+				User: &parser.PipelineUserConfig{
+					Name:  "Jan Novak",
+					Email: "jan.novak@example.com",
+					Login: "jan-novak",
+				},
+			},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "test")
+		if env["GITLAB_USER_NAME"] != "Jan Novak" {
+			t.Errorf("GITLAB_USER_NAME = %q, want Jan Novak", env["GITLAB_USER_NAME"])
+		}
+		if env["GITLAB_USER_EMAIL"] != "jan.novak@example.com" {
+			t.Errorf("GITLAB_USER_EMAIL = %q, want jan.novak@example.com", env["GITLAB_USER_EMAIL"])
+		}
+		if env["GITLAB_USER_LOGIN"] != "jan-novak" {
+			t.Errorf("GITLAB_USER_LOGIN = %q, want jan-novak", env["GITLAB_USER_LOGIN"])
+		}
+	})
+
+	t.Run("pipeline.user partial override keeps git.user for unset fields", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			Git: &parser.GitSetupConfig{
+				User: parser.GitUserConfig{Name: "ci-bot", Email: "ci-bot@example.com"},
+			},
+			Pipeline: &parser.PipelineConfig{
+				User: &parser.PipelineUserConfig{Name: "Jan Novak"},
+			},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "test")
+		if env["GITLAB_USER_NAME"] != "Jan Novak" {
+			t.Errorf("GITLAB_USER_NAME = %q, want Jan Novak", env["GITLAB_USER_NAME"])
+		}
+		if env["GITLAB_USER_EMAIL"] != "ci-bot@example.com" {
+			t.Errorf("GITLAB_USER_EMAIL = %q, want ci-bot@example.com (from git.user)", env["GITLAB_USER_EMAIL"])
+		}
+	})
+
+	t.Run("pipeline.user without git.user uses defaults for unset fields", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			Pipeline: &parser.PipelineConfig{
+				User: &parser.PipelineUserConfig{Name: "Jan Novak"},
+			},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "test")
+		if env["GITLAB_USER_NAME"] != "Jan Novak" {
+			t.Errorf("GITLAB_USER_NAME = %q, want Jan Novak", env["GITLAB_USER_NAME"])
+		}
+		if env["GITLAB_USER_EMAIL"] != "test@example.com" {
+			t.Errorf("GITLAB_USER_EMAIL = %q, want test@example.com (default)", env["GITLAB_USER_EMAIL"])
+		}
+	})
+}
+
 func TestGitOriginFilesAndCommands(t *testing.T) {
 	t.Parallel()
 	cfg := parser.SetupConfig{

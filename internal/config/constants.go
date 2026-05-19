@@ -4,6 +4,7 @@ const (
 	DefaultBranchName = "main"
 	DefaultUserName   = "Test User"
 	DefaultUserEmail  = "test@example.com"
+	DefaultUserLogin  = "test-user"
 
 	PipelineSourcePush     = "push"
 	PipelineSourceWeb      = "web"
