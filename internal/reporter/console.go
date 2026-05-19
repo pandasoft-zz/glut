@@ -28,6 +28,9 @@ type prettyConsole struct {
 	quiet   bool
 	verbose bool
 	debug   bool
+	total   int
+	done    int
+	st      consoleStyles
 }
 
 type dotsConsole struct {
@@ -36,6 +39,7 @@ type dotsConsole struct {
 	verbose     bool
 	debug       bool
 	wroteStatus bool
+	st          consoleStyles
 }
 
 type jsonConsole struct {
@@ -82,6 +86,7 @@ func NewConsole(opts ConsoleOptions) (runner.ProgressSink, error) {
 			quiet:   opts.Quiet,
 			verbose: opts.Verbose,
 			debug:   opts.Debug,
+			st:      newConsoleStyles(writer),
 		}, nil
 	case "dots":
 		return &dotsConsole{
@@ -89,6 +94,7 @@ func NewConsole(opts ConsoleOptions) (runner.ProgressSink, error) {
 			quiet:   opts.Quiet,
 			verbose: opts.Verbose,
 			debug:   opts.Debug,
+			st:      newConsoleStyles(writer),
 		}, nil
 	case "json":
 		return &jsonConsole{
@@ -101,25 +107,39 @@ func NewConsole(opts ConsoleOptions) (runner.ProgressSink, error) {
 }
 
 func (c *prettyConsole) Start(totalTests int) {
-	_ = totalTests
+	c.total = totalTests
+	if c.quiet {
+		return
+	}
+	label := c.st.header.Render(runEmoji + " glut")
+	count := c.st.dim.Render(fmt.Sprintf("Running %d tests", totalTests))
+	writef(c.writer, "%s  %s\n\n", label, count)
 }
 
 func (c *prettyConsole) TestDone(result runner.TestResult) {
+	c.done++
 	if !c.quiet {
-		status := "PASS"
-		if !result.Passed {
-			status = "FAIL"
+		width := len(fmt.Sprintf("%d", c.total))
+		counter := c.st.counter.Render(fmt.Sprintf("[%*d/%d]", width, c.done, c.total))
+		var icon, failTag string
+		if result.Passed {
+			icon = c.st.pass.Render(passEmoji)
+		} else {
+			icon = c.st.fail.Render(failEmoji)
+			failTag = "  " + c.st.fail.Render("FAILED")
 		}
-		writef(c.writer, "%-40s  %-4s  %s\n", result.FilePath, status, formatDuration(result.Duration))
+		path := c.st.path.Render(result.FilePath)
+		dur := c.st.dur.Render(formatDuration(result.Duration))
+		writef(c.writer, "%s %s  %-45s  %s%s\n", counter, icon, path, dur, failTag)
 	}
 
 	if !result.Passed {
-		writePrettyFailure(c.writer, result, c.debug)
+		writePrettyFailure(c.writer, c.st, result, c.debug)
 		return
 	}
 
 	if c.verbose {
-		writeJobLogs(c.writer, result.JobOutputs, false)
+		writeJobLogs(c.writer, c.st, result.JobOutputs, false)
 	}
 
 	if result.PreservedWorkspace {
@@ -128,7 +148,18 @@ func (c *prettyConsole) TestDone(result runner.TestResult) {
 }
 
 func (c *prettyConsole) Summary(result runner.RunResult) {
-	writef(c.writer, "%s\n", summaryLine(result))
+	sep := c.st.dim.Render(strings.Repeat("─", 60))
+	writef(c.writer, "\n%s\n", sep)
+
+	parts := make([]string, 0, 2)
+	if result.Passed > 0 {
+		parts = append(parts, c.st.pass.Render(fmt.Sprintf("%s %d passed", passEmoji, result.Passed)))
+	}
+	if result.Failed > 0 {
+		parts = append(parts, c.st.fail.Render(fmt.Sprintf("%s %d failed", failEmoji, result.Failed)))
+	}
+	dur := c.st.dim.Render("in " + formatDuration(result.Duration))
+	writef(c.writer, "%s  %s\n", strings.Join(parts, "   "), dur)
 }
 
 func (c *dotsConsole) Start(totalTests int) {
@@ -138,9 +169,9 @@ func (c *dotsConsole) Start(totalTests int) {
 func (c *dotsConsole) TestDone(result runner.TestResult) {
 	if !c.quiet {
 		if result.Passed {
-			writef(c.writer, ".")
+			writef(c.writer, "%s", c.st.pass.Render("."))
 		} else {
-			writef(c.writer, "F")
+			writef(c.writer, "%s", c.st.fail.Render("F"))
 		}
 		c.wroteStatus = true
 	}
@@ -150,7 +181,7 @@ func (c *dotsConsole) TestDone(result runner.TestResult) {
 			writef(c.writer, "\n")
 			c.wroteStatus = false
 		}
-		writePrettyFailure(c.writer, result, c.debug)
+		writePrettyFailure(c.writer, c.st, result, c.debug)
 		return
 	}
 
@@ -159,7 +190,7 @@ func (c *dotsConsole) TestDone(result runner.TestResult) {
 			writef(c.writer, "\n")
 			c.wroteStatus = false
 		}
-		writeJobLogs(c.writer, result.JobOutputs, false)
+		writeJobLogs(c.writer, c.st, result.JobOutputs, false)
 	}
 }
 
@@ -211,32 +242,32 @@ func PrintList(writer io.Writer, tests []runner.ListedTest) {
 	}
 }
 
-func writePrettyFailure(writer io.Writer, result runner.TestResult, debug bool) {
-	writef(writer, "\nFAILED  %s\n", result.FilePath)
+func writePrettyFailure(writer io.Writer, st consoleStyles, result runner.TestResult, debug bool) {
+	writef(writer, "\n%s  %s\n", st.fail.Render(failEmoji+" FAILED"), st.path.Render(result.FilePath))
 	if result.TestName != "" {
-		writef(writer, "  Test: %q\n", result.TestName)
+		writef(writer, "  %s %q\n", st.dim.Render("test:"), result.TestName)
 	}
 
 	for _, failure := range result.Failures {
-		writef(writer, "\n  %s\n", failure.Path)
-		writef(writer, "    expected: %s\n", failure.Expected)
-		writef(writer, "    actual:   %s\n", failure.Actual)
+		writef(writer, "\n  %s\n", st.fail.Render(failure.Path))
+		writef(writer, "    %s %s\n", st.dim.Render("expected:"), failure.Expected)
+		writef(writer, "    %s %s\n", st.dim.Render("actual:  "), failure.Actual)
 	}
 
 	if result.Error != nil {
-		writef(writer, "\n  Error: %s\n", result.Error.Error())
+		writef(writer, "\n  %s %s\n", st.fail.Render("error:"), result.Error.Error())
 	}
 
-	writeJobLogs(writer, result.JobOutputs, !debug)
+	writeJobLogs(writer, st, result.JobOutputs, !debug)
 	if debug && result.Debug != nil {
 		writeDebugData(writer, *result.Debug)
 	}
 
 	if result.PreservedWorkspace && result.WorkspacePath != "" {
-		writef(writer, "\n  Workspace kept: %s\n", result.WorkspacePath)
+		writef(writer, "\n  %s %s\n", st.dim.Render("workspace kept:"), result.WorkspacePath)
 	} else if !debug {
-		writef(writer, "\n  Hint: run with --debug for full job logs and mock call history\n")
-		writef(writer, "  Hint: run with --keep-workspace to keep the workspace\n")
+		writef(writer, "\n  %s\n", st.dim.Render("hint: run with --debug for full job logs and mock call history"))
+		writef(writer, "  %s\n", st.dim.Render("hint: run with --keep-workspace to keep the workspace"))
 	}
 }
 
@@ -293,7 +324,7 @@ func writeStringListBlock(writer io.Writer, title string, values []string) {
 	}
 }
 
-func writeJobLogs(writer io.Writer, outputs map[string]executor.JobOutput, tailOnly bool) {
+func writeJobLogs(writer io.Writer, st consoleStyles, outputs map[string]executor.JobOutput, tailOnly bool) {
 	names := sortedJobNames(outputs)
 	for _, name := range names {
 		job := outputs[name]
@@ -308,23 +339,39 @@ func writeJobLogs(writer io.Writer, outputs map[string]executor.JobOutput, tailO
 			stderr = tailLines(stderr, 50)
 		}
 
+		label := "stdout"
+		if tailOnly {
+			label = "stdout (last 50 lines)"
+		}
 		if strings.TrimSpace(stdout) != "" {
-			title := fmt.Sprintf("  Stdout of %q", job.Name)
-			if tailOnly {
-				title += " (last 50 lines)"
-			}
-			writef(writer, "\n%s:\n", title)
-			writeIndentedBlock(writer, stdout, "  ")
+			writeJobBlock(writer, st, label, job.Name, stdout)
+		}
+
+		errLabel := "stderr"
+		if tailOnly {
+			errLabel = "stderr (last 50 lines)"
 		}
 		if strings.TrimSpace(stderr) != "" {
-			title := fmt.Sprintf("  Stderr of %q", job.Name)
-			if tailOnly {
-				title += " (last 50 lines)"
-			}
-			writef(writer, "\n%s:\n", title)
-			writeIndentedBlock(writer, stderr, "  ")
+			writeJobBlock(writer, st, errLabel, job.Name, stderr)
 		}
 	}
+}
+
+func writeJobBlock(writer io.Writer, st consoleStyles, label, jobName, content string) {
+	const lineWidth = 60
+	const leftDashes = 3
+	header := fmt.Sprintf(" %s: %q ", label, jobName)
+	rightLen := lineWidth - leftDashes - len(header)
+	if rightLen < 2 {
+		rightLen = 2
+	}
+	topLine := strings.Repeat("─", leftDashes) + header + strings.Repeat("─", rightLen)
+	botLine := strings.Repeat("─", lineWidth)
+	writef(writer, "\n%s\n", st.jobSep.Render(topLine))
+	for _, line := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
+		writef(writer, "%s\n", st.jobOut.Render("  "+line))
+	}
+	writef(writer, "%s\n", st.jobSep.Render(botLine))
 }
 
 func sortedJobNames(outputs map[string]executor.JobOutput) []string {

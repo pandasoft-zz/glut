@@ -31,7 +31,7 @@ func TestPrettyConsoleFormatsPassFailAndSummary(t *testing.T) {
 	console.Summary(sampleRunResult())
 
 	output := buffer.String()
-	if !strings.Contains(output, "tests/pass.yml") || !strings.Contains(output, "PASS") {
+	if !strings.Contains(output, "tests/pass.yml") || !strings.Contains(output, passEmoji) {
 		t.Fatalf("pretty output missing pass line: %s", output)
 	}
 	if !strings.Contains(output, "tests/fail.yml") || !strings.Contains(output, "FAIL") {
@@ -43,8 +43,8 @@ func TestPrettyConsoleFormatsPassFailAndSummary(t *testing.T) {
 	if !strings.Contains(output, "assert.job.\"release:publish\".exit-status") {
 		t.Fatalf("pretty output missing assert path: %s", output)
 	}
-	if !strings.Contains(output, "1 failed, 1 passed in 3s") {
-		t.Fatalf("pretty output missing summary: %s", output)
+	if !strings.Contains(output, "1 passed") || !strings.Contains(output, "1 failed") {
+		t.Fatalf("pretty output missing summary counts: %s", output)
 	}
 }
 
@@ -230,8 +230,8 @@ func TestQuietModeSuppressesPassingProgressButKeepsFailuresAndSummary(t *testing
 	if !strings.Contains(output, "FAILED  tests/fail.yml") {
 		t.Fatalf("quiet output missing failure details: %s", output)
 	}
-	if !strings.Contains(output, "1 failed, 1 passed in 3s") {
-		t.Fatalf("quiet output missing summary: %s", output)
+	if !strings.Contains(output, "1 passed") || !strings.Contains(output, "1 failed") {
+		t.Fatalf("quiet output missing summary counts: %s", output)
 	}
 }
 
@@ -245,7 +245,7 @@ func TestVerboseModeShowsPassingJobOutput(t *testing.T) {
 	console.TestDone(samplePassResult())
 
 	output := buffer.String()
-	if !strings.Contains(output, `Stdout of "pass-job"`) {
+	if !strings.Contains(output, `stdout: "pass-job"`) {
 		t.Fatalf("verbose output missing stdout section: %s", output)
 	}
 	if !strings.Contains(output, "all good") {
@@ -280,7 +280,7 @@ func TestDotsVerboseWritesFullPassingOutput(t *testing.T) {
 	console.Summary(runner.RunResult{Passed: 1, Duration: time.Second})
 
 	output := buffer.String()
-	if !strings.Contains(output, `Stdout of "pass-job"`) || !strings.Contains(output, "all good") {
+	if !strings.Contains(output, `stdout: "pass-job"`) || !strings.Contains(output, "all good") {
 		t.Fatalf("dots verbose output missing job logs: %s", output)
 	}
 }
