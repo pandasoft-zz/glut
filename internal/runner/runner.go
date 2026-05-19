@@ -497,6 +497,25 @@ func runSingleTest(
 		primaryErr = fmt.Errorf("read mock logs: %w", err)
 	}
 
+	// Build an origin source for assertions. For Docker runs, use a lazy tar
+	// origin so the Docker volume is only extracted if git.origin assertions
+	// actually run. For non-Docker runs, use the filesystem path directly.
+	originSource := asserter.NewFSOrigin(work.OriginRepo)
+	if dockerVolumeName != "" {
+		tarData, fetchErr := workspace.FetchGitOriginTar(dockerVolumeName, work.Dir)
+		if fetchErr != nil && primaryErr == nil {
+			primaryErr = fmt.Errorf("fetch git origin from docker volume: %w", fetchErr)
+		} else if fetchErr == nil {
+			lazyOrigin := workspace.NewLazyTarOrigin(tarData)
+			defer func() {
+				if closeErr := lazyOrigin.Close(); closeErr != nil && primaryErr == nil {
+					primaryErr = closeErr
+				}
+			}()
+			originSource = lazyOrigin
+		}
+	}
+
 	if err := maybePause(opts.DebugPause, "before-asserts", work.Dir); err != nil && primaryErr == nil {
 		primaryErr = err
 	}
@@ -504,11 +523,11 @@ func runSingleTest(
 	phaseStart = time.Now()
 	apiCalls = server.Recorder().Calls()
 	assertResults := asserter.Run(testFile.Glut.Assert, asserter.AssertContext{
-		WorkspacePath:  work.WorkspaceDir,
-		OriginRepoPath: work.OriginRepo,
-		JobOutputs:     result.JobOutputs,
-		APICalls:       apiCalls,
-		BinaryLogs:     binaryLogs,
+		WorkspacePath: work.WorkspaceDir,
+		OriginRepo:    originSource,
+		JobOutputs:    result.JobOutputs,
+		APICalls:      apiCalls,
+		BinaryLogs:    binaryLogs,
 	})
 	phaseTimings["asserts"] = time.Since(phaseStart)
 	result.Failures = failedAssertions(assertResults)

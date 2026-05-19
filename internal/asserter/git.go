@@ -15,7 +15,16 @@ func runGitAsserts(asserts *config.GitAssert, ctx AssertContext) []AssertResult 
 
 	var results []AssertResult
 	if asserts.Origin != nil {
-		results = append(results, runGitRepoAssert("assert.git.origin", ctx.OriginRepoPath, true, asserts.Origin)...)
+		originPath, err := ctx.OriginRepo.Path()
+		if err != nil {
+			return append(results, AssertResult{
+				Path:     "assert.git.origin",
+				Passed:   false,
+				Expected: "accessible origin repo",
+				Actual:   err.Error(),
+			})
+		}
+		results = append(results, runGitRepoAssert("assert.git.origin", originPath, true, asserts.Origin)...)
 	}
 	if asserts.Workspace != nil {
 		results = append(results, runGitRepoAssert("assert.git.workspace", ctx.WorkspacePath, false, asserts.Workspace)...)

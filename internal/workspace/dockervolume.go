@@ -112,6 +112,20 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 	return nil
 }
 
+// FetchGitOriginTar returns a tar archive of the .glut-origin.git directory
+// from inside a Docker volume. The archive can be passed to NewLazyTarOrigin
+// to provide lazy access to the origin repo without immediately extracting it.
+func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
+	tarCmd := exec.Command("docker", "run", "--rm",
+		"--volume", volName+":"+workDir,
+		"alpine", "tar", "-cC", workDir, ".glut-origin.git")
+	tarData, err := tarCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("tar git origin from docker volume: %w", err)
+	}
+	return tarData, nil
+}
+
 // DestroyDockerVolume removes the named Docker volume created by CreateDockerVolume.
 func DestroyDockerVolume(volName string) error {
 	out, err := exec.Command("docker", "volume", "rm", volName).CombinedOutput()
