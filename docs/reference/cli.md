@@ -26,7 +26,8 @@ Flags:
 | `--run <pattern>` | `-k` | | Run tests with names that match a substring or regex. |
 | `--fail-fast` | `-x` | `GLUT_FAIL_FAST` | Stop after the first failed test. |
 | `--maxfail <n>` | | | Stop after N failed tests. |
-| `--verbose` | `-v` | `GLUT_VERBOSE` | Print more job output. |
+| `--interactive` | `-i` | | Select which tests to run in an interactive terminal prompt. |
+| `--verbose` | `-v` | `GLUT_VERBOSE` | Print job output for passing tests, with styled output blocks. |
 | `--quiet` | `-q` | | Print less progress output. |
 | `--format <fmt>` | | `GLUT_FORMAT` | Console format. |
 | `--report <fmt:path>` | | `GLUT_REPORT` | Write a report file. Can be repeated. |
@@ -43,11 +44,54 @@ Examples:
 ```bash
 glut run -k release ./tests
 glut run --fail-fast ./tests
+glut run --interactive ./tests
 glut run --report=junit:report.xml ./tests
 glut run --report=junit:report.xml --report=tap:report.tap ./tests
 glut run --debug --keep-workspace ./tests/release.yml
 glut run --include tests ./tests/
 glut run --include component --include shared ./tests/
+```
+
+### Interactive Mode
+
+`--interactive` opens a terminal selection prompt before running any tests.
+
+```bash
+glut run --interactive ./tests
+glut run -i ./tests
+```
+
+**Step 1 — choose a directory** (shown only when the path contains subdirectories):
+
+```
+Select test directory
+> All directories
+  artifact
+  docker
+  git
+```
+
+**Step 2 — choose a test** from the selected directory:
+
+```
+Select test to run
+> All tests
+  build image on feature branch
+  build image with tag
+  build image on merge request
+```
+
+Select a directory or test with the arrow keys and press Enter. Choosing
+"All directories" or "All tests" runs every test in the current scope.
+
+`--interactive` requires an interactive terminal. It returns an error when
+run from a script or pipe.
+
+You can combine `--interactive` with other flags:
+
+```bash
+glut run --interactive --verbose ./tests
+glut run --interactive -k release ./tests
 ```
 
 Supported report formats are `junit` and `tap`.
