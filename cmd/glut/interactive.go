@@ -116,26 +116,26 @@ func pickDirectory(dirs []string) (string, bool) {
 	return chosen, true
 }
 
-// pickTestFiles shows a multi-select prompt for choosing individual tests.
-// All tests are pre-selected. Returns the selected file paths, false if cancelled.
+// pickTestFiles shows a select prompt for choosing a test to run.
+// The first option is "All tests". Returns the selected file paths, false if cancelled.
 func pickTestFiles(tests []runner.ListedTest) ([]string, bool) {
 	allPaths := make([]string, 0, len(tests))
-	opts := make([]huh.Option[string], 0, len(tests))
+	opts := make([]huh.Option[string], 0, len(tests)+1)
+	opts = append(opts, huh.NewOption("All tests", ""))
 	for _, t := range tests {
 		label := t.TestName
 		if label == "" {
 			label = filepath.Base(t.FilePath)
 		}
-		opts = append(opts, huh.NewOption(label, t.FilePath).Selected(true))
+		opts = append(opts, huh.NewOption(label, t.FilePath))
 		allPaths = append(allPaths, t.FilePath)
 	}
 
-	var chosen []string
+	var chosen string
 	form := huh.NewForm(
 		huh.NewGroup(
-			huh.NewMultiSelect[string]().
-				Title("Select tests to run").
-				Description("Space to toggle, Enter to confirm").
+			huh.NewSelect[string]().
+				Title("Select test to run").
 				Options(opts...).
 				Value(&chosen),
 		),
@@ -147,7 +147,10 @@ func pickTestFiles(tests []runner.ListedTest) ([]string, bool) {
 		fmt.Fprintf(os.Stderr, "selection error: %v\n", err)
 		return nil, false
 	}
-	return chosen, true
+	if chosen == "" {
+		return allPaths, true
+	}
+	return []string{chosen}, true
 }
 
 // groupByDir returns a sorted, deduplicated list of parent directories from the test list.
