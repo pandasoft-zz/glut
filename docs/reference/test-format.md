@@ -201,9 +201,9 @@ variable values in scripts or tests.
 | `CI_JOB_TOKEN` | `"mock-job-token"` |
 | `CI_REGISTRY` | `"registry.example.com"` |
 | `CI_REGISTRY_IMAGE` | `"registry.example.com/<CI_PROJECT_PATH>"` |
-| `GITLAB_USER_NAME` | `"Test User"` (or `setup.git.user.name`) |
-| `GITLAB_USER_EMAIL` | `"test@example.com"` (or `setup.git.user.email`) |
-| `GITLAB_USER_LOGIN` | `"test-user"` |
+| `GITLAB_USER_NAME` | `setup.pipeline.user.name` → `setup.git.user.name` → `"Test User"` |
+| `GITLAB_USER_EMAIL` | `setup.pipeline.user.email` → `setup.git.user.email` → `"test@example.com"` |
+| `GITLAB_USER_LOGIN` | `setup.pipeline.user.login` → `"test-user"` |
 | `CI_REPOSITORY_URL` | `file://` path to the fake origin |
 
 **Branch pipelines** (`push`, `web`, `api`, `trigger`, `schedule`,
@@ -256,8 +256,10 @@ Examples: `feature/my-fix` → `feature-my-fix`, `v1.2.0` → `v1-2-0`.
 
 ### Git Setup
 
-`git.user` sets the user used by prepared git commands. `git.origin` prepares
-the fake remote repository.
+`git.user` sets the committer identity for workspace git operations. It also
+drives `GITLAB_USER_NAME` and `GITLAB_USER_EMAIL` by default. Use
+`setup.pipeline.user` when the pipeline trigger user must differ from the git
+committer. `git.origin` prepares the fake remote repository.
 
 ```yaml
 setup:
@@ -284,6 +286,60 @@ before the pipeline runs. This gives the workspace a clean git state. Scripts
 inside your pipeline can safely run `git add`, `git diff`, `git fetch`, or
 `git push` without errors. Use `git.origin` rather than plain pipeline files
 whenever your jobs interact with the git repository at runtime.
+
+### Pipeline User
+
+`pipeline.user` controls the simulated GitLab user who triggered the pipeline.
+It sets `GITLAB_USER_NAME`, `GITLAB_USER_EMAIL`, and `GITLAB_USER_LOGIN`.
+
+In a real GitLab pipeline these variables are injected by the platform based on
+the user who pushed or triggered the run. They are not set by the pipeline YAML
+`variables:` block.
+
+**Priority chain** (first non-empty value wins):
+
+| Variable | Source 1 | Source 2 | Default |
+| --- | --- | --- | --- |
+| `GITLAB_USER_NAME` | `setup.pipeline.user.name` | `setup.git.user.name` | `"Test User"` |
+| `GITLAB_USER_EMAIL` | `setup.pipeline.user.email` | `setup.git.user.email` | `"test@example.com"` |
+| `GITLAB_USER_LOGIN` | `setup.pipeline.user.login` | — | `"test-user"` |
+
+When `setup.pipeline.user` is absent, `GITLAB_USER_NAME` and `GITLAB_USER_EMAIL`
+are derived from `setup.git.user`. This keeps the git committer identity and the
+pipeline trigger identity consistent by default — you only need `pipeline.user`
+when the two identities must differ.
+
+**Example: single identity (git and pipeline user are the same person)**
+
+```yaml
+setup:
+  git:
+    user:
+      name: "ci-bot"
+      email: "ci-bot@example.com"
+# GITLAB_USER_NAME=ci-bot, GITLAB_USER_EMAIL=ci-bot@example.com
+# Git commits in the workspace are also attributed to ci-bot.
+```
+
+**Example: separate identities**
+
+Use this when the pipeline is triggered by a human but workspace git operations
+are performed by a service account.
+
+```yaml
+setup:
+  git:
+    user:
+      name: "release-bot"
+      email: "release-bot@example.com"
+  pipeline:
+    user:
+      name: "Jan Novak"
+      email: "jan.novak@example.com"
+      login: "jan-novak"
+# GITLAB_USER_NAME=Jan Novak  (who triggered the pipeline)
+# Git commits are attributed to release-bot (the bot running the job)
+```
 
 ### Mock GitLab API Setup
 

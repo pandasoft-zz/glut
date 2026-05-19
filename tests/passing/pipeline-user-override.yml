@@ -1,0 +1,31 @@
+stages: [test]
+
+check-user:
+  stage: test
+  script:
+    - echo "name=$GITLAB_USER_NAME"
+    - echo "email=$GITLAB_USER_EMAIL"
+    - echo "login=$GITLAB_USER_LOGIN"
+---
+.glut:
+  name: "setup.pipeline.user overrides git.user for GITLAB_USER_* variables"
+  setup:
+    branch: main
+    docker: false
+    git:
+      user:
+        name: "ci-bot"
+        email: "ci-bot@example.com"
+    pipeline:
+      user:
+        name: "Jan Novak"
+        email: "jan.novak@example.com"
+        login: "jan-novak"
+  assert:
+    job:
+      check-user:
+        exit-status: 0
+        stdout:
+          - "name=Jan Novak"
+          - "email=jan.novak@example.com"
+          - "login=jan-novak"

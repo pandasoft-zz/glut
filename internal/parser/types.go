@@ -17,6 +17,8 @@ type GlutSection struct {
 }
 
 type SetupConfig = config.SetupConfig
+type PipelineConfig = config.PipelineConfig
+type PipelineUserConfig = config.PipelineUserConfig
 type MRConfig = config.MRConfig
 type UpstreamConfig = config.UpstreamConfig
 type ScheduleConfig = config.ScheduleConfig

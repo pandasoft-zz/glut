@@ -32,18 +32,29 @@ func (s *StringSlice) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type SetupConfig struct {
-	Branch         string          `yaml:"branch"`
-	DefaultBranch  string          `yaml:"default_branch"`
-	Tag            string          `yaml:"tag"`
-	PipelineSource string          `yaml:"pipeline_source"`
-	Docker         *bool           `yaml:"docker"`
-	MergeRequest   *MRConfig       `yaml:"merge_request"`
-	Upstream       *UpstreamConfig `yaml:"upstream"`
-	Schedule       *ScheduleConfig `yaml:"schedule"`
-	Chat           *ChatConfig     `yaml:"chat"`
-	Git            *GitSetupConfig `yaml:"git"`
-	API            *APISetupConfig `yaml:"api"`
-	Mocks          *MocksConfig    `yaml:"mocks"`
+	Branch         string           `yaml:"branch"`
+	DefaultBranch  string           `yaml:"default_branch"`
+	Tag            string           `yaml:"tag"`
+	PipelineSource string           `yaml:"pipeline_source"`
+	Docker         *bool            `yaml:"docker"`
+	MergeRequest   *MRConfig        `yaml:"merge_request"`
+	Upstream       *UpstreamConfig  `yaml:"upstream"`
+	Schedule       *ScheduleConfig  `yaml:"schedule"`
+	Chat           *ChatConfig      `yaml:"chat"`
+	Git            *GitSetupConfig  `yaml:"git"`
+	Pipeline       *PipelineConfig  `yaml:"pipeline"`
+	API            *APISetupConfig  `yaml:"api"`
+	Mocks          *MocksConfig     `yaml:"mocks"`
+}
+
+type PipelineConfig struct {
+	User *PipelineUserConfig `yaml:"user"`
+}
+
+type PipelineUserConfig struct {
+	Name  string `yaml:"name"`
+	Email string `yaml:"email"`
+	Login string `yaml:"login"`
 }
 
 type MRConfig struct {

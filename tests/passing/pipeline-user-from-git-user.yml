@@ -1,0 +1,24 @@
+stages: [test]
+
+check-user:
+  stage: test
+  script:
+    - echo "name=$GITLAB_USER_NAME"
+    - echo "email=$GITLAB_USER_EMAIL"
+---
+.glut:
+  name: "GITLAB_USER_NAME and GITLAB_USER_EMAIL derive from setup.git.user when pipeline.user is absent"
+  setup:
+    branch: main
+    docker: false
+    git:
+      user:
+        name: "ci-bot"
+        email: "ci-bot@example.com"
+  assert:
+    job:
+      check-user:
+        exit-status: 0
+        stdout:
+          - "name=ci-bot"
+          - "email=ci-bot@example.com"
