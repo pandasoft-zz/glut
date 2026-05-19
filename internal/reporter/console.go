@@ -111,9 +111,9 @@ func (c *prettyConsole) Start(totalTests int) {
 	if c.quiet {
 		return
 	}
-	label := c.st.header.Render(runEmoji + " glut")
+	logo := logoEmoji + " " + c.st.logoGL.Render("GL") + c.st.logoUT.Render("UT")
 	count := c.st.dim.Render(fmt.Sprintf("Running %d tests", totalTests))
-	writef(c.writer, "%s  %s\n\n", label, count)
+	writef(c.writer, "%s  %s\n\n", logo, count)
 }
 
 func (c *prettyConsole) TestDone(result runner.TestResult) {

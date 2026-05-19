@@ -9,19 +9,20 @@ import (
 const (
 	passEmoji = "✓"
 	failEmoji = "✗"
-	runEmoji  = "◆"
+	logoEmoji = "🧪"
 )
 
 type consoleStyles struct {
-	pass    lipgloss.Style
-	fail    lipgloss.Style
-	dim     lipgloss.Style
+	pass   lipgloss.Style
+	fail   lipgloss.Style
+	dim    lipgloss.Style
 	counter lipgloss.Style
-	header  lipgloss.Style
-	path    lipgloss.Style
-	dur     lipgloss.Style
-	jobSep  lipgloss.Style
-	jobOut  lipgloss.Style
+	logoGL lipgloss.Style
+	logoUT lipgloss.Style
+	path   lipgloss.Style
+	dur    lipgloss.Style
+	jobSep lipgloss.Style
+	jobOut lipgloss.Style
 }
 
 func newConsoleStyles(w io.Writer) consoleStyles {
@@ -31,7 +32,8 @@ func newConsoleStyles(w io.Writer) consoleStyles {
 		fail:    r.NewStyle().Foreground(lipgloss.Color("9")).Bold(true),
 		dim:     r.NewStyle().Foreground(lipgloss.Color("8")),
 		counter: r.NewStyle().Foreground(lipgloss.Color("8")),
-		header:  r.NewStyle().Foreground(lipgloss.Color("12")).Bold(true),
+		logoGL:  r.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
+		logoUT:  r.NewStyle().Foreground(lipgloss.Color("15")).Bold(true),
 		path:    r.NewStyle().Foreground(lipgloss.Color("7")),
 		dur:     r.NewStyle().Foreground(lipgloss.Color("8")),
 		jobSep:  r.NewStyle().Foreground(lipgloss.Color("6")),
