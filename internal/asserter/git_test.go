@@ -69,8 +69,8 @@ func TestRunGitAsserts(t *testing.T) {
 	}
 
 	results := Run(asserts, AssertContext{
-		OriginRepoPath: origin,
-		WorkspacePath:  workspace,
+		OriginRepo:    NewFSOrigin(origin),
+		WorkspacePath: workspace,
 	})
 
 	for _, result := range results {

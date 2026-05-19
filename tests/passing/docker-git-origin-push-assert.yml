@@ -1,0 +1,33 @@
+stages: [test]
+
+push-in-docker:
+  image: alpine:latest
+  stage: test
+  script:
+    - apk add --no-cache --quiet git
+    - git config user.email "ci@example.com"
+    - git config user.name "CI"
+    - git config commit.gpgSign false
+    - touch new-file.txt
+    - git add new-file.txt
+    - git commit -m "commit from docker job"
+    - git push origin main
+---
+.glut:
+  name: "assert.git.origin reflects push made inside Docker container (issue-53)"
+  setup:
+    branch: main
+    docker: true
+    git:
+      origin:
+        branch: main
+        files:
+          README.md: "initial content\n"
+  assert:
+    job:
+      push-in-docker:
+        exit-status: 0
+    git:
+      origin:
+        last-commit:
+          message: "commit from docker job"
