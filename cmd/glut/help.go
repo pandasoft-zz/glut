@@ -44,13 +44,19 @@ func helpFunc(cmd *cobra.Command, _ []string) {
 	renderHelp(cmd, cmd.OutOrStdout())
 }
 
+// helpf writes to w, discarding the error (write-to-help-output errors are
+// unrecoverable and intentionally ignored, matching the reporter.writef pattern).
+func helpf(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
+}
+
 // renderHelp writes styled help for cmd to w.
 func renderHelp(cmd *cobra.Command, w io.Writer) {
 	st := newHelpSt(w)
 
 	// ── Header ────────────────────────────────────────────────────────────────
 	logo := "🧪 " + st.logoGL.Render("GL") + st.logoUT.Render("UT")
-	fmt.Fprintf(w, "%s  %s\n", logo, cmd.Short)
+	helpf(w, "%s  %s\n", logo, cmd.Short)
 
 	// ── Long description ──────────────────────────────────────────────────────
 	if long := strings.TrimSpace(cmd.Long); long != "" {
@@ -60,12 +66,12 @@ func renderHelp(cmd *cobra.Command, w io.Writer) {
 		if strings.TrimSpace(lines[0]) == strings.TrimSpace(cmd.Short) {
 			start = 1
 		}
-		fmt.Fprintln(w)
+		helpf(w, "\n")
 		for _, line := range lines[start:] {
 			if strings.TrimSpace(line) == "" {
-				fmt.Fprintln(w)
+				helpf(w, "\n")
 			} else {
-				fmt.Fprintf(w, "  %s\n", st.dim.Render(line))
+				helpf(w, "  %s\n", st.dim.Render(line))
 			}
 		}
 	}
@@ -77,8 +83,8 @@ func renderHelp(cmd *cobra.Command, w io.Writer) {
 		useline = strings.TrimSuffix(useline, " [flags]")
 		useline += " [command]"
 	}
-	fmt.Fprintf(w, "\n%s\n", st.section.Render("USAGE"))
-	fmt.Fprintf(w, "  %s\n", useline)
+	helpf(w, "\n%s\n", st.section.Render("USAGE"))
+	helpf(w, "  %s\n", useline)
 
 	// ── Subcommands ───────────────────────────────────────────────────────────
 	var available []*cobra.Command
@@ -94,9 +100,9 @@ func renderHelp(cmd *cobra.Command, w io.Writer) {
 				maxLen = n
 			}
 		}
-		fmt.Fprintf(w, "\n%s\n", st.section.Render("COMMANDS"))
+		helpf(w, "\n%s\n", st.section.Render("COMMANDS"))
 		for _, c := range available {
-			fmt.Fprintf(w, "  %s  %s\n",
+			helpf(w, "  %s  %s\n",
 				st.name.Render(fmt.Sprintf("%-*s", maxLen, c.Name())),
 				c.Short,
 			)
@@ -105,21 +111,21 @@ func renderHelp(cmd *cobra.Command, w io.Writer) {
 
 	// ── Flags ─────────────────────────────────────────────────────────────────
 	if cmd.HasAvailableFlags() {
-		fmt.Fprintf(w, "\n%s\n", st.section.Render("FLAGS"))
+		helpf(w, "\n%s\n", st.section.Render("FLAGS"))
 		renderFlags(w, st, cmd.Flags())
 	}
 
 	// ── Examples ──────────────────────────────────────────────────────────────
 	if cmd.Example != "" {
-		fmt.Fprintf(w, "\n%s\n", st.section.Render("EXAMPLES"))
+		helpf(w, "\n%s\n", st.section.Render("EXAMPLES"))
 		for _, line := range strings.Split(strings.TrimRight(cmd.Example, "\n"), "\n") {
-			fmt.Fprintf(w, "%s\n", st.code.Render(line))
+			helpf(w, "%s\n", st.code.Render(line))
 		}
 	}
 
 	// ── Footer ────────────────────────────────────────────────────────────────
 	if len(available) > 0 {
-		fmt.Fprintf(w, "\n%s\n",
+		helpf(w, "\n%s\n",
 			st.dim.Render(fmt.Sprintf(`Use "%s [command] --help" for more information about a command.`, cmd.CommandPath())))
 	}
 }
@@ -168,7 +174,7 @@ func renderFlags(w io.Writer, st helpSt, fs *pflag.FlagSet) {
 	})
 
 	for _, e := range entries {
-		fmt.Fprintf(w, "  %s  %s%s\n",
+		helpf(w, "  %s  %s%s\n",
 			st.flag.Render(fmt.Sprintf("%-*s", maxSyntax, e.syntax)),
 			e.usage,
 			st.dim.Render(e.def),
