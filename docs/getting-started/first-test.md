@@ -107,9 +107,12 @@ glut run ./tests/
 A passing test looks like this:
 
 ```
-PASS  build image on feature branch  (12.4s)
+🧪 GLUT  Running 1 test
 
-1 passed, 0 failed
+[1/1] ✓  tests/build-image.yml  12.4s
+
+────────────────────────────────────────────────────────────
+✓ 1 passed  in 12.4s
 ```
 
 ## Step 5: Make It Fail On Purpose
@@ -124,10 +127,17 @@ contents:
 Run again. GLUT prints what failed, what was expected, and what was found:
 
 ```
-FAIL  build image on feature branch  (11.8s)
-  assert.artifacts["dist/image.txt"].contents: pattern "wrong-image-name" not found in file
+[1/1] ✗  tests/build-image.yml  11.8s  FAILED
 
-1 failed, 0 passed
+✗ FAILED  tests/build-image.yml
+  test: "build image on feature branch"
+
+  assert.artifacts."dist/image.txt".contents
+    expected: pattern "wrong-image-name"
+    actual:   no match
+
+────────────────────────────────────────────────────────────
+✗ 1 failed  in 11.8s
 ```
 
 Fix the assert and run again. The test should pass.

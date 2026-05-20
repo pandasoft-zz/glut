@@ -8,11 +8,20 @@ A failing test prints which assert failed, what was expected, and what was
 found:
 
 ```
-FAIL  release from tag  (14.2s)
-  assert.job["release"].exit-status: expected 0, got 1
-  assert.binary["release-cli"].called: expected true, got false
+[1/1] ✗  tests/release.yml  14.2s  FAILED
 
-1 failed, 0 passed
+✗ FAILED  tests/release.yml
+  test: "release from tag"
+
+  assert.job."release".exit-status
+    expected: 0
+    actual:   1
+  assert.binary."release-cli".called
+    expected: true
+    actual:   false
+
+────────────────────────────────────────────────────────────
+✗ 1 failed  in 14.2s
 ```
 
 The path tells you the resource type (`job`, `binary`, `api`, `git`,
@@ -104,9 +113,20 @@ was — the API call list shows exactly what the mock server received.
 glut run --verbose ./tests/release.yml
 ```
 
-`--verbose` prints each job's stdout to the terminal while the pipeline runs.
-Use it when the job exits with status 1 and you need to see what went wrong
-without inspecting the workspace manually.
+`--verbose` prints each job's stdout and stderr after the test finishes. Each
+stream is shown in a labelled block:
+
+```
+─── stdout: "build-image" ───────────────────────────────────
+  $ mkdir -p dist
+  $ echo "registry.example.com/app:main" > dist/image.txt
+────────────────────────────────────────────────────────────
+```
+
+Use `--verbose` when a passing test produces unexpected side effects and you
+want to see what the job actually ran. For failing tests, the job output is
+always shown automatically (last 50 lines). Use `--debug` to see the full
+output without a line limit.
 
 ## Pausing With `--debug-pause`
 

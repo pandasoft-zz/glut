@@ -6,3 +6,4 @@
 .glut-tmp/
 *.test
 /.artifacts/
+.claude/settings.json

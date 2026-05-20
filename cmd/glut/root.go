@@ -39,6 +39,7 @@ var (
 	runKeepLastFailed int
 	runCopyStrategy   string
 	runInclude        []string
+	runInteractive    bool
 	listPattern       string
 	lintFormat        string
 	doctorFormat      string
@@ -75,6 +76,15 @@ current directory. Each test gets its own workspace and mock services.`,
   glut run --debug --keep-workspace ./tests/release.yml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := runOptionsFromCommand(args)
+
+		if runInteractive {
+			result, exitCode := selectAndRun(context.Background(), opts)
+			if result.Error != nil {
+				writeError(result.Error)
+			}
+			os.Exit(int(exitCode))
+		}
+
 		sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
 		if err != nil {
 			writeError(err)
@@ -213,6 +223,7 @@ func init() {
 	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
 	runCmd.Flags().StringVar(&runCopyStrategy, "copy-strategy", "auto", "Copy strategy: auto, rsync, native")
 	runCmd.Flags().StringArrayVar(&runInclude, "include", nil, "Copy only these subdirectories into the workspace (repeatable)")
+	runCmd.Flags().BoolVarP(&runInteractive, "interactive", "i", false, "Select tests to run interactively")
 
 	listCmd.Flags().StringVarP(&listPattern, "run", "k", "", "List tests matching substring or regex")
 	lintCmd.Flags().StringVar(&lintFormat, "format", "text", "Output format: text or json")
