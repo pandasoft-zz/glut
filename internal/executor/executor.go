@@ -220,7 +220,10 @@ func buildCommandEnv(cfg ExecutorConfig) []string {
 	}
 	env["PATH"] = basePath
 
-	for _, key := range []string{"HOME", "TMPDIR", "TMP", "DOCKER_CONFIG"} {
+	for _, key := range []string{
+		"HOME", "TMPDIR", "TMP",
+		"DOCKER_CONFIG", "DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
+	} {
 		if v := host[key]; v != "" {
 			env[key] = v
 		}
