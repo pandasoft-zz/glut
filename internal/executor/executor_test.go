@@ -629,6 +629,55 @@ func joinPath(first string, rest string) string {
 	return first + string(os.PathListSeparator) + rest
 }
 
+func TestBuildCommandEnvForwardsDockerVars(t *testing.T) {
+	t.Parallel()
+
+	t.Run("forwards docker vars when set", func(t *testing.T) {
+		t.Parallel()
+		cfg := ExecutorConfig{
+			HostEnv: []string{
+				"HOME=/home/runner",
+				"PATH=/usr/bin",
+				"DOCKER_HOST=tcp://docker:2375",
+				"DOCKER_TLS_VERIFY=1",
+				"DOCKER_CERT_PATH=/certs/client",
+				"DOCKER_CONFIG=/home/runner/.docker",
+				"SECRET=should-not-leak",
+			},
+		}
+		result := envSliceToMap(buildCommandEnv(cfg))
+
+		for _, key := range []string{"DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_CONFIG"} {
+			if _, ok := result[key]; !ok {
+				t.Errorf("expected %s to be forwarded, got env %v", key, result)
+			}
+		}
+		if result["DOCKER_HOST"] != "tcp://docker:2375" {
+			t.Errorf("DOCKER_HOST = %q, want tcp://docker:2375", result["DOCKER_HOST"])
+		}
+		if _, ok := result["SECRET"]; ok {
+			t.Error("expected SECRET to be isolated, but it leaked into subprocess env")
+		}
+	})
+
+	t.Run("does not set docker vars when absent from host env", func(t *testing.T) {
+		t.Parallel()
+		cfg := ExecutorConfig{
+			HostEnv: []string{
+				"HOME=/home/runner",
+				"PATH=/usr/bin",
+			},
+		}
+		result := envSliceToMap(buildCommandEnv(cfg))
+
+		for _, key := range []string{"DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"} {
+			if v, ok := result[key]; ok {
+				t.Errorf("expected %s to be absent when not in host env, got %q", key, v)
+			}
+		}
+	})
+}
+
 func TestBaseArgsDockerMode(t *testing.T) {
 	t.Parallel()
 	args := baseArgs(ExecutorConfig{UseDocker: true})

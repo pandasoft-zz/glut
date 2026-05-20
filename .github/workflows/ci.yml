@@ -75,11 +75,14 @@ jobs:
 
     - name: Run passing integration tests
       run: |
+        mkdir -p .artifacts
         docker run --rm \
           -v /var/run/docker.sock:/var/run/docker.sock \
           -v "${{ github.workspace }}:/repo" \
           -w /repo \
-          glut:dev run --include tests ./tests/passing/
+          glut:dev run --include tests \
+            --report=junit:/repo/.artifacts/integration-test-results.xml \
+            ./tests/passing/
 
     - name: Run failing integration tests (expect failure)
       run: |
@@ -91,3 +94,19 @@ jobs:
           echo "Expected integration tests to fail but they passed"
           exit 1
         fi
+
+    - name: Publish integration test report
+      if: always()
+      uses: mikepenz/action-junit-report@v6
+      with:
+        report_paths: .artifacts/integration-test-results.xml
+        detailed_summary: true
+        include_passed: true
+        check_name: Integration Test Results
+
+    - name: Upload integration test artifacts
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: integration-test-report
+        path: .artifacts/integration-test-results.xml
