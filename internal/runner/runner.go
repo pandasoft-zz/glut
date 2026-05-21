@@ -101,6 +101,19 @@ type ListedTest struct {
 	TestName string
 }
 
+// relPath returns path made relative to base. It returns path unchanged when
+// base is empty or filepath.Rel returns an error.
+func relPath(base, path string) string {
+	if base == "" {
+		return path
+	}
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return path
+	}
+	return rel
+}
+
 func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitCode) {
 	opts = normalizeRunOptions(opts)
 	if err := validateDebugPause(opts.DebugPause); err != nil {
@@ -161,6 +174,14 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, error) {
 	_ = ctx
 
+	workDir := opts.WorkDir
+	if workDir == "" {
+		cwd, err := os.Getwd()
+		if err == nil {
+			workDir = cwd
+		}
+	}
+
 	tests, err := discoverTests(absifyPaths(paths, opts.WorkDir), opts.RunPattern)
 	if err != nil {
 		return nil, err
@@ -172,7 +193,7 @@ func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, 
 			continue
 		}
 		listed = append(listed, ListedTest{
-			FilePath: testFile.FilePath,
+			FilePath: relPath(workDir, testFile.FilePath),
 			TestName: testFile.Glut.Name,
 		})
 	}
@@ -287,16 +308,17 @@ func runSingleTest(
 	preservedFailed *[]string,
 ) (result TestResult) {
 	if testFile.ParseError != nil {
+		fp := relPath(repoRoot, testFile.FilePath)
 		return TestResult{
-			FilePath: testFile.FilePath,
-			TestName: testFile.FilePath,
+			FilePath: fp,
+			TestName: fp,
 			Passed:   false,
 			Error:    testFile.ParseError,
 		}
 	}
 
 	result = TestResult{
-		FilePath:   testFile.FilePath,
+		FilePath:   relPath(repoRoot, testFile.FilePath),
 		TestName:   testFile.Glut.Name,
 		JobOutputs: map[string]executor.JobOutput{},
 	}
