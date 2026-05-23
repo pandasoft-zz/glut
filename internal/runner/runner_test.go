@@ -926,6 +926,25 @@ image-job:
 	}
 }
 
+
+func TestApplyDockerCompatibilityEnv(t *testing.T) {
+	t.Run("sets_umask_false_in_docker_mode", func(t *testing.T) {
+		envVars := map[string]string{}
+		applyDockerCompatibilityEnv(envVars, true)
+		if envVars["GCL_DOCKER_UMASK"] != "false" {
+			t.Fatalf("GCL_DOCKER_UMASK = %q, want false", envVars["GCL_DOCKER_UMASK"])
+		}
+	})
+
+	t.Run("does_not_set_umask_in_shell_mode", func(t *testing.T) {
+		envVars := map[string]string{}
+		applyDockerCompatibilityEnv(envVars, false)
+		if _, ok := envVars["GCL_DOCKER_UMASK"]; ok {
+			t.Fatalf("GCL_DOCKER_UMASK must be unset in shell mode")
+		}
+	})
+}
+
 func TestResolveDockerMode(t *testing.T) {
 	trueVal := true
 	falseVal := false

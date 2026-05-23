@@ -475,6 +475,7 @@ func runSingleTest(
 	}
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
+	applyDockerCompatibilityEnv(envVars, useDocker)
 	if useDocker {
 		// BUG-3: Docker containers cannot reach 127.0.0.1. Use the bridge IP directly
 		// so the URL works for both Docker jobs (container on same bridge) and shell jobs
@@ -903,6 +904,15 @@ func outboundIP() string {
 // nil (absent) → full Docker mode, same as &true.
 // &true → full Docker mode with volume/extra-host support.
 // &false → force all jobs to shell, even those with image:.
+func applyDockerCompatibilityEnv(envVars map[string]string, useDocker bool) {
+	if !useDocker {
+		return
+	}
+	// Keep GitLab-like user behavior in Docker jobs. Do not force root via GCL.
+	// This lets rootless images run with their own user settings.
+	envVars["GCL_DOCKER_UMASK"] = "false"
+}
+
 func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
 	if docker == nil || *docker {
 		return true, false
