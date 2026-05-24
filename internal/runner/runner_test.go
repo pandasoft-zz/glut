@@ -1085,6 +1085,64 @@ func TestListSkipsParseErrorFiles(t *testing.T) {
 	}
 }
 
+func TestRunFilePathIsRelativeToWorkDir(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnv(t)
+	env.writeTestFile(t, "tests/sub/pass.yml", testFileYAML("pass test", "pass-job", "ok"))
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitOK)
+	}
+	if len(result.Tests) != 1 {
+		t.Fatalf("Run() tests = %d, want 1", len(result.Tests))
+	}
+
+	want := filepath.Join("tests", "sub", "pass.yml")
+	if result.Tests[0].FilePath != want {
+		t.Errorf("FilePath = %q, want %q (relative to work dir)", result.Tests[0].FilePath, want)
+	}
+}
+
+func TestListFilePathIsRelativeToWorkDir(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnv(t)
+	env.writeTestFile(t, "tests/sub/pass.yml", testFileYAML("pass test", "pass-job", "ok"))
+
+	tests, err := List(context.Background(), []string{"tests"}, ListOptions{WorkDir: env.workDir})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(tests) != 1 {
+		t.Fatalf("List() = %d tests, want 1", len(tests))
+	}
+
+	want := filepath.Join("tests", "sub", "pass.yml")
+	if tests[0].FilePath != want {
+		t.Errorf("List() FilePath = %q, want %q (relative to work dir)", tests[0].FilePath, want)
+	}
+}
+
+func TestRelPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns_relative_path", func(t *testing.T) {
+		t.Parallel()
+		got := relPath("/repo", "/repo/tests/a.yml")
+		if got != filepath.Join("tests", "a.yml") {
+			t.Errorf("relPath() = %q, want %q", got, filepath.Join("tests", "a.yml"))
+		}
+	})
+
+	t.Run("empty_base_returns_path_unchanged", func(t *testing.T) {
+		t.Parallel()
+		got := relPath("", "/abs/path.yml")
+		if got != "/abs/path.yml" {
+			t.Errorf("relPath() = %q, want /abs/path.yml", got)
+		}
+	})
+}
+
 func TestAbsifyPaths(t *testing.T) {
 	t.Parallel()
 
