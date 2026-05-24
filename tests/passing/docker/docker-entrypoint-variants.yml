@@ -1,0 +1,33 @@
+stages: [test]
+
+default-entrypoint-job:
+  stage: test
+  image: alpine:latest
+  script:
+    - echo "default entrypoint job ok"
+
+override-entrypoint-job:
+  stage: test
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  script:
+    - echo "override entrypoint job ok"
+---
+.glut:
+  name: "docker:true keeps image entrypoint variants"
+  setup:
+    branch: main
+    docker: true
+  assert:
+    job:
+      default-entrypoint-job:
+        present: true
+        exit-status: 0
+        stdout:
+          - "default entrypoint job ok"
+      override-entrypoint-job:
+        present: true
+        exit-status: 0
+        stdout:
+          - "override entrypoint job ok"

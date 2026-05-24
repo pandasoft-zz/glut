@@ -1,0 +1,35 @@
+stages: [test]
+
+root-image-job:
+  stage: test
+  image: alpine:latest
+  script:
+    - id -u
+    - echo "root image job ok"
+
+rootless-image-job:
+  stage: test
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  script:
+    - buildctl-daemonless.sh --version || true
+    - echo "rootless image job ok"
+---
+.glut:
+  name: "docker:true supports root and rootless images"
+  setup:
+    branch: main
+    docker: true
+  assert:
+    job:
+      root-image-job:
+        present: true
+        exit-status: 0
+        stdout:
+          - "root image job ok"
+      rootless-image-job:
+        present: true
+        exit-status: 0
+        stdout:
+          - "rootless image job ok"
