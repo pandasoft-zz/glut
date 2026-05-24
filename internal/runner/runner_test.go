@@ -857,6 +857,90 @@ docker-job:
 
 // TestRunDockerFalseUsesForceShellExecutor verifies that setting docker: false in a test
 // causes GLUT to pass --force-shell-executor so all jobs run in the shell regardless of image:.
+
+func TestRunPipelineKeepsRootAndRootlessImageDefinitions(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalDockerUserModelScript())
+	env.writeRawFile(t, "tests/docker-user-model.yml", strings.TrimSpace(`
+stages: [test]
+
+root-job:
+  image: alpine:latest
+  stage: test
+  script:
+    - echo "root image"
+
+rootless-job:
+  image:
+    name: moby/buildkit:rootless
+  stage: test
+  script:
+    - echo "rootless image"
+---
+.glut:
+  name: docker user model
+  setup:
+    docker: false
+  assert:
+    job:
+      root-job:
+        present: true
+        exit-status: 0
+      rootless-job:
+        present: true
+        exit-status: 0
+	`) + "\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v; err = %v", exitCode, ExitOK, result.Tests, result.Tests[0].Error)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
+func TestRunPipelineKeepsEntrypointVariants(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalEntrypointModelScript())
+	env.writeRawFile(t, "tests/docker-entrypoint.yml", strings.TrimSpace(`
+stages: [test]
+
+default-entrypoint:
+  image: moby/buildkit:rootless
+  stage: test
+  script:
+    - echo "default"
+
+override-entrypoint:
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  stage: test
+  script:
+    - echo "override"
+---
+.glut:
+  name: docker entrypoint model
+  setup:
+    docker: false
+  assert:
+    job:
+      default-entrypoint:
+        present: true
+        exit-status: 0
+      override-entrypoint:
+        present: true
+        exit-status: 0
+	`) + "\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v; err = %v", exitCode, ExitOK, result.Tests, result.Tests[0].Error)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+}
+
 func TestRunDockerFalseUsesForceShellExecutor(t *testing.T) {
 	env := newRunnerTestEnvWithScript(t, fakeGitLabCILocalForceShellScript())
 	env.writeRawFile(t, "tests/docker-false.yml", strings.TrimSpace(`
@@ -1021,6 +1105,49 @@ if grep -q 'CI_API_V4_URL' .gitlab-ci.yml; then
   curl --silent --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1" >/dev/null
 fi
 printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
+`
+}
+
+
+func fakeGitLabCILocalDockerUserModelScript() string {
+	return `#!/bin/sh
+if [ "$1" = "--list" ]; then
+  printf 'root-job\nrootless-job\n'
+  exit 0
+fi
+
+if ! grep -q '^root-job:' .gitlab-ci.yml; then
+  printf 'GLUT_JOB|name=root-job|exit=127|stdout=|stderr=root job missing in pipeline\n'
+  exit 0
+fi
+if ! grep -q '^rootless-job:' .gitlab-ci.yml; then
+  printf 'GLUT_JOB|name=rootless-job|exit=127|stdout=|stderr=rootless job missing in pipeline\n'
+  exit 0
+fi
+
+printf 'GLUT_JOB|name=root-job|exit=0|stdout=ok|stderr=\n'
+printf 'GLUT_JOB|name=rootless-job|exit=0|stdout=ok|stderr=\n'
+`
+}
+
+func fakeGitLabCILocalEntrypointModelScript() string {
+	return `#!/bin/sh
+if [ "$1" = "--list" ]; then
+  printf 'default-entrypoint\noverride-entrypoint\n'
+  exit 0
+fi
+
+if ! grep -q '^default-entrypoint:' .gitlab-ci.yml; then
+  printf 'GLUT_JOB|name=default-entrypoint|exit=127|stdout=|stderr=default job missing\n'
+  exit 0
+fi
+if ! grep -Fq 'entrypoint: [""]' .gitlab-ci.yml; then
+  printf 'GLUT_JOB|name=override-entrypoint|exit=127|stdout=|stderr=entrypoint override missing\n'
+  exit 0
+fi
+
+printf 'GLUT_JOB|name=default-entrypoint|exit=0|stdout=ok|stderr=\n'
+printf 'GLUT_JOB|name=override-entrypoint|exit=0|stdout=ok|stderr=\n'
 `
 }
 
