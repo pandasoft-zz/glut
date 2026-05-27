@@ -64,6 +64,15 @@ setup:
 the pipeline runs on. `default_branch` controls `CI_DEFAULT_BRANCH`. A typical
 feature-branch test sets both to different values.
 
+Use `ref_protected` to set `CI_COMMIT_REF_PROTECTED`. The default is `false`.
+Set it to `true` to test jobs that only run on protected branches.
+
+```yaml
+setup:
+  branch: "main"
+  ref_protected: true
+```
+
 Use `tag` for tag pipelines.
 
 ```yaml
@@ -214,7 +223,7 @@ variable values in scripts or tests.
 | `CI_COMMIT_BRANCH` | `setup.branch` (default `"main"`) |
 | `CI_COMMIT_REF_NAME` | same as `CI_COMMIT_BRANCH` |
 | `CI_COMMIT_REF_SLUG` | slugified branch name |
-| `CI_COMMIT_REF_PROTECTED` | `"false"` |
+| `CI_COMMIT_REF_PROTECTED` | `"true"` if `setup.ref_protected: true`, otherwise `"false"` |
 | `CI_COMMIT_BEFORE_SHA` | `"0000000000000000000000000000000000000000"` |
 
 **Tag pipelines** (`setup.tag` is set):

@@ -1,0 +1,29 @@
+stages: [deploy]
+
+deploy-protected:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true"
+  script:
+    - echo "Running on protected branch"
+
+deploy-unprotected:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED != "true"
+  script:
+    - echo "Unprotected"
+---
+.glut:
+  name: "ref_protected true gates protected-only jobs"
+  setup:
+    branch: "main"
+    ref_protected: true
+  assert:
+    job:
+      deploy-protected:
+        exit-status: 0
+        stdout:
+          - "Running on protected branch"
+      deploy-unprotected:
+        present: false

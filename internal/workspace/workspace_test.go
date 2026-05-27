@@ -152,6 +152,32 @@ func TestEnvVars(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("ref_protected defaults to false", func(t *testing.T) {
+		cfg := parser.SetupConfig{Branch: "main"}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "t")
+		if env["CI_COMMIT_REF_PROTECTED"] != "false" {
+			t.Errorf("expected CI_COMMIT_REF_PROTECTED=false, got %s", env["CI_COMMIT_REF_PROTECTED"])
+		}
+	})
+
+	t.Run("ref_protected true", func(t *testing.T) {
+		v := true
+		cfg := parser.SetupConfig{Branch: "main", RefProtected: &v}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "t")
+		if env["CI_COMMIT_REF_PROTECTED"] != "true" {
+			t.Errorf("expected CI_COMMIT_REF_PROTECTED=true, got %s", env["CI_COMMIT_REF_PROTECTED"])
+		}
+	})
+
+	t.Run("ref_protected explicit false", func(t *testing.T) {
+		v := false
+		cfg := parser.SetupConfig{Branch: "main", RefProtected: &v}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "t")
+		if env["CI_COMMIT_REF_PROTECTED"] != "false" {
+			t.Errorf("expected CI_COMMIT_REF_PROTECTED=false, got %s", env["CI_COMMIT_REF_PROTECTED"])
+		}
+	})
 }
 
 func TestPipelineUserEnv(t *testing.T) {

@@ -37,6 +37,7 @@ type SetupConfig struct {
 	Tag            string           `yaml:"tag"`
 	PipelineSource string           `yaml:"pipeline_source"`
 	Docker         *bool            `yaml:"docker"`
+	RefProtected   *bool            `yaml:"ref_protected"`
 	MergeRequest   *MRConfig        `yaml:"merge_request"`
 	Upstream       *UpstreamConfig  `yaml:"upstream"`
 	Schedule       *ScheduleConfig  `yaml:"schedule"`
