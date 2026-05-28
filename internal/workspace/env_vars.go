@@ -141,7 +141,11 @@ func applyBranchOrTagEnv(env map[string]string, setup parser.SetupConfig, defaul
 	env["CI_COMMIT_BRANCH"] = branch
 	env["CI_COMMIT_REF_NAME"] = branch
 	env["CI_COMMIT_REF_SLUG"] = slugify(branch)
-	env["CI_COMMIT_REF_PROTECTED"] = "false"
+	refProtected := "false"
+	if setup.RefProtected != nil && *setup.RefProtected {
+		refProtected = "true"
+	}
+	env["CI_COMMIT_REF_PROTECTED"] = refProtected
 	env["CI_COMMIT_BEFORE_SHA"] = "0000000000000000000000000000000000000000"
 }
 
