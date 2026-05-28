@@ -33,6 +33,7 @@ var (
 	runFormat         string
 	runReports        []string
 	runTimeout        time.Duration
+	runWaitTimeout    time.Duration
 	runDebug          bool
 	runKeepWorkspace  bool
 	runDebugPause     string
@@ -91,19 +92,21 @@ current directory. Each test gets its own workspace and mock services.`,
 			os.Exit(ExitError)
 		}
 		result, exitCode := runner.Run(context.Background(), opts.Paths, runner.RunOptions{
-			RunPattern:     opts.Pattern,
-			FailFast:       opts.FailFast,
-			MaxFail:        opts.MaxFail,
-			Verbose:        opts.Verbose,
-			Quiet:          opts.Quiet,
-			Timeout:        opts.Timeout,
-			Debug:          opts.Debug,
-			KeepWorkspace:  opts.KeepWorkspace,
-			DebugPause:     opts.DebugPause,
-			KeepLastFailed: opts.KeepLastFailed,
-			CopyStrategy:   opts.CopyStrategy,
-			Include:        opts.Include,
-			Progress:       sinks,
+			RunPattern:       opts.Pattern,
+			FailFast:         opts.FailFast,
+			MaxFail:          opts.MaxFail,
+			Verbose:          opts.Verbose,
+			Quiet:            opts.Quiet,
+			Timeout:          opts.Timeout,
+			WaitTimeout:      opts.WaitTimeout,
+			Debug:            opts.Debug,
+			KeepWorkspace:    opts.KeepWorkspace,
+			DebugPause:       opts.DebugPause,
+			KeepLastFailed:   opts.KeepLastFailed,
+			CopyStrategy:     opts.CopyStrategy,
+			Include:          opts.Include,
+			Progress:         sinks,
+			DockerWaitOutput: os.Stderr,
 		})
 		if result.Error != nil {
 			writeError(result.Error)
@@ -217,6 +220,7 @@ func init() {
 	runCmd.Flags().StringVar(&runFormat, "format", runFormat, "Console output format")
 	runCmd.Flags().StringArrayVar(&runReports, "report", runReports, "Report output as <format>:<path>, repeatable")
 	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration(os.Getenv, "GLUT_TIMEOUT", defaultRunTimeout), "Timeout for one test")
+	runCmd.Flags().DurationVar(&runWaitTimeout, "wait-timeout", envDuration(os.Getenv, "GLUT_WAIT_TIMEOUT", runner.DefaultWaitTimeout), "Max time to wait for Docker daemon to become ready")
 	runCmd.Flags().BoolVar(&runDebug, "debug", envBool(os.Getenv, "GLUT_DEBUG"), "Enable debug mode")
 	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool(os.Getenv, "GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
 	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, before-asserts, after-pipeline, or on-fail")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pandasoft-zz/glut/internal/asserter"
+	"github.com/pandasoft-zz/glut/internal/docker"
 	"github.com/pandasoft-zz/glut/internal/executor"
 	"github.com/pandasoft-zz/glut/internal/mockserver"
 	"github.com/pandasoft-zz/glut/internal/mockwrapper"
@@ -32,25 +34,30 @@ const (
 	ExitRunnerError ExitCode = 2
 )
 
-const defaultKeepLastFailed = 3
+const (
+	defaultKeepLastFailed = 3
+	DefaultWaitTimeout    = 120 * time.Second
+)
 
 type RunOptions struct {
-	RunPattern     string
-	FailFast       bool
-	MaxFail        int
-	Verbose        bool
-	Quiet          bool
-	Timeout        time.Duration
-	Debug          bool
-	KeepWorkspace  bool
-	DebugPause     string
-	KeepLastFailed int
-	GlutBinPath    string
-	CopyStrategy   string
-	Include        []string
-	Progress       []ProgressSink
-	HostEnv        []string // nil falls back to os.Environ(); propagated to executor and workspace
-	WorkDir        string   // working directory for test discovery; empty falls back to os.Getwd()
+	RunPattern       string
+	FailFast         bool
+	MaxFail          int
+	Verbose          bool
+	Quiet            bool
+	Timeout          time.Duration
+	Debug            bool
+	KeepWorkspace    bool
+	DebugPause       string
+	KeepLastFailed   int
+	GlutBinPath      string
+	CopyStrategy     string
+	Include          []string
+	Progress         []ProgressSink
+	HostEnv          []string  // nil falls back to os.Environ(); propagated to executor and workspace
+	WorkDir          string    // working directory for test discovery; empty falls back to os.Getwd()
+	WaitTimeout      time.Duration // max time to wait for Docker daemon; 0 uses default (120s)
+	DockerWaitOutput io.Writer    // where to write Docker wait progress; nil discards output
 }
 
 type ListOptions struct {
@@ -134,6 +141,11 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		return RunResult{Error: err}, ExitRunnerError
 	}
 
+	// Non-docker tests run first so the Docker daemon can start while they execute.
+	sort.SliceStable(tests, func(i, j int) bool {
+		return !testNeedsDocker(&tests[i]) && testNeedsDocker(&tests[j])
+	})
+
 	for _, sink := range opts.Progress {
 		sink.Start(len(tests))
 	}
@@ -141,8 +153,20 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 	runStart := time.Now()
 	result := RunResult{Tests: make([]TestResult, 0, len(tests))}
 	preservedFailed := make([]string, 0, opts.KeepLastFailed)
+	dockerReady := !anyTestNeedsDocker(tests)
 
 	for _, testFile := range tests {
+		if testNeedsDocker(&testFile) && !dockerReady {
+			remaining := opts.WaitTimeout - time.Since(runStart)
+			if remaining < 0 {
+				remaining = 0
+			}
+			if err := docker.Wait(ctx, opts.DockerWaitOutput, remaining); err != nil {
+				return RunResult{Error: fmt.Errorf("wait for Docker: %w", err)}, ExitRunnerError
+			}
+			dockerReady = true
+		}
+
 		testResult := runSingleTest(ctx, repoRoot, testFile, opts, &preservedFailed)
 		result.Tests = append(result.Tests, testResult)
 		if testResult.Passed {
@@ -567,7 +591,31 @@ func normalizeRunOptions(opts RunOptions) RunOptions {
 	if opts.KeepLastFailed <= 0 {
 		opts.KeepLastFailed = defaultKeepLastFailed
 	}
+	if opts.WaitTimeout <= 0 {
+		opts.WaitTimeout = DefaultWaitTimeout
+	}
+	if opts.DockerWaitOutput == nil {
+		opts.DockerWaitOutput = io.Discard
+	}
 	return opts
+}
+
+// testNeedsDocker reports whether a test requires a Docker daemon.
+// docker: nil (absent) and docker: true both require Docker; docker: false does not.
+func testNeedsDocker(t *parser.TestFile) bool {
+	if t.ParseError != nil {
+		return false
+	}
+	return t.Glut.Setup.Docker == nil || *t.Glut.Setup.Docker
+}
+
+func anyTestNeedsDocker(tests []parser.TestFile) bool {
+	for i := range tests {
+		if testNeedsDocker(&tests[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizePaths(paths []string) []string {

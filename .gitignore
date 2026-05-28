@@ -7,3 +7,4 @@
 *.test
 /.artifacts/
 .claude/settings.json
+.claude/settings.local.json
