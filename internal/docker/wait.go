@@ -41,21 +41,21 @@ func Wait(ctx context.Context, w io.Writer, timeout time.Duration) error {
 		select {
 		case <-ctx.Done():
 			if isTTY {
-				fmt.Fprintln(w, "")
+				_, _ = fmt.Fprintln(w, "")
 			}
 			return ctx.Err()
 		case t := <-ticker.C:
 			elapsed := t.Sub(start)
 			if elapsed >= timeout {
 				if isTTY {
-					fmt.Fprintln(w, "")
+					_, _ = fmt.Fprintln(w, "")
 				}
-				return fmt.Errorf("Docker daemon not ready after %s (%s)", timeout.Round(time.Second), endpoint)
+				return fmt.Errorf("docker daemon not ready after %s (%s)", timeout.Round(time.Second), endpoint)
 			}
 
 			if dial(endpoint) == nil {
 				if isTTY {
-					fmt.Fprintln(w, "")
+					_, _ = fmt.Fprintln(w, "")
 				}
 				return nil
 			}
@@ -63,7 +63,7 @@ func Wait(ctx context.Context, w io.Writer, timeout time.Duration) error {
 			if isTTY {
 				renderProgress(w, elapsed, timeout)
 			} else if !t.Before(nextLog) {
-				fmt.Fprintf(w, "waiting for Docker daemon at %s (%ds elapsed, timeout %ds)\n",
+				_, _ = fmt.Fprintf(w, "waiting for Docker daemon at %s (%ds elapsed, timeout %ds)\n",
 					endpoint, int(elapsed.Seconds()), int(timeout.Seconds()))
 				nextLog = t.Add(noTTYLogInterval)
 			}
@@ -101,7 +101,7 @@ func dial(endpoint string) error {
 	if err != nil {
 		return err
 	}
-	conn.Close()
+	_ = conn.Close()
 	return nil
 }
 
@@ -128,5 +128,5 @@ func renderProgress(w io.Writer, elapsed, timeout time.Duration) {
 		fmt.Sprintf("  %ds / %ds", int(elapsed.Seconds()), int(timeout.Seconds())))
 	prefix := r.NewStyle().Foreground(lipgloss.Color("11")).Render("⏳")
 
-	fmt.Fprintf(w, "\r%s Waiting for Docker daemon  %s%s", prefix, bar, label)
+	_, _ = fmt.Fprintf(w, "\r%s Waiting for Docker daemon  %s%s", prefix, bar, label)
 }
