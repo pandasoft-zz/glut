@@ -309,6 +309,12 @@ func dockerArgs(cfg ExecutorConfig) []string {
 func envArgs(envVars map[string]string) []string {
 	keys := make([]string, 0, len(envVars))
 	for key := range envVars {
+		// Keys with GCL_ prefix configure gitlab-ci-local itself via process
+		// environment. Passing them as CI --variable args makes GCL parse them
+		// as CLI options and can break older versions.
+		if strings.HasPrefix(key, "GCL_") {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)

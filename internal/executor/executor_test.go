@@ -691,6 +691,24 @@ func TestBaseArgsDockerMode(t *testing.T) {
 	}
 }
 
+func TestEnvArgsSkipsGCLConfigKeys(t *testing.T) {
+	t.Parallel()
+
+	args := envArgs(map[string]string{
+		"CI_JOB_ID":         "1",
+		"GCL_UMASK":         "false",
+		"CI_PIPELINE_ID":    "2",
+		"GCL_SOME_OTHER_OP": "x",
+	})
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "GCL_UMASK") {
+		t.Fatalf("args must not include GCL_* keys, got %q", joined)
+	}
+	if !strings.Contains(joined, "CI_JOB_ID=1") || !strings.Contains(joined, "CI_PIPELINE_ID=2") {
+		t.Fatalf("args must keep CI variables, got %q", joined)
+	}
+}
+
 func TestResolveExecutable(t *testing.T) {
 	t.Parallel()
 

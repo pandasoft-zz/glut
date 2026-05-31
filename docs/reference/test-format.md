@@ -421,6 +421,24 @@ setup:
 | `true` | Docker with volume/extra-host support. `CI_API_V4_URL` uses the bridge IP (reachable from Docker and shell). |
 | `false` | all jobs forced to shell, `image:` ignored |
 
+### Docker image entrypoint
+
+GLUT follows GitLab Runner Docker behavior for image entrypoint.
+By default, GLUT does not override image `ENTRYPOINT`.
+Some images have an entrypoint that is not compatible with CI script shell mode.
+In that case, set the entrypoint in the job config.
+
+```yaml
+build-image:
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  script:
+    - buildctl-daemonless.sh build --frontend dockerfile.v0
+```
+
+Use this only when the image entrypoint blocks normal job script execution.
+
 ## `assert`
 
 `assert` describes the expected result. It can check jobs, artifacts, git state,
