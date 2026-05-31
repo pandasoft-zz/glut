@@ -14,7 +14,11 @@ rootless-image-job:
     entrypoint: [""]
   script:
     - buildctl-daemonless.sh --version || true
-    - echo "rootless image job ok"
+    - mkdir -p dist
+    - echo "rootless image job ok" > dist/rootless.txt
+  artifacts:
+    paths:
+      - dist/rootless.txt
 ---
 .glut:
   name: "docker:true supports root and rootless images"
@@ -31,3 +35,10 @@ rootless-image-job:
       rootless-image-job:
         present: true
         exit-status: 0
+    # GCL 4.72.0 can lose Docker stdout after a slow first command.
+    # Assert an artifact until that bug is fixed upstream.
+    artifacts:
+      "dist/rootless.txt":
+        exists: true
+        contents:
+          - "rootless image job ok"
