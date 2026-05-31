@@ -33,6 +33,7 @@ GLUT_RUN_FLAGS ?= --verbose --copy-strategy=auto --include ./tests
 
 ifeq ($(INCONTAINER),1)
 test-integration: build
+	echo "Running integration tests inside the container"
 	@mkdir -p $(DOCKER_TEST_CONFIG) && printf '{}' > $(DOCKER_TEST_CONFIG)/config.json
 	DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run $(GLUT_RUN_FLAGS) ./tests/passing/
 	@if DOCKER_CONFIG=$(DOCKER_TEST_CONFIG) ./glut run $(GLUT_RUN_FLAGS) ./tests/failing/; then \
@@ -40,6 +41,7 @@ test-integration: build
 	fi
 else
 test-integration: docker
+	echo "Running integration tests using the Docker container"
 	@mkdir -p .glut-tmp
 	docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
