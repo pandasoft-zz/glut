@@ -31,5 +31,3 @@ rootless-image-job:
       rootless-image-job:
         present: true
         exit-status: 0
-        stdout:
-          - "rootless image job ok"

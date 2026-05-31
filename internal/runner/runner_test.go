@@ -888,7 +888,7 @@ rootless-job:
       rootless-job:
         present: true
         exit-status: 0
-	`) + "\n")
+	`)+"\n")
 
 	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitOK {
@@ -930,7 +930,7 @@ override-entrypoint:
       override-entrypoint:
         present: true
         exit-status: 0
-	`) + "\n")
+	`)+"\n")
 
 	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
 	if exitCode != ExitOK {
@@ -1010,21 +1010,20 @@ image-job:
 	}
 }
 
-
 func TestApplyDockerCompatibilityEnv(t *testing.T) {
 	t.Run("sets_umask_false_in_docker_mode", func(t *testing.T) {
 		envVars := map[string]string{}
 		applyDockerCompatibilityEnv(envVars, true)
-		if envVars["GCL_DOCKER_UMASK"] != "false" {
-			t.Fatalf("GCL_DOCKER_UMASK = %q, want false", envVars["GCL_DOCKER_UMASK"])
+		if envVars["GCL_UMASK"] != "false" {
+			t.Fatalf("GCL_UMASK = %q, want false", envVars["GCL_UMASK"])
 		}
 	})
 
 	t.Run("does_not_set_umask_in_shell_mode", func(t *testing.T) {
 		envVars := map[string]string{}
 		applyDockerCompatibilityEnv(envVars, false)
-		if _, ok := envVars["GCL_DOCKER_UMASK"]; ok {
-			t.Fatalf("GCL_DOCKER_UMASK must be unset in shell mode")
+		if _, ok := envVars["GCL_UMASK"]; ok {
+			t.Fatalf("GCL_UMASK must be unset in shell mode")
 		}
 	})
 }
@@ -1107,7 +1106,6 @@ fi
 printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
 `
 }
-
 
 func fakeGitLabCILocalDockerUserModelScript() string {
 	return `#!/bin/sh

@@ -696,12 +696,12 @@ func TestEnvArgsSkipsGCLConfigKeys(t *testing.T) {
 
 	args := envArgs(map[string]string{
 		"CI_JOB_ID":         "1",
-		"GCL_DOCKER_UMASK":  "false",
+		"GCL_UMASK":         "false",
 		"CI_PIPELINE_ID":    "2",
 		"GCL_SOME_OTHER_OP": "x",
 	})
 	joined := strings.Join(args, " ")
-	if strings.Contains(joined, "GCL_DOCKER_UMASK") {
+	if strings.Contains(joined, "GCL_UMASK") {
 		t.Fatalf("args must not include GCL_* keys, got %q", joined)
 	}
 	if !strings.Contains(joined, "CI_JOB_ID=1") || !strings.Contains(joined, "CI_PIPELINE_ID=2") {
