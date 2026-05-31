@@ -152,6 +152,63 @@ The JSON lint artifact is useful for debugging and AI tools. GitLab does not
 treat it as a native test report. The JUnit report belongs to `glut run`,
 because that command executes tests.
 
+#### Waiting for the Docker daemon
+
+The DinD service takes a few seconds to become ready. GLUT detects this
+automatically: tests with `setup.docker: false` run immediately while the
+daemon starts, and GLUT waits only when the first test that needs Docker is
+about to run. If the daemon becomes ready during the non-docker tests no extra
+waiting happens at all.
+
+The default wait timeout is 120 seconds. Override it with `--wait-timeout`:
+
+```yaml
+  script:
+    - glut run --wait-timeout=60s --report=junit:reports/glut-junit.xml ./tests
+```
+
+Or with the environment variable `GLUT_WAIT_TIMEOUT=60s`.
+
+If the daemon is not reachable within the timeout, GLUT exits with an error
+that includes the `DOCKER_HOST` address so the problem is easy to diagnose.
+
+#### Private registry authentication
+
+When your tests pull images from a private registry you must log in before
+running GLUT. The DinD daemon starts with an empty Docker config, so
+credentials from the host or the GitLab runner are not inherited.
+
+Add a login step in `script` before calling `glut run`:
+
+```yaml
+test:glut:
+  stage: test
+  image: ghcr.io/pandasoft-zz/glut:latest
+  services:
+    - name: docker:25-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - mkdir -p "$HOME/.docker"
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "$DOCKER_REGISTRY_URL"
+        "$(printf '%s:%s' "$DOCKER_REGISTRY_USERNAME" "$DOCKER_REGISTRY_PASSWORD" | base64 | tr -d '\n')"
+        > "$HOME/.docker/config.json"
+    - mkdir -p reports
+    - glut run --report=junit:reports/glut-junit.xml ./tests
+  artifacts:
+    when: always
+    reports:
+      junit: reports/glut-junit.xml
+    paths:
+      - reports/glut-junit.xml
+```
+
+Store `DOCKER_REGISTRY_URL`, `DOCKER_REGISTRY_USERNAME`, and
+`DOCKER_REGISTRY_PASSWORD` as masked CI/CD variables in your GitLab project
+settings.
+
 For a local manual check, you can start a Docker daemon container and point GLUT
 at it:
 

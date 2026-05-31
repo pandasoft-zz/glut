@@ -15,6 +15,7 @@ type RunOptions struct {
 	Format         string
 	Reports        []string
 	Timeout        time.Duration
+	WaitTimeout    time.Duration
 	Debug          bool
 	KeepWorkspace  bool
 	DebugPause     string
@@ -49,6 +50,7 @@ func runOptionsFromCommand(args []string) RunOptions {
 		Format:         runFormat,
 		Reports:        append([]string(nil), runReports...),
 		Timeout:        runTimeout,
+		WaitTimeout:    runWaitTimeout,
 		Debug:          runDebug,
 		KeepWorkspace:  runKeepWorkspace,
 		DebugPause:     runDebugPause,
