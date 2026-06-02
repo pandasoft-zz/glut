@@ -21,23 +21,26 @@ type containerCapture struct {
 	logs    chan []byte
 }
 
-// dockerOutputMonitor watches Docker events for containers that use the GLUT
-// volume and streams their output via docker logs. This captures the full
-// container stdout+stderr that gcl discards due to pipe buffering.
+// dockerOutputMonitor watches Docker container events for containers that use
+// the GLUT volume and captures their output before docker rm is called.
+// Strategy: on start, launch a goroutine that blocks on "docker wait" and then
+// immediately calls "docker logs" — this races against gcl's docker rm cleanup
+// but consistently wins because gcl's cleanup runs async (multiple Promise hops
+// in Node.js) while our goroutine calls docker logs synchronously.
 type dockerOutputMonitor struct {
 	mu         sync.Mutex
-	captured   []*containerCapture
-	volumeName string // GLUT volume name used to filter containers
+	known      map[string]*containerCapture // containerID → capture
+	volumeName string
 	cancel     context.CancelFunc
 	watchDone  chan struct{}
 }
 
-// startDockerOutputMonitor begins watching Docker events for containers that
-// have the GLUT volume mounted. Call stop() after the pipeline finishes, then
-// collectLogs() to get output.
+// startDockerOutputMonitor begins watching Docker events for the given volume.
+// Call stop() after the pipeline finishes, then collectLogs() to merge output.
 func startDockerOutputMonitor(ctx context.Context, volumeName string) *dockerOutputMonitor {
 	watchCtx, cancel := context.WithCancel(ctx)
 	m := &dockerOutputMonitor{
+		known:      make(map[string]*containerCapture),
 		volumeName: volumeName,
 		cancel:     cancel,
 		watchDone:  make(chan struct{}),
@@ -50,8 +53,7 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 	defer close(m.watchDone)
 
 	// Docker Desktop on WSL2 does not support --filter volume=NAME for
-	// container events. We watch all container starts and filter by
-	// inspecting mounts in the event loop.
+	// container events so we filter by inspecting mounts on each start.
 	cmd := exec.CommandContext(ctx, "docker", "events",
 		"--filter", "type=container",
 		"--filter", "event=start",
@@ -72,7 +74,6 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 		if containerID == "" {
 			continue
 		}
-		// Filter: only capture containers that have the GLUT volume mounted.
 		jobName, ok := containerInfo(containerID, m.volumeName)
 		if !ok {
 			continue
@@ -83,22 +84,27 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 			logs:    make(chan []byte, 1),
 		}
 		m.mu.Lock()
-		m.captured = append(m.captured, cap)
+		m.known[containerID] = cap
 		m.mu.Unlock()
 
-		go streamContainerLogs(cap)
+		// docker wait blocks until container exits, then we immediately call
+		// docker logs — this races against gcl's docker rm but wins because
+		// gcl's cleanup runs through multiple async Node.js Promise hops.
+		go captureAfterExit(cap)
 	}
 }
 
-// streamContainerLogs runs docker logs --follow in the background and sends
-// the combined output to cap.logs when the container exits.
-func streamContainerLogs(cap *containerCapture) {
-	// Use a background context with a long timeout so logs are collected
-	// even after the monitor's context is cancelled (gcl already exited).
+// captureAfterExit waits for the container to exit then immediately captures
+// its logs before gcl's async cleanup can call docker rm.
+func captureAfterExit(cap *containerCapture) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	out, _ := exec.CommandContext(ctx, "docker", "logs", "--follow", cap.id).CombinedOutput()
+	// Block until the container exits.
+	exec.CommandContext(ctx, "docker", "wait", cap.id).Run() //nolint:errcheck
+
+	// Container has exited; capture logs immediately before docker rm.
+	out, _ := exec.CommandContext(ctx, "docker", "logs", cap.id).CombinedOutput()
 	cap.logs <- out
 }
 
@@ -108,15 +114,17 @@ func (m *dockerOutputMonitor) stop() {
 	<-m.watchDone
 }
 
-// collectLogs waits for all docker logs goroutines to finish and merges the
-// captured output into the provided jobs map. Must be called after stop().
+// collectLogs waits for all log-capture goroutines and merges output into jobs.
+// Must be called after stop().
 func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 	m.mu.Lock()
-	captured := make([]*containerCapture, len(m.captured))
-	copy(captured, m.captured)
+	caps := make([]*containerCapture, 0, len(m.known))
+	for _, c := range m.known {
+		caps = append(caps, c)
+	}
 	m.mu.Unlock()
 
-	for _, cap := range captured {
+	for _, cap := range caps {
 		if cap.jobName == "" {
 			continue
 		}
@@ -138,7 +146,7 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 
 // containerInfo inspects a container and returns the CI job name and whether
 // the GLUT volume is mounted. ok is false when the container is not part of
-// this GLUT test run (no GLUT volume) or when inspect fails.
+// this GLUT test run or when inspect fails.
 func containerInfo(containerID, glutVolumeName string) (jobName string, ok bool) {
 	out, err := exec.Command("docker", "inspect",
 		"--format", "{{range .Mounts}}{{if eq .Type \"volume\"}}{{.Name}}\n{{end}}{{end}}",
