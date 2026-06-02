@@ -148,6 +148,48 @@ func TestPersonalAccessTokenResponse(t *testing.T) {
 	}
 }
 
+func TestProjectResponseIncludesPermissionsWithDefaultAccessLevel(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{})
+
+	resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1"), "test-token", nil)
+	defer closeBody(t, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := decodeObject(t, resp.Body)
+	permissions, _ := body["permissions"].(map[string]any)
+	projectAccess, _ := permissions["project_access"].(map[string]any)
+	if projectAccess["access_level"] != float64(40) {
+		t.Fatalf("expected default access_level 40, got %v", projectAccess["access_level"])
+	}
+	if permissions["group_access"] != nil {
+		t.Fatalf("expected group_access nil, got %v", permissions["group_access"])
+	}
+}
+
+func TestProjectResponseRespectsConfiguredAccessLevel(t *testing.T) {
+	level := config.AccessLevelGuest
+	server := startTestServer(t, config.APISetupConfig{
+		Project: &config.ProjectConfig{AccessLevel: &level},
+	})
+
+	resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1"), "test-token", nil)
+	defer closeBody(t, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := decodeObject(t, resp.Body)
+	permissions, _ := body["permissions"].(map[string]any)
+	projectAccess, _ := permissions["project_access"].(map[string]any)
+	if projectAccess["access_level"] != float64(10) {
+		t.Fatalf("expected access_level 10, got %v", projectAccess["access_level"])
+	}
+}
+
 func TestProjectLookupByIDAndPath(t *testing.T) {
 	server := startTestServer(t, config.APISetupConfig{})
 

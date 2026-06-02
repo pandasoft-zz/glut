@@ -263,6 +263,19 @@
         },
         "path": {
           "type": "string"
+        },
+        "access_level": {
+          "description": "Member access level in permissions.project_access. Accepts string (guest, reporter, developer, maintainer, owner) or integer (10, 20, 30, 40, 50). Defaults to maintainer (40).",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["guest", "reporter", "developer", "maintainer", "owner"]
+            },
+            {
+              "type": "integer",
+              "enum": [10, 20, 30, 40, 50]
+            }
+          ]
         }
       }
     },

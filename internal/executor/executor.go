@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,11 +71,26 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 
 	args := append(baseArgs(cfg), dockerArgs(cfg)...)
 	args = append(args, envArgs(cfg.EnvVars)...)
+	var monitor *dockerOutputMonitor
+	if cfg.UseDocker && len(cfg.DockerVolumes) > 0 {
+		volName := strings.SplitN(cfg.DockerVolumes[0], ":", 2)[0]
+		monitor = startDockerOutputMonitor(runCtx, volName)
+	}
+
 	stdout, stderr, err := runCommand(runCtx, cfg, args...)
+
+	if monitor != nil {
+		monitor.stop()
+	}
+
 	result := RunResult{
 		Jobs:      parseJobOutputs(stdout, stderr),
 		RawStdout: stdout,
 		RawStderr: stderr,
+	}
+	mergeJobLogs(result.Jobs, cfg.WorkspacePath)
+	if monitor != nil {
+		monitor.collectLogs(result.Jobs)
 	}
 	if err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
@@ -414,6 +430,10 @@ func parseGitLabOutput(jobs map[string]JobOutput, raw string, stream string) {
 			if strings.HasPrefix(jobName, ">") || strings.Contains(jobName, " ") {
 				continue
 			}
+			// Skip gcl heartbeat messages — not real container output.
+			if matches[2] == "still running..." {
+				continue
+			}
 			job := ensureJob(jobs, jobName)
 			switch stream {
 			case "stderr":
@@ -423,6 +443,36 @@ func parseGitLabOutput(jobs map[string]JobOutput, raw string, stream string) {
 			}
 			jobs[job.Name] = job
 		}
+	}
+}
+
+// mergeJobLogs reads .gitlab-ci-local/output/*.log files and overwrites the
+// Stdout of each matching job. In Docker mode, gitlab-ci-local buffers
+// container output due to missing TTY allocation; the log files contain the
+// complete output that is not captured in gcl's own stdout stream.
+func mergeJobLogs(jobs map[string]JobOutput, workspacePath string) {
+	logDir := filepath.Join(workspacePath, ".gitlab-ci-local", "output")
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".log") {
+			continue
+		}
+		encoded := strings.TrimSuffix(entry.Name(), ".log")
+		jobName, err := url.PathUnescape(encoded)
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(logDir, entry.Name()))
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		job := jobs[jobName]
+		job.Name = jobName
+		job.Stdout = string(data)
+		jobs[jobName] = job
 	}
 }
 

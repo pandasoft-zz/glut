@@ -1,0 +1,49 @@
+stages:
+  - release
+
+semantic-release:
+  stage: release
+  image: node:22-slim
+  variables:
+    GL_TOKEN: $CI_JOB_TOKEN
+  before_script:
+    - apt-get update -qq && apt-get install -y --no-install-recommends git 2>&1
+    - git config user.email "$GITLAB_USER_EMAIL"
+    - git config user.name "$GITLAB_USER_NAME"
+    - git config commit.gpgSign false
+  script:
+    - mkdir /sr
+    - printf '{"private":true,"dependencies":{"semantic-release":"*","@semantic-release/gitlab":"*","@semantic-release/commit-analyzer":"*"}}' > /sr/package.json
+    - npm install --prefix /sr --loglevel=error 2>&1
+    - printf '{"branches":["main"],"plugins":["@semantic-release/commit-analyzer","@semantic-release/gitlab"]}' > .releaserc.json
+    - /sr/node_modules/.bin/semantic-release
+---
+.glut:
+  name: "semantic-release @semantic-release/gitlab verifyConditions passes with permissions field"
+  setup:
+    branch: main
+    docker: true
+    api:
+      token:
+        valid: true
+        scopes: [api]
+      project:
+        path: "test-group/test-project"
+        default_branch: main
+        access_level: maintainer
+    git:
+      origin:
+        branch: main
+        commands:
+          - 'git tag v2.0.0'
+          - 'git push origin --tags'
+          - 'git commit --allow-empty -m "feat: new feature"'
+  assert:
+    job:
+      semantic-release:
+        exit-status: 0
+    api:
+      "GET /api/v4/projects/*":
+        called: true
+      "POST /api/v4/projects/*/releases":
+        called: true

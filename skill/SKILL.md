@@ -581,6 +581,71 @@ need shell commands — this is the default and keeps the suite fast.
 **Rule of thumb**: start without Docker to cover logic. Add `docker: true` when
 you need to prove the component works in its actual runtime image.
 
+## Debugging Failing Tests
+
+### Reading job output
+
+Job output (`assert.job.*.stdout`) is populated from
+`.gitlab-ci-local/output/{jobName}.log` in the workspace directory. These log
+files contain the **complete container output** including all script steps.
+
+In Docker mode (`setup.docker: true`) the container output is buffered by
+Node.js and not captured in gitlab-ci-local's own stdout stream. GLUT reads
+the log files automatically after the pipeline finishes, so `assert.job.stdout`
+and failure reports show the real output. **Do not redirect job script output
+to files or alternative paths** — just let it go to stdout and GLUT handles
+the rest.
+
+### Flags for debugging
+
+```bash
+# Keep workspace after failure so you can inspect files
+glut run --keep-workspace path/to/test.yml
+
+# Show raw gitlab-ci-local output, API call log, git log
+glut run --debug path/to/test.yml
+
+# Combine both
+glut run --debug --keep-workspace path/to/test.yml
+```
+
+### Inspecting kept workspace
+
+When `--keep-workspace` is active, the workspace is kept at a path printed in
+the failure output (e.g. `/tmp/glut-XXXXXXXX`):
+
+```
+workspace kept: /tmp/glut-XXXXXXXX
+```
+
+Useful paths inside the kept workspace:
+
+```bash
+# Full job output (complete container stdout+stderr)
+cat /tmp/glut-XXXXXXXX/workspace/.gitlab-ci-local/output/my-job.log
+
+# Origin git history (what was pushed)
+git --git-dir=/tmp/glut-XXXXXXXX/.glut-origin.git log --oneline --all
+
+# All files in the workspace at pipeline time
+ls /tmp/glut-XXXXXXXX/workspace/
+```
+
+For Docker-mode tests the `--debug` flag also shows:
+
+- `Mock API calls` — every HTTP request the job made to the mock GitLab server
+- `Origin git log` — commits and tags in the origin repo after the pipeline
+- `Raw gitlab-ci-local stderr` — gcl's own error/warning messages
+
+### Common failure patterns
+
+| Symptom | Likely cause |
+|---------|-------------|
+| `exit-status` mismatch, no stdout in report | Script error — read the `.log` file |
+| `assert.api.*.called` fails | API call never made — check stdout for error before the API call |
+| `assert.git.origin.commits` fails | `git push` failed — check git remote config and origin git log |
+| `assert.job.*.stdout` fails despite correct output | Use a matcher (`contain-substring`) instead of exact string |
+
 ## Review Checklist
 
 - The file has exactly two YAML documents.
