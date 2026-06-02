@@ -135,3 +135,70 @@ volume (`glut-<id>`), populates it by piping a tar archive through
 `docker run -i … tar -x` (which works in all environments), and passes the
 volume name as `--volume vol-name:path` to GCL. Named volumes are managed
 entirely by the Docker daemon and are always accessible to job containers.
+
+## Docker Jobs: Parallel Job Limit in Docker Desktop
+
+When running more than two Docker jobs in the **same stage**, Docker Desktop on
+WSL2 (and similar environments) can fail with errors such as:
+
+```
+Error: Command failed with exit code 1: docker start --attach <id>
+Error response from daemon: No such container: <id>
+```
+
+**Root cause**: Each parallel job runs a `copied to docker volumes` step that
+reads from the shared GLUT Docker volume while simultaneously writing to a new
+per-job build volume. Docker Desktop's internal VM cannot reliably handle more
+than two concurrent volume copy operations against the same source volume.
+
+**Current limitation**: GLUT tests with Docker mode should place no more than
+**two Docker jobs in any single stage**. Split four parallel jobs across two
+stages (`wave-one` and `wave-two`) as a workaround:
+
+```yaml
+stages:
+  - wave-one
+  - wave-two
+
+job-alpha:
+  stage: wave-one
+  image: debian:12-slim
+  script: [...]
+
+job-beta:
+  stage: wave-one
+  image: debian:12-slim
+  script: [...]
+
+job-gamma:
+  stage: wave-two
+  image: debian:12-slim
+  script: [...]
+
+job-delta:
+  stage: wave-two
+  image: debian:12-slim
+  script: [...]
+```
+
+This limitation is specific to Docker Desktop on Windows/WSL2 and may not
+affect a native Linux Docker daemon. It is a known issue to investigate and
+fix in a future release.
+
+## Docker Jobs: Container Output Capture Races With docker rm
+
+GLUT captures Docker container stdout/stderr by watching `docker events` for
+container start events and then running `docker logs` after the container exits
+(`docker wait` + `docker logs`). This races against `gitlab-ci-local`'s
+container cleanup (`docker rm`).
+
+For fast-exiting containers (jobs that finish in under ~1 second), the container
+may be removed by the time `docker logs` runs, causing `No such container`
+errors in `job.Stdout`. The `docker wait` approach generally wins because
+`gitlab-ci-local` calls `docker rm` through Node.js async Promises (multiple
+event loop ticks after exit), giving the Go goroutine enough time to run
+`docker logs` first.
+
+Practical guideline: if a Docker job exits in under one second and you need
+`stdout` assertions, add a small sleep (e.g., `sleep 0.1` between output
+lines) so the container lives long enough for GLUT to capture its logs.
