@@ -86,6 +86,7 @@ setup:
 | --- | --- | --- | --- |
 | `path` | string | `test-group/test-project` | Project path with namespace. |
 | `default_branch` | string | `main` | Project default branch. |
+| `access_level` | string or integer | `maintainer` | Member access level in `permissions.project_access`. String values: `guest` (10), `reporter` (20), `developer` (30), `maintainer` (40), `owner` (50). |
 
 ```yaml
 setup:
@@ -93,6 +94,7 @@ setup:
     project:
       path: "platform/components"
       default_branch: "trunk"
+      access_level: developer
 ```
 
 The mock accepts two project ids:
@@ -215,7 +217,13 @@ Example response:
   "id": 1,
   "path_with_namespace": "test-group/test-project",
   "name": "test-project",
-  "default_branch": "main"
+  "default_branch": "main",
+  "permissions": {
+    "project_access": {
+      "access_level": 40
+    },
+    "group_access": null
+  }
 }
 ```
 

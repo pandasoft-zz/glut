@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -112,8 +114,53 @@ type TokenConfig struct {
 }
 
 type ProjectConfig struct {
-	DefaultBranch string `yaml:"default_branch"`
-	Path          string `yaml:"path"`
+	DefaultBranch string            `yaml:"default_branch"`
+	Path          string            `yaml:"path"`
+	AccessLevel   *AccessLevelValue `yaml:"access_level"` // nil → 40 (Maintainer)
+}
+
+// AccessLevelValue is a GitLab member access level. It accepts either a string
+// name ("guest", "reporter", "developer", "maintainer", "owner") or the
+// corresponding integer (10, 20, 30, 40, 50) in YAML.
+type AccessLevelValue int
+
+const (
+	AccessLevelGuest      AccessLevelValue = 10
+	AccessLevelReporter   AccessLevelValue = 20
+	AccessLevelDeveloper  AccessLevelValue = 30
+	AccessLevelMaintainer AccessLevelValue = 40
+	AccessLevelOwner      AccessLevelValue = 50
+)
+
+func (a *AccessLevelValue) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("access_level must be a string or integer")
+	}
+	switch strings.ToLower(value.Value) {
+	case "guest":
+		*a = AccessLevelGuest
+	case "reporter":
+		*a = AccessLevelReporter
+	case "developer":
+		*a = AccessLevelDeveloper
+	case "maintainer":
+		*a = AccessLevelMaintainer
+	case "owner":
+		*a = AccessLevelOwner
+	default:
+		n, err := strconv.Atoi(value.Value)
+		if err != nil {
+			return fmt.Errorf("unknown access level %q (valid: guest, reporter, developer, maintainer, owner)", value.Value)
+		}
+		switch AccessLevelValue(n) {
+		case AccessLevelGuest, AccessLevelReporter, AccessLevelDeveloper,
+			AccessLevelMaintainer, AccessLevelOwner:
+			*a = AccessLevelValue(n)
+		default:
+			return fmt.Errorf("invalid access level %d (valid: 10, 20, 30, 40, 50)", n)
+		}
+	}
+	return nil
 }
 
 type APISeedConfig struct {

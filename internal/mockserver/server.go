@@ -205,10 +205,28 @@ func (s *Server) handleProject(w http.ResponseWriter) {
 		"path_with_namespace": path,
 		"name":                projectName(path),
 		"default_branch":      s.defaultBranch(),
+		"permissions": map[string]any{
+			"project_access": map[string]any{
+				"access_level": s.projectAccessLevel(),
+			},
+			"group_access": nil,
+		},
 	})
 }
 
+func (s *Server) projectAccessLevel() int {
+	if s.cfg.Project != nil && s.cfg.Project.AccessLevel != nil {
+		return int(*s.cfg.Project.AccessLevel)
+	}
+	return int(config.AccessLevelMaintainer)
+}
+
 func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.Request, rest string) bool {
+	if r.Method == http.MethodGet && strings.HasSuffix(rest, "/merge_requests") && strings.Contains(rest, "/repository/commits/") {
+		writeJSON(w, http.StatusOK, []any{})
+		return true
+	}
+
 	if r.Method == http.MethodPost && rest == "/repository/commits" {
 		body, ok := readJSONBody(w, r)
 		if !ok {

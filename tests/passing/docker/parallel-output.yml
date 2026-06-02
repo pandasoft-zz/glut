@@ -1,0 +1,71 @@
+stages:
+  - wave-one
+  - wave-two
+
+job-alpha:
+  stage: wave-one
+  image: debian:12-slim
+  script:
+    - for i in $(seq 1 15); do echo "alpha:line-$i"; sleep 0.1; done
+    - printf 'alpha:summary:%s\n' "$(seq 1 15 | tr '\n' ',')"
+
+job-beta:
+  stage: wave-one
+  image: debian:12-slim
+  script:
+    - for i in $(seq 1 15); do echo "beta:line-$i"; sleep 0.1; done
+    - printf 'beta:summary:%s\n' "$(seq 1 15 | tr '\n' ',')"
+
+job-gamma:
+  stage: wave-two
+  image: debian:12-slim
+  script:
+    - for i in $(seq 1 15); do echo "gamma:line-$i"; sleep 0.1; done
+    - printf 'gamma:summary:%s\n' "$(seq 1 15 | tr '\n' ',')"
+
+job-delta:
+  stage: wave-two
+  image: debian:12-slim
+  script:
+    - for i in $(seq 1 15); do echo "delta:line-$i"; sleep 0.1; done
+    - printf 'delta:summary:%s\n' "$(seq 1 15 | tr '\n' ',')"
+---
+.glut:
+  name: "Docker parallel jobs produce isolated and ordered output"
+  setup:
+    branch: main
+    docker: true
+  assert:
+    job:
+      job-alpha:
+        exit-status: 0
+        stdout:
+          - "alpha:line-1"
+          - "alpha:line-8"
+          - "alpha:line-15"
+          - "alpha:summary:1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,"
+          - "!/beta:|gamma:|delta:/"
+      job-beta:
+        exit-status: 0
+        stdout:
+          - "beta:line-1"
+          - "beta:line-8"
+          - "beta:line-15"
+          - "beta:summary:1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,"
+          - "!/alpha:|gamma:|delta:/"
+      job-gamma:
+        exit-status: 0
+        stdout:
+          - "gamma:line-1"
+          - "gamma:line-8"
+          - "gamma:line-15"
+          - "gamma:summary:1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,"
+          - "!/alpha:|beta:|delta:/"
+      job-delta:
+        exit-status: 0
+        stdout:
+          - "delta:line-1"
+          - "delta:line-8"
+          - "delta:line-15"
+          - "delta:summary:1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,"
+          - "!/alpha:|beta:|gamma:/"
