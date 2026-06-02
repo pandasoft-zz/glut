@@ -104,7 +104,14 @@ func captureAfterExit(cap *containerCapture) {
 	exec.CommandContext(ctx, "docker", "wait", cap.id).Run() //nolint:errcheck
 
 	// Container has exited; capture logs immediately before docker rm.
-	out, _ := exec.CommandContext(ctx, "docker", "logs", cap.id).CombinedOutput()
+	// Use Output() (not CombinedOutput) so that Docker daemon error messages
+	// on stderr (e.g. "No such container" when the race is lost) are never
+	// written into the job's stdout.
+	out, err := exec.CommandContext(ctx, "docker", "logs", cap.id).Output()
+	if err != nil {
+		cap.logs <- nil
+		return
+	}
 	cap.logs <- out
 }
 
