@@ -180,6 +180,46 @@ func TestEnvVars(t *testing.T) {
 	})
 }
 
+func TestUnsetVars(t *testing.T) {
+	w := &Workspace{}
+
+	t.Run("push returns nil", func(t *testing.T) {
+		cfg := parser.SetupConfig{Branch: "main"}
+		if got := w.UnsetVars(cfg); got != nil {
+			t.Fatalf("expected nil for push, got %v", got)
+		}
+	})
+
+	t.Run("default source returns nil", func(t *testing.T) {
+		if got := w.UnsetVars(parser.SetupConfig{}); got != nil {
+			t.Fatalf("expected nil for default source, got %v", got)
+		}
+	})
+
+	t.Run("merge_request_event unsets CI_COMMIT_BRANCH", func(t *testing.T) {
+		cfg := parser.SetupConfig{PipelineSource: "merge_request_event", Branch: "feature-x"}
+		got := w.UnsetVars(cfg)
+		if len(got) != 1 || got[0] != "CI_COMMIT_BRANCH" {
+			t.Fatalf("expected [CI_COMMIT_BRANCH], got %v", got)
+		}
+	})
+
+	t.Run("tag pipeline unsets CI_COMMIT_BRANCH", func(t *testing.T) {
+		cfg := parser.SetupConfig{Tag: "v1.2.3"}
+		got := w.UnsetVars(cfg)
+		if len(got) != 1 || got[0] != "CI_COMMIT_BRANCH" {
+			t.Fatalf("expected [CI_COMMIT_BRANCH], got %v", got)
+		}
+	})
+
+	t.Run("schedule does not unset CI_COMMIT_BRANCH", func(t *testing.T) {
+		cfg := parser.SetupConfig{PipelineSource: "schedule", Branch: "main"}
+		if got := w.UnsetVars(cfg); got != nil {
+			t.Fatalf("expected nil for schedule, got %v", got)
+		}
+	})
+}
+
 func TestPipelineUserEnv(t *testing.T) {
 	w := &Workspace{
 		Dir:          "/tmp/work",

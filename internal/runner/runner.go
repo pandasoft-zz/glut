@@ -488,6 +488,7 @@ func runSingleTest(
 		WorkspacePath:    work.WorkspaceDir,
 		PipelineYAML:     testFile.PipelineYAML,
 		EnvVars:          envVars,
+		UnsetVars:        work.UnsetVars(testFile.Glut.Setup),
 		MockBinPath:      workspace.MockBinaryBinDir(work.Dir),
 		Timeout:          opts.Timeout,
 		Debug:            opts.Debug,

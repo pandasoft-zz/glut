@@ -36,6 +36,7 @@ type ExecutorConfig struct {
 	WorkspacePath    string
 	PipelineYAML     string
 	EnvVars          map[string]string
+	UnsetVars        []string // variables to explicitly unset via --unset-variable
 	MockBinPath      string
 	Timeout          time.Duration
 	Debug            bool
@@ -71,6 +72,7 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 
 	args := append(baseArgs(cfg), dockerArgs(cfg)...)
 	args = append(args, envArgs(cfg.EnvVars)...)
+	args = append(args, unsetArgs(cfg.UnsetVars)...)
 	var monitor *dockerOutputMonitor
 	if cfg.UseDocker && len(cfg.DockerVolumes) > 0 {
 		volName := strings.SplitN(cfg.DockerVolumes[0], ":", 2)[0]
@@ -114,6 +116,7 @@ func ListJobs(ctx context.Context, cfg ExecutorConfig) ([]string, error) {
 	defer cancel()
 
 	args := append([]string{"--list", "--file", pipelineFileName}, envArgs(cfg.EnvVars)...)
+	args = append(args, unsetArgs(cfg.UnsetVars)...)
 	stdout, stderr, err := runCommand(runCtx, cfg, args...)
 	if err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
@@ -307,6 +310,14 @@ func baseArgs(cfg ExecutorConfig) []string {
 	}
 	if !cfg.UseDocker {
 		return append([]string{"--shell-executor-no-image"}, args...)
+	}
+	return args
+}
+
+func unsetArgs(vars []string) []string {
+	args := make([]string, 0, len(vars)*2)
+	for _, v := range vars {
+		args = append(args, "--unset-variable", v)
 	}
 	return args
 }

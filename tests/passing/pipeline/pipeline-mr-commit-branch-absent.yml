@@ -1,0 +1,34 @@
+stages: [test]
+
+check-branch-var:
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - echo "branch=${CI_COMMIT_BRANCH}"
+
+# This job must NOT run in MR pipelines: CI_COMMIT_BRANCH is unset so the
+# condition can never match, even when the workspace branch equals the default.
+branch-equals-default:
+  stage: test
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - echo "should not run in MR"
+---
+.glut:
+  name: "CI_COMMIT_BRANCH is absent in merge_request_event pipelines"
+  setup:
+    branch: "feature/xyz"
+    pipeline_source: "merge_request_event"
+    merge_request:
+      iid: 10
+      target_branch: "main"
+  assert:
+    job:
+      check-branch-var:
+        exit-status: 0
+        stdout:
+          - "branch="
+      branch-equals-default:
+        present: false

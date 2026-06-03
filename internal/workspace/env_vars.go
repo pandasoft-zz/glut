@@ -186,6 +186,27 @@ func applyPipelineUserEnv(env map[string]string, setup parser.SetupConfig) {
 	env["GITLAB_USER_LOGIN"] = login
 }
 
+// UnsetVars returns variables that gitlab-ci-local would auto-inject from git
+// context but that must be absent in the given pipeline type to match real
+// GitLab behaviour.
+//
+// CI_COMMIT_BRANCH: gitlab-ci-local always sets this to the current git branch
+// (D.commit.REF_NAME in GCL source) regardless of pipeline source. On real
+// GitLab the variable is not available in MR or tag pipelines. Without an
+// explicit --unset-variable the workspace branch ("main") leaks into MR and tag
+// jobs, causing rules like `if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH` to
+// fire incorrectly. Fix tracked in issue #69.
+func (w *Workspace) UnsetVars(setup parser.SetupConfig) []string {
+	source := config.PipelineSourcePush
+	if setup.PipelineSource != "" {
+		source = setup.PipelineSource
+	}
+	if source == config.PipelineSourceMR || setup.Tag != "" {
+		return []string{"CI_COMMIT_BRANCH"}
+	}
+	return nil
+}
+
 func applyMergeRequestEnv(env map[string]string, setup parser.SetupConfig) {
 	if setup.MergeRequest != nil {
 		env["CI_MERGE_REQUEST_IID"] = fmt.Sprintf("%d", setup.MergeRequest.IID)
