@@ -709,6 +709,35 @@ func TestEnvArgsSkipsGCLConfigKeys(t *testing.T) {
 	}
 }
 
+func TestUnsetArgs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty", func(t *testing.T) {
+		t.Parallel()
+		if got := unsetArgs(nil); len(got) != 0 {
+			t.Fatalf("expected empty, got %v", got)
+		}
+	})
+
+	t.Run("single var", func(t *testing.T) {
+		t.Parallel()
+		got := unsetArgs([]string{"CI_COMMIT_BRANCH"})
+		want := []string{"--unset-variable", "CI_COMMIT_BRANCH"}
+		if strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("multiple vars", func(t *testing.T) {
+		t.Parallel()
+		got := unsetArgs([]string{"FOO", "BAR"})
+		joined := strings.Join(got, " ")
+		if joined != "--unset-variable FOO --unset-variable BAR" {
+			t.Fatalf("got %q", joined)
+		}
+	})
+}
+
 func TestResolveExecutable(t *testing.T) {
 	t.Parallel()
 
