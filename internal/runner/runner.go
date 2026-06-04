@@ -168,6 +168,21 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		}
 
 		testResult := runSingleTest(ctx, repoRoot, testFile, opts, &preservedFailed)
+
+		// For Docker tests that fail at the infrastructure level (pipeline
+		// error, no jobs ran at all), retry once. This handles transient
+		// daemon failures on Docker Desktop / WSL2 — e.g. a container that
+		// fails to start due to accumulated daemon load — without retrying
+		// genuine job or assertion failures.
+		if testNeedsDocker(&testFile) && !testResult.Passed &&
+			testResult.Error != nil && len(testResult.Failures) == 0 {
+			time.Sleep(2 * time.Second)
+			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, &preservedFailed)
+			if retryResult.Passed || len(retryResult.Failures) > 0 {
+				testResult = retryResult
+			}
+		}
+
 		result.Tests = append(result.Tests, testResult)
 		if testResult.Passed {
 			result.Passed++
@@ -545,11 +560,14 @@ func runSingleTest(
 		primaryErr = fmt.Errorf("read mock logs: %w", err)
 	}
 
-	// Build an origin source for assertions. For Docker runs, use a lazy tar
-	// origin so the Docker volume is only extracted if git.origin assertions
-	// actually run. For non-Docker runs, use the filesystem path directly.
+	// Build an origin source for assertions. For Docker runs that assert on
+	// git.origin, fetch the origin from inside the volume — the pipeline may
+	// have pushed commits that changed it. For all other cases (non-Docker or
+	// no git.origin assertions) the host filesystem path is sufficient and
+	// avoids the extra docker run that would add cumulative daemon load on
+	// Docker Desktop / WSL2.
 	originSource := asserter.NewFSOrigin(work.OriginRepo)
-	if dockerVolumeName != "" {
+	if dockerVolumeName != "" && needsDockerOrigin(testFile) {
 		tarData, fetchErr := workspace.FetchGitOriginTar(dockerVolumeName, work.Dir)
 		if fetchErr != nil && primaryErr == nil {
 			primaryErr = fmt.Errorf("fetch git origin from docker volume: %w", fetchErr)
@@ -919,6 +937,13 @@ func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
 		return true, false
 	}
 	return false, true
+}
+
+// needsDockerOrigin reports whether the test has assert.git.origin assertions
+// that require reading the git origin from inside the Docker volume. When a
+// pipeline pushes commits, the in-volume origin differs from the host copy.
+func needsDockerOrigin(testFile parser.TestFile) bool {
+	return testFile.Glut.Assert.Git != nil && testFile.Glut.Assert.Git.Origin != nil
 }
 
 func errorsToStrings(errs []error) []string {

@@ -16,9 +16,10 @@ import (
 var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
 
 type containerCapture struct {
-	id      string
-	jobName string // URL-decoded job name; empty if unknown
-	logs    chan []byte
+	id       string
+	jobName  string // URL-decoded job name; empty if unknown
+	buildVol string // GCL per-job build volume name; empty if none found
+	logs     chan []byte
 }
 
 // dockerOutputMonitor watches Docker container events for containers that use
@@ -74,14 +75,15 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 		if containerID == "" {
 			continue
 		}
-		jobName, ok := containerInfo(containerID, m.volumeName)
+		jobName, buildVol, ok := containerInfo(containerID, m.volumeName)
 		if !ok {
 			continue
 		}
 		cap := &containerCapture{
-			id:      containerID,
-			jobName: jobName,
-			logs:    make(chan []byte, 1),
+			id:       containerID,
+			jobName:  jobName,
+			buildVol: buildVol,
+			logs:     make(chan []byte, 1),
 		}
 		m.mu.Lock()
 		m.known[containerID] = cap
@@ -94,25 +96,45 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 	}
 }
 
-// captureAfterExit waits for the container to exit then immediately captures
-// its logs before gcl's async cleanup can call docker rm.
+// captureAfterExit streams the container's logs in real-time until it exits.
+// Using --follow eliminates the docker wait → docker logs race against GCL's
+// async docker rm: by the time the container exits and --follow returns, all
+// output has already been received, so a concurrent docker rm cannot cause a
+// "No such container" error on a separate docker logs call.
 func captureAfterExit(cap *containerCapture) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Block until the container exits.
-	exec.CommandContext(ctx, "docker", "wait", cap.id).Run() //nolint:errcheck
-
-	// Container has exited; capture logs immediately before docker rm.
-	// Use Output() (not CombinedOutput) so that Docker daemon error messages
-	// on stderr (e.g. "No such container" when the race is lost) are never
-	// written into the job's stdout.
-	out, err := exec.CommandContext(ctx, "docker", "logs", cap.id).Output()
+	// --follow streams stdout until the container exits, then terminates.
+	// Output() (not CombinedOutput) keeps daemon error messages off the job stdout.
+	out, err := exec.CommandContext(ctx, "docker", "logs", "--follow", cap.id).Output()
 	if err != nil {
 		cap.logs <- nil
 		return
 	}
 	cap.logs <- out
+}
+
+// cleanupContainers removes all GCL job containers and their per-job build
+// volumes tracked by the monitor. Must be called after collectLogs — at that
+// point every container has already exited (captureAfterExit ran docker wait),
+// so docker rm is synchronous and safe. GCL removes containers and volumes via
+// Node.js async Promises; by removing them here we ensure the daemon's cleanup
+// backlog stays small between sequential tests on Docker Desktop / WSL2.
+// If GCL already removed a container or volume, the call is a silent no-op.
+func (m *dockerOutputMonitor) cleanupContainers() {
+	m.mu.Lock()
+	caps := make([]*containerCapture, 0, len(m.known))
+	for _, c := range m.known {
+		caps = append(caps, c)
+	}
+	m.mu.Unlock()
+	for _, c := range caps {
+		_ = exec.Command("docker", "rm", c.id).Run()
+		if c.buildVol != "" {
+			_ = exec.Command("docker", "volume", "rm", c.buildVol).Run()
+		}
+	}
 }
 
 // stop cancels the event watcher and waits for it to finish.
@@ -151,15 +173,16 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 	}
 }
 
-// containerInfo inspects a container and returns the CI job name and whether
-// the GLUT volume is mounted. ok is false when the container is not part of
-// this GLUT test run or when inspect fails.
-func containerInfo(containerID, glutVolumeName string) (jobName string, ok bool) {
+// containerInfo inspects a container and returns the CI job name, the GCL
+// per-job build volume name, and whether the GLUT volume is mounted. ok is
+// false when the container is not part of this GLUT test run or when inspect
+// fails.
+func containerInfo(containerID, glutVolumeName string) (jobName, buildVol string, ok bool) {
 	out, err := exec.Command("docker", "inspect",
 		"--format", "{{range .Mounts}}{{if eq .Type \"volume\"}}{{.Name}}\n{{end}}{{end}}",
 		containerID).Output()
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	hasGlutVol := false
 	for _, line := range strings.Split(string(out), "\n") {
@@ -168,6 +191,7 @@ func containerInfo(containerID, glutVolumeName string) (jobName string, ok bool)
 			hasGlutVol = true
 		}
 		if m := gclBuildVolumeRE.FindStringSubmatch(name); len(m) == 2 {
+			buildVol = name
 			decoded, err := url.PathUnescape(m[1])
 			if err == nil {
 				jobName = decoded
@@ -177,7 +201,7 @@ func containerInfo(containerID, glutVolumeName string) (jobName string, ok bool)
 		}
 	}
 	if !hasGlutVol {
-		return "", false
+		return "", "", false
 	}
-	return jobName, true
+	return jobName, buildVol, true
 }

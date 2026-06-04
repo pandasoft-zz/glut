@@ -202,3 +202,33 @@ event loop ticks after exit), giving the Go goroutine enough time to run
 Practical guideline: if a Docker job exits in under one second and you need
 `stdout` assertions, add a small sleep (e.g., `sleep 0.1` between output
 lines) so the container lives long enough for GLUT to capture its logs.
+
+## Docker Jobs: Volume Cleanup Timing on WSL2 / Docker Desktop
+
+On WSL2 with Docker Desktop, `docker run --rm` returns to the caller as soon
+as the container process exits. The daemon removes the container object
+**asynchronously** — it may still appear in `docker ps -a` for a brief window
+after the command returns. Two consequences occur when tests run back-to-back:
+
+1. **Volume removal fails**: `docker volume rm` refuses to remove a volume
+   while any container still references it. Containers spawned by
+   `gitlab-ci-local` (or by GLUT's own `ReadLogsFromDockerVolume` /
+   `FetchGitOriginTar`) may still be registered at the moment GLUT calls
+   `docker volume rm`, leaving the volume orphaned.
+
+2. **Next test's populate fails**: While the daemon processes cleanup from test
+   N, a `docker run` started by test N+1 may receive a transient tar or chown
+   error because daemon resources are partially busy.
+
+**Mitigations implemented in GLUT**:
+
+- `DestroyDockerVolume` runs `docker ps -a --filter volume=<name>` before
+  removing the volume and force-removes any lingering containers so that
+  `docker volume rm` can always succeed.
+
+- `CreateDockerVolume` retries the populate `docker run` up to three times
+  with exponential backoff (500 ms, 1 s) to survive transient daemon busy
+  errors between sequential tests.
+
+This behaviour is specific to Docker Desktop on Windows/WSL2. It does not
+reproduce on a native Linux Docker daemon.
