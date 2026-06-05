@@ -93,12 +93,6 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	mergeJobLogs(result.Jobs, cfg.WorkspacePath)
 	if monitor != nil {
 		monitor.collectLogs(result.Jobs)
-		// Remove GCL job containers synchronously after logs are captured.
-		// collectLogs already waited for each container to exit (docker wait),
-		// so docker rm is safe here. Removing them now prevents stopped
-		// containers from accumulating in the daemon between tests, which
-		// causes increasing latency on Docker Desktop / WSL2.
-		monitor.cleanupContainers()
 	}
 	if err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
