@@ -130,7 +130,7 @@ const (
 // is on a 9P or virtiofs filesystem (Windows-backed WSL2), named volumes are
 // needed; otherwise bind mounts work on native Linux Docker.
 func ResolveVolumeStrategy(strategy, workDir string) string {
-	if strategy != VolumeStrategyAuto {
+	if strategy != VolumeStrategyAuto && strategy != "" {
 		return strategy
 	}
 	data, err := os.ReadFile("/proc/mounts")

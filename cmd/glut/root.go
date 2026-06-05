@@ -40,9 +40,10 @@ var (
 	runKeepWorkspace  bool
 	runDebugPause     string
 	runKeepLastFailed int
-	runCopyStrategy   string
-	runInclude        []string
-	runInteractive    bool
+	runCopyStrategy          string
+	runDockerVolumeStrategy  string
+	runInclude               []string
+	runInteractive           bool
 	listPattern       string
 	lintFormat        string
 	doctorFormat      string
@@ -108,8 +109,9 @@ current directory. Each test gets its own workspace and mock services.`,
 			KeepWorkspace:    opts.KeepWorkspace,
 			DebugPause:       opts.DebugPause,
 			KeepLastFailed:   opts.KeepLastFailed,
-			CopyStrategy:     opts.CopyStrategy,
-			Include:          opts.Include,
+			CopyStrategy:         opts.CopyStrategy,
+			DockerVolumeStrategy: opts.DockerVolumeStrategy,
+			Include:              opts.Include,
 			Progress:         sinks,
 			DockerWaitOutput: os.Stderr,
 		})
@@ -231,6 +233,7 @@ func init() {
 	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, before-asserts, after-pipeline, or on-fail")
 	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
 	runCmd.Flags().StringVar(&runCopyStrategy, "copy-strategy", "auto", "Copy strategy: auto, rsync, native")
+	runCmd.Flags().StringVar(&runDockerVolumeStrategy, "docker-volume-strategy", "auto", "Docker volume strategy: auto (detect), bind (native Linux), volume (Docker Desktop/WSL2)")
 	runCmd.Flags().StringArrayVar(&runInclude, "include", nil, "Copy only these subdirectories into the workspace (repeatable)")
 	runCmd.Flags().BoolVarP(&runInteractive, "interactive", "i", false, "Select tests to run interactively")
 
