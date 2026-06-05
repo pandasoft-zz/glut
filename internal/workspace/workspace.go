@@ -34,9 +34,20 @@ type Workspace struct {
 	Dir           string
 	WorkspaceDir  string
 	OriginRepo    string
+	ContainerDir  string   // path inside Docker containers; defaults to Dir when empty
 	KeepWorkspace bool
 	DefaultBranch string   // effective default branch for CI_DEFAULT_BRANCH
 	hostEnv       []string // stored from Options.HostEnv for use in EnvVars
+}
+
+// effectiveContainerDir returns ContainerDir when set, otherwise Dir.
+// ContainerDir is set for Docker tests using the shared suite volume;
+// for non-Docker tests it is empty and the host Dir is used directly.
+func (w *Workspace) effectiveContainerDir() string {
+	if w.ContainerDir != "" {
+		return w.ContainerDir
+	}
+	return w.Dir
 }
 
 func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options) (workspace *Workspace, err error) {
