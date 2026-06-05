@@ -232,3 +232,29 @@ after the command returns. Two consequences occur when tests run back-to-back:
 
 This behaviour is specific to Docker Desktop on Windows/WSL2. It does not
 reproduce on a native Linux Docker daemon.
+
+## Docker Jobs: Volume Strategy Auto-Detection
+
+GLUT automatically selects between two strategies for providing workspace
+files to Docker job containers:
+
+- **bind** (native Linux): the host workspace directory is bind-mounted
+  directly at the same absolute path. No Docker named volume or Alpine
+  populate container is needed.
+- **volume** (Docker Desktop / WSL2): a Docker named volume is created,
+  populated via an Alpine container, and destroyed after all tests finish.
+
+Auto-detection reads `/proc/mounts` and checks whether the workspace path
+is on a `9p` or `virtiofs` filesystem. Those types appear exclusively when
+the workspace lives on a Windows-backed filesystem shared into the WSL2 VM.
+Native Linux workspaces are on `ext4`, `btrfs`, or similar — never `9p`.
+
+**Docker-in-Docker (DinD) limitation**: if GLUT itself runs inside a Docker
+container (common in CI pipelines using DinD), `/proc/mounts` shows
+`overlay2` rather than `9p`, so auto-detection selects `bind`. But bind
+mounts from the inner container are invisible to the outer Docker daemon, so
+jobs fail. In DinD environments, set the strategy explicitly:
+
+```
+glut run --docker-volume-strategy=volume ./tests/
+```
