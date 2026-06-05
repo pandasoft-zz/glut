@@ -194,7 +194,7 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		// fails to start due to accumulated daemon load — without retrying
 		// genuine job or assertion failures.
 		if testNeedsDocker(&testFile) && !testResult.Passed &&
-			testResult.Error != nil && len(testResult.Failures) == 0 {
+			testResult.Error != nil && len(testResult.JobOutputs) == 0 {
 			for _, sink := range opts.Progress {
 				sink.TestRetry(testResult.TestName, testResult.Error)
 			}
