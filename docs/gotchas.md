@@ -244,17 +244,15 @@ files to Docker job containers:
 - **volume** (Docker Desktop / WSL2): a Docker named volume is created,
   populated via an Alpine container, and destroyed after all tests finish.
 
-Auto-detection reads `/proc/mounts` and checks whether the workspace path
-is on a `9p` or `virtiofs` filesystem. Those types appear exclusively when
-the workspace lives on a Windows-backed filesystem shared into the WSL2 VM.
-Native Linux workspaces are on `ext4`, `btrfs`, or similar — never `9p`.
+Auto-detection checks for `/.dockerenv`, which Docker creates in every
+container it starts:
 
-**Docker-in-Docker (DinD) limitation**: if GLUT itself runs inside a Docker
-container (common in CI pipelines using DinD), `/proc/mounts` shows
-`overlay2` rather than `9p`, so auto-detection selects `bind`. But bind
-mounts from the inner container are invisible to the outer Docker daemon, so
-jobs fail. In DinD environments, set the strategy explicitly:
+- **Inside a container** (devcontainer on Docker Desktop, Docker-in-Docker
+  in CI): the daemon resolves bind-mount paths against the host or outer
+  daemon filesystem — not the inner container's filesystem. Named volumes
+  are required. `/.dockerenv` is present → strategy `volume`.
+- **Native Linux host** (no container): the daemon and GLUT share the same
+  filesystem. `/.dockerenv` is absent → strategy `bind`.
 
-```
-glut run --docker-volume-strategy=volume ./tests/
-```
+Override with `--docker-volume-strategy=bind|volume` if auto-detection
+produces the wrong result for an unusual environment.

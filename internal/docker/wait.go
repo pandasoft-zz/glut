@@ -126,26 +126,22 @@ const (
 )
 
 // ResolveVolumeStrategy returns the effective volume strategy for workDir.
-// When strategy is VolumeStrategyAuto it inspects /proc/mounts: if workDir
-// is on a 9P or virtiofs filesystem (Windows-backed WSL2), named volumes are
-// needed; otherwise bind mounts work on native Linux Docker.
-func ResolveVolumeStrategy(strategy, workDir string) string {
+// When strategy is VolumeStrategyAuto (or empty) it checks whether GLUT is
+// running inside a Docker container by looking for /.dockerenv, which Docker
+// creates in every container it starts.
+//
+// Inside a container (devcontainer on Docker Desktop OR Docker-in-Docker in CI):
+// the Docker daemon resolves bind-mount paths against the host or outer-daemon
+// filesystem, not the inner container's filesystem. Named volumes are required.
+//
+// Outside a container (native Linux host): the daemon and GLUT share the same
+// filesystem, so a plain bind mount works and avoids all volume overhead.
+func ResolveVolumeStrategy(strategy string) string {
 	if strategy != VolumeStrategyAuto && strategy != "" {
 		return strategy
 	}
-	data, err := os.ReadFile("/proc/mounts")
-	if err != nil {
-		return VolumeStrategyVolume // safe default when /proc/mounts unreadable
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		mountPoint, fsType := fields[1], fields[2]
-		if (fsType == "9p" || fsType == "virtiofs") && strings.HasPrefix(workDir, mountPoint) {
-			return VolumeStrategyVolume // Windows-backed path
-		}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return VolumeStrategyVolume // inside a container — named volumes required
 	}
 	return VolumeStrategyBind
 }

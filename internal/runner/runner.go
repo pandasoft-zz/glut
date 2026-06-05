@@ -161,7 +161,7 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 	// Resolve the Docker volume strategy once for the whole suite run.
 	// "auto" detects whether the workspace path is on a native Linux
 	// filesystem (bind mounts) or a Windows-backed 9P path (named volumes).
-	effectiveVolumeStrategy := docker.ResolveVolumeStrategy(opts.DockerVolumeStrategy, repoRoot)
+	effectiveVolumeStrategy := docker.ResolveVolumeStrategy(opts.DockerVolumeStrategy)
 
 	// Docker volumes are collected here and destroyed together at the end.
 	// Destroying them immediately after each test triggers overlay-FS cleanup
