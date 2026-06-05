@@ -116,6 +116,14 @@ func (c *prettyConsole) Start(totalTests int) {
 	writef(c.writer, "%s  %s\n\n", logo, count)
 }
 
+func (c *prettyConsole) TestRetry(testName string, err error) {
+	if c.quiet {
+		return
+	}
+	writef(c.writer, "  %s retrying %q after infrastructure error: %v\n",
+		c.st.dim.Render("[glut]"), testName, err)
+}
+
 func (c *prettyConsole) TestDone(result runner.TestResult) {
 	c.done++
 	if !c.quiet {
@@ -166,6 +174,18 @@ func (c *dotsConsole) Start(totalTests int) {
 	_ = totalTests
 }
 
+func (c *dotsConsole) TestRetry(testName string, err error) {
+	if c.quiet {
+		return
+	}
+	if c.wroteStatus {
+		writef(c.writer, "\n")
+		c.wroteStatus = false
+	}
+	writef(c.writer, "  %s retrying %q after infrastructure error: %v\n",
+		c.st.dim.Render("[glut]"), testName, err)
+}
+
 func (c *dotsConsole) TestDone(result runner.TestResult) {
 	if !c.quiet {
 		if result.Passed {
@@ -205,6 +225,8 @@ func (c *dotsConsole) Summary(result runner.RunResult) {
 func (c *jsonConsole) Start(totalTests int) {
 	_ = totalTests
 }
+
+func (c *jsonConsole) TestRetry(_ string, _ error) {}
 
 func (c *jsonConsole) TestDone(result runner.TestResult) {
 	if c.quiet && result.Passed {

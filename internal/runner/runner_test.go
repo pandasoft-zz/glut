@@ -1187,6 +1187,10 @@ func (s *recordingSink) Start(totalTests int) {
 	s.events = append(s.events, "start:"+strconv(totalTests))
 }
 
+func (s *recordingSink) TestRetry(testName string, _ error) {
+	s.events = append(s.events, "retry:"+testName)
+}
+
 func (s *recordingSink) TestDone(result TestResult) {
 	s.events = append(s.events, "test:"+result.TestName)
 }

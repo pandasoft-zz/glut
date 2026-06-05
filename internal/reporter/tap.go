@@ -20,6 +20,8 @@ func (r *tapReport) Start(totalTests int) {
 	_ = totalTests
 }
 
+func (r *tapReport) TestRetry(_ string, _ error) {}
+
 func (r *tapReport) TestDone(result runner.TestResult) {
 	r.results.Tests = append(r.results.Tests, result)
 	if result.Passed {

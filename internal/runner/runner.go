@@ -68,6 +68,7 @@ type ListOptions struct {
 
 type ProgressSink interface {
 	Start(totalTests int)
+	TestRetry(testName string, err error)
 	TestDone(result TestResult)
 	Summary(result RunResult)
 }
@@ -182,6 +183,9 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		// genuine job or assertion failures.
 		if testNeedsDocker(&testFile) && !testResult.Passed &&
 			testResult.Error != nil && len(testResult.Failures) == 0 {
+			for _, sink := range opts.Progress {
+				sink.TestRetry(testResult.TestName, testResult.Error)
+			}
 			time.Sleep(dockerTestRetryPause)
 			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, &preservedFailed)
 			if retryResult.Passed || len(retryResult.Failures) > 0 {
