@@ -157,10 +157,17 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 	preservedFailed := make([]string, 0, opts.KeepLastFailed)
 	dockerReady := !anyTestNeedsDocker(tests)
 
-	// suiteVol is one shared Docker volume for all Docker tests in this run.
-	// Creating and destroying it once eliminates the per-test docker volume rm
-	// overhead and the associated overlay-FS cleanup between sequential tests.
-	var suiteVol string
+	// Docker volumes are collected here and destroyed together at the end.
+	// Destroying them immediately after each test triggers overlay-FS cleanup
+	// in the daemon between tests, which is the main source of transient
+	// failures on Docker Desktop / WSL2. Bulk removal after all tests avoids
+	// this inter-test contention.
+	var pendingVolumeCleanup []string
+	defer func() {
+		for _, vol := range pendingVolumeCleanup {
+			_ = workspace.DestroyDockerVolume(vol)
+		}
+	}()
 
 	for _, testFile := range tests {
 		if testNeedsDocker(&testFile) && !dockerReady {
@@ -171,23 +178,15 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 			if err := docker.Wait(ctx, opts.DockerWaitOutput, remaining); err != nil {
 				return RunResult{Error: fmt.Errorf("wait for Docker: %w", err)}, ExitRunnerError
 			}
+			// Prune orphaned volumes from previous GLUT runs before the first
+			// Docker test. Named volumes that are no longer referenced by any
+			// container accumulate across suite runs and keep the daemon busy
+			// with background cleanup work that can delay new container starts.
 			docker.PruneOrphanedVolumes()
-
-			var err error
-			suiteVol, err = workspace.CreateSuiteVolume()
-			if err != nil {
-				return RunResult{Error: fmt.Errorf("create suite volume: %w", err)}, ExitRunnerError
-			}
-			defer func() {
-				if destroyErr := workspace.DestroySuiteVolume(suiteVol); destroyErr != nil {
-					result.Error = destroyErr
-				}
-			}()
-
 			dockerReady = true
 		}
 
-		testResult := runSingleTest(ctx, repoRoot, testFile, opts, suiteVol, &preservedFailed)
+		testResult := runSingleTest(ctx, repoRoot, testFile, opts, &pendingVolumeCleanup, &preservedFailed)
 
 		// For Docker tests that fail at the infrastructure level (pipeline
 		// error, no jobs ran at all), retry once. This handles transient
@@ -200,7 +199,7 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 				sink.TestRetry(testResult.TestName, testResult.Error)
 			}
 			time.Sleep(dockerTestRetryPause)
-			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, suiteVol, &preservedFailed)
+			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, &pendingVolumeCleanup, &preservedFailed)
 			if retryResult.Passed || len(retryResult.Failures) > 0 {
 				testResult = retryResult
 			}
@@ -367,7 +366,7 @@ func runSingleTest(
 	repoRoot string,
 	testFile parser.TestFile,
 	opts RunOptions,
-	suiteVol string,
+	pendingVolumeCleanup *[]string,
 	preservedFailed *[]string,
 ) (result TestResult) {
 	if testFile.ParseError != nil {
@@ -387,14 +386,15 @@ func runSingleTest(
 	}
 
 	var (
-		work          *workspace.Workspace
-		server        *mockserver.Server
-		execResult    executor.RunResult
-		phaseTimings  = map[string]time.Duration{}
-		binaryLogs    = map[string][]mockwrapper.BinaryCall{}
-		apiCalls      []mockserver.APICall
-		cleanupErrors []error
-		primaryErr    error
+		work             *workspace.Workspace
+		server           *mockserver.Server
+		execResult       executor.RunResult
+		phaseTimings     = map[string]time.Duration{}
+		binaryLogs       = map[string][]mockwrapper.BinaryCall{}
+		apiCalls         []mockserver.APICall
+		cleanupErrors    []error
+		primaryErr       error
+		dockerVolumeName string
 	)
 
 	defer func() {
@@ -404,8 +404,15 @@ func runSingleTest(
 			}
 			apiCalls = server.Recorder().Calls()
 		}
-		// The suite volume outlives individual tests and is destroyed by Run()
-		// at the end of the whole suite. No per-test volume cleanup here.
+
+		if dockerVolumeName != "" {
+			// Defer volume removal to after the whole test suite completes.
+			// Destroying volumes between sequential tests triggers overlay-FS
+			// cleanup in the Docker daemon, which keeps it busy and causes
+			// transient failures in the next test's container start. Bulk
+			// removal at the end avoids this inter-test contention entirely.
+			*pendingVolumeCleanup = append(*pendingVolumeCleanup, dockerVolumeName)
+		}
 
 		if work != nil {
 			result.WorkspacePath = work.Dir
@@ -474,14 +481,12 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
-	if useDocker && suiteVol != "" {
-		// Set the container-visible path for this test's subdir in the suite volume.
-		work.ContainerDir = workspace.SuiteVolumeMount + "/" + filepath.Base(work.Dir)
+	if useDocker {
 		var mocks *parser.MocksConfig
 		if hasMockBinaries(testFile) {
 			mocks = testFile.Glut.Setup.Mocks
 		}
-		primaryErr = workspace.PopulateDockerSubdir(suiteVol, work.ContainerDir, work.OriginRepo, mocks)
+		dockerVolumeName, primaryErr = workspace.CreateDockerVolume(work.Dir, work.OriginRepo, mocks)
 	}
 	// Always inject mock binaries into shell PATH so jobs without image: can find
 	// them regardless of docker mode. For docker:true this runs alongside the volume;
@@ -531,7 +536,7 @@ func runSingleTest(
 		Verbose:          opts.Verbose,
 		UseDocker:        useDocker,
 		ForceShell:       forceShell,
-		DockerVolumes:    dockerVolumes(useDocker, suiteVol),
+		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName),
 		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
 		HostEnv:          opts.HostEnv,
 	}
@@ -569,8 +574,8 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	if hasMockBinaries(testFile) {
-		if suiteVol != "" && useDocker {
-			if syncErr := workspace.ReadLogsFromDockerVolume(suiteVol, work.ContainerDir, work.Dir); syncErr != nil && primaryErr == nil {
+		if dockerVolumeName != "" {
+			if syncErr := workspace.ReadLogsFromDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
 				primaryErr = fmt.Errorf("sync mock logs from docker volume: %w", syncErr)
 			}
 		}
@@ -588,8 +593,8 @@ func runSingleTest(
 	// avoids the extra docker run that would add cumulative daemon load on
 	// Docker Desktop / WSL2.
 	originSource := asserter.NewFSOrigin(work.OriginRepo)
-	if suiteVol != "" && useDocker && needsDockerOrigin(testFile) {
-		tarData, fetchErr := workspace.FetchGitOriginTar(suiteVol, work.ContainerDir)
+	if dockerVolumeName != "" && needsDockerOrigin(testFile) {
+		tarData, fetchErr := workspace.FetchGitOriginTar(dockerVolumeName, work.Dir)
 		if fetchErr != nil && primaryErr == nil {
 			primaryErr = fmt.Errorf("fetch git origin from docker volume: %w", fetchErr)
 		} else if fetchErr == nil {
@@ -870,14 +875,15 @@ func copyPhaseTimings(values map[string]time.Duration) map[string]time.Duration 
 // devcontainers and DinD environments where host bind-mounts are invisible to
 // the Docker daemon. The volume contains mock binaries (BUG-2), the bare git
 // origin (BUG-4), and the mock-logs directory.
-// dockerVolumes returns the --volume mount for the suite volume. The suite
-// volume is mounted at SuiteVolumeMount so every test's subdir is accessible
-// inside job containers at SuiteVolumeMount/<testID>/.
-func dockerVolumes(useDocker bool, suiteVol string) []string {
-	if !useDocker || suiteVol == "" {
+func dockerVolumes(useDocker bool, workDir string, volName string) []string {
+	if !useDocker {
 		return nil
 	}
-	return []string{suiteVol + ":" + workspace.SuiteVolumeMount}
+	if volName != "" {
+		return []string{volName + ":" + workDir}
+	}
+	// Fallback: no volume was created (volume creation failed or was skipped).
+	return nil
 }
 
 // dockerExtraHosts returns the --extra-host entries needed for Docker executor jobs.

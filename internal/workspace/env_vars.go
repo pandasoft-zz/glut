@@ -3,7 +3,6 @@ package workspace
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/pandasoft-zz/glut/internal/config"
@@ -26,7 +25,7 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 			effectiveHostEnv = os.Environ()
 		}
 		env["PATH"] = envSliceToMap(effectiveHostEnv)["PATH"]
-		AddMockBinaryEnv(env, w.effectiveContainerDir())
+		AddMockBinaryEnv(env, w.Dir)
 	}
 	return env
 }
@@ -47,18 +46,9 @@ func (w *Workspace) defaultBranch(setup parser.SetupConfig) string {
 }
 
 func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName string, defaultBranch string) map[string]string {
-	containerDir := w.effectiveContainerDir()
-	containerOriginRepo := filepath.Join(containerDir, ".glut-origin.git")
-
-	// GLUT_WORKSPACE: for Docker tests use the container subdir; for non-Docker
-	// tests keep the original fallback (WorkspaceDir → Dir).
-	var containerWorkspace string
-	if w.ContainerDir != "" {
-		containerWorkspace = filepath.Join(containerDir, "workspace")
-	} else if w.WorkspaceDir != "" {
-		containerWorkspace = w.WorkspaceDir
-	} else {
-		containerWorkspace = w.Dir
+	workspacePath := w.WorkspaceDir
+	if workspacePath == "" {
+		workspacePath = w.Dir
 	}
 
 	return map[string]string{
@@ -80,10 +70,10 @@ func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName stri
 		"GITLAB_USER_NAME":     config.DefaultUserName,
 		"GITLAB_USER_EMAIL":    config.DefaultUserEmail,
 		"GITLAB_USER_LOGIN":    config.DefaultUserLogin,
-		"GLUT_WORKSPACE":       containerWorkspace,
+		"GLUT_WORKSPACE":       workspacePath,
 		"GLUT_TEST_NAME":       glutName,
-		"GLUT_ORIGIN_REPO":     containerOriginRepo,
-		"CI_REPOSITORY_URL":    "file://" + containerOriginRepo,
+		"GLUT_ORIGIN_REPO":     w.OriginRepo,
+		"CI_REPOSITORY_URL":    "file://" + w.OriginRepo,
 	}
 }
 

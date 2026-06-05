@@ -22,11 +22,6 @@ const (
 	// populate starts, causing transient tar errors.
 	volumePopulateAttempts   = 3
 	volumePopulateRetryDelay = 500 * time.Millisecond
-
-	// SuiteVolumeMount is the path at which the shared suite volume is
-	// mounted inside all Docker containers. Each test's content lives at
-	// SuiteVolumeMount/<testID>/ so a single volume serves the entire run.
-	SuiteVolumeMount = "/glut-work"
 )
 
 // shellMockWrapper is a busybox-sh-compatible script placed at bin/{name} inside
@@ -68,70 +63,6 @@ if [ -z "$GLUT_MOCK_BIN_REAL" ]; then
 fi
 exec "$GLUT_MOCK_BIN_REAL/$name" "$@"
 `
-
-// CreateSuiteVolume creates the shared Docker volume used for the entire test
-// suite run. A single suite volume replaces per-test named volumes, which
-// eliminates the docker volume rm overhead and the associated overlay-FS
-// cleanup work between sequential tests.
-func CreateSuiteVolume() (string, error) {
-	tmp, err := os.MkdirTemp("", "glut-suite-")
-	if err != nil {
-		return "", fmt.Errorf("generate suite volume name: %w", err)
-	}
-	volName := filepath.Base(tmp)
-	_ = os.Remove(tmp)
-
-	if out, err := exec.Command("docker", "volume", "create", volName).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker volume create suite %s: %w (%s)", volName, err, strings.TrimSpace(string(out)))
-	}
-	return volName, nil
-}
-
-// DestroySuiteVolume removes the shared suite volume at the end of a test run.
-func DestroySuiteVolume(volName string) error {
-	removeVolumeContainers(volName)
-	out, err := exec.Command("docker", "volume", "rm", volName).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker volume rm suite %s: %w (%s)", volName, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// PopulateDockerSubdir populates a per-test subdirectory inside the shared
-// suite volume. containerDir is the absolute path inside containers
-// (e.g. /glut-work/glut-abc123); the suite volume is mounted at
-// SuiteVolumeMount so the subdir is created and written there.
-func PopulateDockerSubdir(suiteVol, containerDir, originRepo string, mocks *parser.MocksConfig) error {
-	archive, err := buildVolumeArchive(containerDir, originRepo, mocks)
-	if err != nil {
-		return fmt.Errorf("build volume archive: %w", err)
-	}
-
-	delay := volumePopulateRetryDelay
-	var populateErr error
-	for attempt := 0; attempt < volumePopulateAttempts; attempt++ {
-		if attempt > 0 {
-			time.Sleep(delay)
-			delay *= 2
-			if _, err := archive.Seek(0, io.SeekStart); err != nil {
-				return fmt.Errorf("reset volume archive for retry: %w", err)
-			}
-		}
-		// Create the subdir then extract the archive in one container invocation.
-		script := fmt.Sprintf("mkdir -p %s && tar -xC %s", containerDir, containerDir)
-		cmd := exec.Command("docker", "run", "--rm", "-i",
-			"--volume", suiteVol+":"+SuiteVolumeMount,
-			"alpine", "sh", "-c", script)
-		cmd.Stdin = archive
-		out, err := cmd.CombinedOutput()
-		if err == nil {
-			populateErr = nil
-			break
-		}
-		populateErr = fmt.Errorf("populate docker subdir: %w (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return populateErr
-}
 
 // CreateDockerVolume creates a Docker named volume and populates it with the
 // mock binary wrappers, real scripts, an empty mock-logs directory, and a copy
@@ -186,20 +117,16 @@ func CreateDockerVolume(workDir, originRepo string, mocks *parser.MocksConfig) (
 
 // ReadLogsFromDockerVolume copies mock-logs written inside the Docker volume
 // back to the local mock-logs directory so the asserter can read them.
-// containerDir is the test's base path inside the container (e.g.
-// /glut-work/glut-abc123 for the suite volume, or the host workDir for a
-// per-test volume). hostWorkDir is the base path on the host where logs are
-// extracted.
-func ReadLogsFromDockerVolume(volName, containerDir, hostWorkDir string) error {
-	logDir := MockBinaryLogDir(hostWorkDir)
+func ReadLogsFromDockerVolume(volName, workDir string) error {
+	logDir := MockBinaryLogDir(workDir)
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create local log dir: %w", err)
 	}
 
-	containerLogDir := MockBinaryLogDir(containerDir)
+	// Produce a tar of the mock-logs directory contents from inside the volume.
 	tarCmd := exec.Command("docker", "run", "--rm",
-		"--volume", volName+":"+SuiteVolumeMount,
-		"alpine", "tar", "-cC", containerLogDir, ".")
+		"--volume", volName+":"+workDir,
+		"alpine", "tar", "-cC", MockBinaryLogDir(workDir), ".")
 	tarData, err := tarCmd.Output()
 	if err != nil {
 		// No log files written is not an error.
@@ -215,13 +142,12 @@ func ReadLogsFromDockerVolume(volName, containerDir, hostWorkDir string) error {
 }
 
 // FetchGitOriginTar returns a tar archive of the .glut-origin.git directory
-// from inside a Docker volume. containerDir is the test's base path inside
-// the container. The archive can be passed to NewLazyTarOrigin to provide
-// lazy access to the origin repo without immediately extracting it.
-func FetchGitOriginTar(volName, containerDir string) ([]byte, error) {
+// from inside a Docker volume. The archive can be passed to NewLazyTarOrigin
+// to provide lazy access to the origin repo without immediately extracting it.
+func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
 	tarCmd := exec.Command("docker", "run", "--rm",
-		"--volume", volName+":"+SuiteVolumeMount,
-		"alpine", "tar", "-cC", containerDir, ".glut-origin.git")
+		"--volume", volName+":"+workDir,
+		"alpine", "tar", "-cC", workDir, ".glut-origin.git")
 	tarData, err := tarCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("tar git origin from docker volume: %w", err)

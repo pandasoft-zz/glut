@@ -106,6 +106,50 @@ func dial(endpoint string) error {
 	return nil
 }
 
+// Volume strategy constants control how GLUT provides workspace files to
+// Docker job containers.
+const (
+	// VolumeStrategyAuto detects the best strategy for the current environment.
+	// On native Linux Docker, bind mounts are used; on Docker Desktop / WSL2
+	// (where the workspace lives on a Windows-backed 9P filesystem) Docker
+	// named volumes are used instead.
+	VolumeStrategyAuto = "auto"
+	// VolumeStrategyBind uses a host bind mount. The workspace directory is
+	// mounted directly into containers at the same absolute path. No Docker
+	// named volume or Alpine populate container is needed. Requires a Docker
+	// daemon that can resolve host paths (native Linux Docker).
+	VolumeStrategyBind = "bind"
+	// VolumeStrategyVolume uses a shared Docker named volume (suite volume).
+	// Required for Docker Desktop on Windows / WSL2 where the workspace path
+	// is on a 9P filesystem invisible to the Docker daemon.
+	VolumeStrategyVolume = "volume"
+)
+
+// ResolveVolumeStrategy returns the effective volume strategy for workDir.
+// When strategy is VolumeStrategyAuto it inspects /proc/mounts: if workDir
+// is on a 9P or virtiofs filesystem (Windows-backed WSL2), named volumes are
+// needed; otherwise bind mounts work on native Linux Docker.
+func ResolveVolumeStrategy(strategy, workDir string) string {
+	if strategy != VolumeStrategyAuto {
+		return strategy
+	}
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return VolumeStrategyVolume // safe default when /proc/mounts unreadable
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		mountPoint, fsType := fields[1], fields[2]
+		if (fsType == "9p" || fsType == "virtiofs") && strings.HasPrefix(workDir, mountPoint) {
+			return VolumeStrategyVolume // Windows-backed path
+		}
+	}
+	return VolumeStrategyBind
+}
+
 // PruneOrphanedVolumes removes dangling Docker volumes whose names match
 // GLUT ("glut-*") or GCL ("gcl-*") naming conventions. These volumes
 // accumulate from test suite runs that were interrupted or from cleanup
