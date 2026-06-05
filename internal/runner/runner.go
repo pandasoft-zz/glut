@@ -37,6 +37,7 @@ const (
 const (
 	defaultKeepLastFailed = 3
 	DefaultWaitTimeout    = 120 * time.Second
+	dockerTestRetryPause  = 5 * time.Second
 )
 
 type RunOptions struct {
@@ -54,10 +55,11 @@ type RunOptions struct {
 	CopyStrategy     string
 	Include          []string
 	Progress         []ProgressSink
-	HostEnv          []string      // nil falls back to os.Environ(); propagated to executor and workspace
-	WorkDir          string        // working directory for test discovery; empty falls back to os.Getwd()
-	WaitTimeout      time.Duration // max time to wait for Docker daemon; 0 uses default (120s)
-	DockerWaitOutput io.Writer     // where to write Docker wait progress; nil discards output
+	HostEnv              []string      // nil falls back to os.Environ(); propagated to executor and workspace
+	WorkDir              string        // working directory for test discovery; empty falls back to os.Getwd()
+	WaitTimeout          time.Duration // max time to wait for Docker daemon; 0 uses default (120s)
+	DockerWaitOutput     io.Writer     // where to write Docker wait progress; nil discards output
+	DockerVolumeStrategy string        // "auto" (default), "bind" (native Linux), "volume" (Docker Desktop/WSL2)
 }
 
 type ListOptions struct {
@@ -67,6 +69,7 @@ type ListOptions struct {
 
 type ProgressSink interface {
 	Start(totalTests int)
+	TestRetry(testName string, err error)
 	TestDone(result TestResult)
 	Summary(result RunResult)
 }
@@ -155,6 +158,23 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 	preservedFailed := make([]string, 0, opts.KeepLastFailed)
 	dockerReady := !anyTestNeedsDocker(tests)
 
+	// Resolve the Docker volume strategy once for the whole suite run.
+	// "auto" detects whether the workspace path is on a native Linux
+	// filesystem (bind mounts) or a Windows-backed 9P path (named volumes).
+	effectiveVolumeStrategy := docker.ResolveVolumeStrategy(opts.DockerVolumeStrategy)
+
+	// Docker volumes are collected here and destroyed together at the end.
+	// Destroying them immediately after each test triggers overlay-FS cleanup
+	// in the daemon between tests, which is the main source of transient
+	// failures on Docker Desktop / WSL2. Bulk removal after all tests avoids
+	// this inter-test contention.
+	var pendingVolumeCleanup []string
+	defer func() {
+		for _, vol := range pendingVolumeCleanup {
+			_ = workspace.DestroyDockerVolume(vol)
+		}
+	}()
+
 	for _, testFile := range tests {
 		if testNeedsDocker(&testFile) && !dockerReady {
 			remaining := opts.WaitTimeout - time.Since(runStart)
@@ -164,10 +184,33 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 			if err := docker.Wait(ctx, opts.DockerWaitOutput, remaining); err != nil {
 				return RunResult{Error: fmt.Errorf("wait for Docker: %w", err)}, ExitRunnerError
 			}
+			// Prune orphaned volumes from previous GLUT runs before the first
+			// Docker test. Named volumes that are no longer referenced by any
+			// container accumulate across suite runs and keep the daemon busy
+			// with background cleanup work that can delay new container starts.
+			docker.PruneOrphanedVolumes()
 			dockerReady = true
 		}
 
-		testResult := runSingleTest(ctx, repoRoot, testFile, opts, &preservedFailed)
+		testResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
+
+		// For Docker tests that fail at the infrastructure level (pipeline
+		// error, no jobs ran at all), retry once. This handles transient
+		// daemon failures on Docker Desktop / WSL2 — e.g. a container that
+		// fails to start due to accumulated daemon load — without retrying
+		// genuine job or assertion failures.
+		if testNeedsDocker(&testFile) && !testResult.Passed &&
+			testResult.Error != nil && len(testResult.JobOutputs) == 0 {
+			for _, sink := range opts.Progress {
+				sink.TestRetry(testResult.TestName, testResult.Error)
+			}
+			time.Sleep(dockerTestRetryPause)
+			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
+			if retryResult.Passed || len(retryResult.Failures) > 0 {
+				testResult = retryResult
+			}
+		}
+
 		result.Tests = append(result.Tests, testResult)
 		if testResult.Passed {
 			result.Passed++
@@ -329,6 +372,8 @@ func runSingleTest(
 	repoRoot string,
 	testFile parser.TestFile,
 	opts RunOptions,
+	volumeStrategy string,
+	pendingVolumeCleanup *[]string,
 	preservedFailed *[]string,
 ) (result TestResult) {
 	if testFile.ParseError != nil {
@@ -368,9 +413,12 @@ func runSingleTest(
 		}
 
 		if dockerVolumeName != "" {
-			if err := workspace.DestroyDockerVolume(dockerVolumeName); err != nil {
-				cleanupErrors = append(cleanupErrors, fmt.Errorf("destroy docker volume: %w", err))
-			}
+			// Defer volume removal to after the whole test suite completes.
+			// Destroying volumes between sequential tests triggers overlay-FS
+			// cleanup in the Docker daemon, which keeps it busy and causes
+			// transient failures in the next test's container start. Bulk
+			// removal at the end avoids this inter-test contention entirely.
+			*pendingVolumeCleanup = append(*pendingVolumeCleanup, dockerVolumeName)
 		}
 
 		if work != nil {
@@ -440,13 +488,16 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
-	if useDocker {
+	if useDocker && volumeStrategy == docker.VolumeStrategyVolume {
+		// Named volume: populate from host and collect for deferred cleanup.
 		var mocks *parser.MocksConfig
 		if hasMockBinaries(testFile) {
 			mocks = testFile.Glut.Setup.Mocks
 		}
 		dockerVolumeName, primaryErr = workspace.CreateDockerVolume(work.Dir, work.OriginRepo, mocks)
 	}
+	// Bind mount strategy: the host workspace directory is already populated
+	// by workspace.New() and SetupMockBinaries. No extra Docker operation needed.
 	// Always inject mock binaries into shell PATH so jobs without image: can find
 	// them regardless of docker mode. For docker:true this runs alongside the volume;
 	// for docker:false this is the only setup path.
@@ -495,7 +546,7 @@ func runSingleTest(
 		Verbose:          opts.Verbose,
 		UseDocker:        useDocker,
 		ForceShell:       forceShell,
-		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName),
+		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName, volumeStrategy),
 		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
 		HostEnv:          opts.HostEnv,
 	}
@@ -533,6 +584,8 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	if hasMockBinaries(testFile) {
+		// Named volume: copy mock logs from the volume back to the host so
+		// the asserter can read them. Bind mount: logs are already on the host.
 		if dockerVolumeName != "" {
 			if syncErr := workspace.ReadLogsFromDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
 				primaryErr = fmt.Errorf("sync mock logs from docker volume: %w", syncErr)
@@ -545,11 +598,11 @@ func runSingleTest(
 		primaryErr = fmt.Errorf("read mock logs: %w", err)
 	}
 
-	// Build an origin source for assertions. For Docker runs, use a lazy tar
-	// origin so the Docker volume is only extracted if git.origin assertions
-	// actually run. For non-Docker runs, use the filesystem path directly.
+	// Build an origin source for assertions. Named volume: fetch from inside
+	// the volume because the pipeline may have pushed commits that changed it.
+	// Bind mount or no git.origin assertions: read directly from the host.
 	originSource := asserter.NewFSOrigin(work.OriginRepo)
-	if dockerVolumeName != "" {
+	if dockerVolumeName != "" && needsDockerOrigin(testFile) {
 		tarData, fetchErr := workspace.FetchGitOriginTar(dockerVolumeName, work.Dir)
 		if fetchErr != nil && primaryErr == nil {
 			primaryErr = fmt.Errorf("fetch git origin from docker volume: %w", fetchErr)
@@ -826,19 +879,24 @@ func copyPhaseTimings(values map[string]time.Duration) map[string]time.Duration 
 }
 
 // dockerVolumes returns the --volume mounts needed for Docker executor jobs.
-// When a named Docker volume has been created (volName != ""), it is mounted
-// at workDir inside the container — this is the reliable path that works in
-// devcontainers and DinD environments where host bind-mounts are invisible to
-// the Docker daemon. The volume contains mock binaries (BUG-2), the bare git
-// origin (BUG-4), and the mock-logs directory.
-func dockerVolumes(useDocker bool, workDir string, volName string) []string {
+//
+// Named volume strategy: mounts the pre-populated Docker volume at workDir so
+// the path is identical inside and outside the container. Required for Docker
+// Desktop / WSL2 where host bind-mounts are invisible to the daemon.
+//
+// Bind mount strategy: mounts the host workspace directory at the same path.
+// No volume creation is needed; the host filesystem is directly accessible
+// to the daemon on native Linux Docker.
+func dockerVolumes(useDocker bool, workDir string, volName string, strategy string) []string {
 	if !useDocker {
 		return nil
+	}
+	if strategy == docker.VolumeStrategyBind {
+		return []string{workDir + ":" + workDir}
 	}
 	if volName != "" {
 		return []string{volName + ":" + workDir}
 	}
-	// Fallback: no volume was created (volume creation failed or was skipped).
 	return nil
 }
 
@@ -919,6 +977,13 @@ func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
 		return true, false
 	}
 	return false, true
+}
+
+// needsDockerOrigin reports whether the test has assert.git.origin assertions
+// that require reading the git origin from inside the Docker volume. When a
+// pipeline pushes commits, the in-volume origin differs from the host copy.
+func needsDockerOrigin(testFile parser.TestFile) bool {
+	return testFile.Glut.Assert.Git != nil && testFile.Glut.Assert.Git.Origin != nil
 }
 
 func errorsToStrings(errs []error) []string {

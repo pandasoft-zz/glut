@@ -53,8 +53,9 @@ func selectAndRun(ctx context.Context, opts RunOptions) (runner.RunResult, runne
 		KeepWorkspace:  opts.KeepWorkspace,
 		DebugPause:     opts.DebugPause,
 		KeepLastFailed: opts.KeepLastFailed,
-		CopyStrategy:   opts.CopyStrategy,
-		Include:        opts.Include,
+		CopyStrategy:         opts.CopyStrategy,
+		DockerVolumeStrategy: opts.DockerVolumeStrategy,
+		Include:              opts.Include,
 		Progress:       sinks,
 	})
 	if werr := writeFileReports(fileReports); werr != nil {

@@ -4,13 +4,24 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pandasoft-zz/glut/internal/parser"
+)
+
+const (
+	// volumePopulateAttempts is the number of times to retry the docker run
+	// step that populates the volume. On WSL2/Docker Desktop the daemon may
+	// still be cleaning up containers from the previous test when a new
+	// populate starts, causing transient tar errors.
+	volumePopulateAttempts   = 3
+	volumePopulateRetryDelay = 500 * time.Millisecond
 )
 
 // shellMockWrapper is a busybox-sh-compatible script placed at bin/{name} inside
@@ -74,13 +85,36 @@ func CreateDockerVolume(workDir, originRepo string, mocks *parser.MocksConfig) (
 		return "", fmt.Errorf("build volume archive: %w", err)
 	}
 
-	cmd := exec.Command("docker", "run", "--rm", "-i",
-		"--volume", volName+":"+workDir,
-		"alpine", "tar", "-xC", workDir)
-	cmd.Stdin = archive
-	if out, err := cmd.CombinedOutput(); err != nil {
+	delay := volumePopulateRetryDelay
+	var populateErr error
+	for attempt := 0; attempt < volumePopulateAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(delay)
+			delay *= 2
+			if _, err := archive.Seek(0, io.SeekStart); err != nil {
+				_ = exec.Command("docker", "volume", "rm", volName).Run()
+				return "", fmt.Errorf("reset volume archive for retry: %w", err)
+			}
+		}
+		// Use an explicit container name so we can docker rm it synchronously
+		// after the run completes. This avoids the --rm async daemon cleanup
+		// that kept the daemon busy between tests on Docker Desktop / WSL2.
+		ctrName := fmt.Sprintf("glut-pop-%s-%d", volName, attempt)
+		cmd := exec.Command("docker", "run", "--name", ctrName, "-i",
+			"--volume", volName+":"+workDir,
+			"alpine", "tar", "-xC", workDir)
+		cmd.Stdin = archive
+		out, err := cmd.CombinedOutput()
+		_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
+		if err == nil {
+			populateErr = nil
+			break
+		}
+		populateErr = fmt.Errorf("populate docker volume: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if populateErr != nil {
 		_ = exec.Command("docker", "volume", "rm", volName).Run()
-		return "", fmt.Errorf("populate docker volume: %w (%s)", err, strings.TrimSpace(string(out)))
+		return "", populateErr
 	}
 
 	return volName, nil
@@ -95,10 +129,12 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 	}
 
 	// Produce a tar of the mock-logs directory contents from inside the volume.
-	tarCmd := exec.Command("docker", "run", "--rm",
+	ctrName := "glut-logs-" + volName
+	tarCmd := exec.Command("docker", "run", "--name", ctrName,
 		"--volume", volName+":"+workDir,
 		"alpine", "tar", "-cC", MockBinaryLogDir(workDir), ".")
 	tarData, err := tarCmd.Output()
+	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 	if err != nil {
 		// No log files written is not an error.
 		return nil
@@ -116,10 +152,12 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 // from inside a Docker volume. The archive can be passed to NewLazyTarOrigin
 // to provide lazy access to the origin repo without immediately extracting it.
 func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
-	tarCmd := exec.Command("docker", "run", "--rm",
+	ctrName := "glut-orig-" + volName
+	tarCmd := exec.Command("docker", "run", "--name", ctrName,
 		"--volume", volName+":"+workDir,
 		"alpine", "tar", "-cC", workDir, ".glut-origin.git")
 	tarData, err := tarCmd.Output()
+	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 	if err != nil {
 		return nil, fmt.Errorf("tar git origin from docker volume: %w", err)
 	}
@@ -127,12 +165,34 @@ func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
 }
 
 // DestroyDockerVolume removes the named Docker volume created by CreateDockerVolume.
+// It first force-removes any containers still referencing the volume. On
+// WSL2/Docker Desktop, containers spawned with --rm may still be registered
+// in the daemon when this function runs, causing docker volume rm to fail with
+// "volume is in use". Force-removing them first avoids leaving orphaned
+// volumes that keep the daemon busy during the next test.
 func DestroyDockerVolume(volName string) error {
+	removeVolumeContainers(volName)
 	out, err := exec.Command("docker", "volume", "rm", volName).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker volume rm %s: %w (%s)", volName, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// removeVolumeContainers removes stopped containers that still reference
+// volName. docker rm (without -f) refuses to remove running containers, so
+// there is no risk of killing a legitimately active container. Errors are
+// intentionally ignored: if a container was already removed the call is a
+// no-op, and if one is still running we leave it alone.
+func removeVolumeContainers(volName string) {
+	out, err := exec.Command("docker", "ps", "-a",
+		"--filter", "volume="+volName, "--format", "{{.ID}}").Output()
+	if err != nil {
+		return
+	}
+	for _, id := range strings.Fields(string(out)) {
+		_ = exec.Command("docker", "rm", id).Run()
+	}
 }
 
 // buildVolumeArchive constructs an in-memory tar archive containing:

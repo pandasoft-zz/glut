@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+const (
+	// logCaptureTimeout caps how long captureAfterExit waits for a container
+	// to exit and its logs to be streamed.
+	logCaptureTimeout = 5 * time.Minute
+	// collectLogsTimeout is the per-container deadline inside collectLogs.
+	collectLogsTimeout = 15 * time.Second
+)
+
 // gclBuildVolumeRE matches the gcl build volume naming pattern:
 // gcl-{safeJobName}-{rand}-build
 var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
@@ -94,20 +102,18 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 	}
 }
 
-// captureAfterExit waits for the container to exit then immediately captures
-// its logs before gcl's async cleanup can call docker rm.
+// captureAfterExit streams the container's logs in real-time until it exits.
+// Using --follow eliminates the docker wait → docker logs race against GCL's
+// async docker rm: by the time the container exits and --follow returns, all
+// output has already been received, so a concurrent docker rm cannot cause a
+// "No such container" error on a separate docker logs call.
 func captureAfterExit(cap *containerCapture) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), logCaptureTimeout)
 	defer cancel()
 
-	// Block until the container exits.
-	exec.CommandContext(ctx, "docker", "wait", cap.id).Run() //nolint:errcheck
-
-	// Container has exited; capture logs immediately before docker rm.
-	// Use Output() (not CombinedOutput) so that Docker daemon error messages
-	// on stderr (e.g. "No such container" when the race is lost) are never
-	// written into the job's stdout.
-	out, err := exec.CommandContext(ctx, "docker", "logs", cap.id).Output()
+	// --follow streams stdout until the container exits, then terminates.
+	// Output() (not CombinedOutput) keeps daemon error messages off the job stdout.
+	out, err := exec.CommandContext(ctx, "docker", "logs", "--follow", cap.id).Output()
 	if err != nil {
 		cap.logs <- nil
 		return
@@ -138,7 +144,7 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 		var output []byte
 		select {
 		case output = <-cap.logs:
-		case <-time.After(15 * time.Second):
+		case <-time.After(collectLogsTimeout):
 			continue
 		}
 		if len(output) == 0 {

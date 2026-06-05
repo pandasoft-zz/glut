@@ -66,6 +66,8 @@ func (r *junitReport) Start(totalTests int) {
 	_ = totalTests
 }
 
+func (r *junitReport) TestRetry(_ string, _ error) {}
+
 func (r *junitReport) TestDone(result runner.TestResult) {
 	r.results.Tests = append(r.results.Tests, result)
 	if result.Passed {

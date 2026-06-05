@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -103,6 +104,67 @@ func dial(endpoint string) error {
 	}
 	_ = conn.Close()
 	return nil
+}
+
+// Volume strategy constants control how GLUT provides workspace files to
+// Docker job containers.
+const (
+	// VolumeStrategyAuto detects the best strategy for the current environment.
+	// On native Linux Docker, bind mounts are used; on Docker Desktop / WSL2
+	// (where the workspace lives on a Windows-backed 9P filesystem) Docker
+	// named volumes are used instead.
+	VolumeStrategyAuto = "auto"
+	// VolumeStrategyBind uses a host bind mount. The workspace directory is
+	// mounted directly into containers at the same absolute path. No Docker
+	// named volume or Alpine populate container is needed. Requires a Docker
+	// daemon that can resolve host paths (native Linux Docker).
+	VolumeStrategyBind = "bind"
+	// VolumeStrategyVolume uses a shared Docker named volume (suite volume).
+	// Required for Docker Desktop on Windows / WSL2 where the workspace path
+	// is on a 9P filesystem invisible to the Docker daemon.
+	VolumeStrategyVolume = "volume"
+)
+
+// ResolveVolumeStrategy returns the effective volume strategy for workDir.
+// When strategy is VolumeStrategyAuto (or empty) it checks whether GLUT is
+// running inside a Docker container by looking for /.dockerenv, which Docker
+// creates in every container it starts.
+//
+// Inside a container (devcontainer on Docker Desktop OR Docker-in-Docker in CI):
+// the Docker daemon resolves bind-mount paths against the host or outer-daemon
+// filesystem, not the inner container's filesystem. Named volumes are required.
+//
+// Outside a container (native Linux host): the daemon and GLUT share the same
+// filesystem, so a plain bind mount works and avoids all volume overhead.
+func ResolveVolumeStrategy(strategy string) string {
+	if strategy != VolumeStrategyAuto && strategy != "" {
+		return strategy
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return VolumeStrategyVolume // inside a container — named volumes required
+	}
+	return VolumeStrategyBind
+}
+
+// PruneOrphanedVolumes removes dangling Docker volumes whose names match
+// GLUT ("glut-*") or GCL ("gcl-*") naming conventions. These volumes
+// accumulate from test suite runs that were interrupted or from cleanup
+// failures in earlier versions. Removing them before the first Docker test
+// reduces the daemon's background cleanup backlog.
+//
+// Errors are intentionally ignored: pruning is best-effort and the suite
+// must not fail because of it.
+func PruneOrphanedVolumes() {
+	for _, prefix := range []string{"glut-", "gcl-"} {
+		out, err := exec.Command("docker", "volume", "ls",
+			"-q", "--filter", "name="+prefix).Output()
+		if err != nil {
+			return
+		}
+		for _, id := range strings.Fields(string(out)) {
+			_ = exec.Command("docker", "volume", "rm", id).Run()
+		}
+	}
 }
 
 func isWriterTTY(w io.Writer) bool {
