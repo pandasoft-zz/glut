@@ -159,7 +159,7 @@ func PruneOrphanedVolumes() {
 		out, err := exec.Command("docker", "volume", "ls",
 			"-q", "--filter", "name="+prefix).Output()
 		if err != nil {
-			return
+			continue
 		}
 		for _, id := range strings.Fields(string(out)) {
 			_ = exec.Command("docker", "volume", "rm", id).Run()

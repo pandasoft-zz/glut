@@ -137,23 +137,39 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 	}
 	m.mu.Unlock()
 
+	type captureResult struct {
+		jobName string
+		output  []byte
+	}
+	results := make(chan captureResult, len(caps))
+
+	var wg sync.WaitGroup
 	for _, cap := range caps {
 		if cap.jobName == "" {
 			continue
 		}
-		var output []byte
-		select {
-		case output = <-cap.logs:
-		case <-time.After(collectLogsTimeout):
+		wg.Add(1)
+		c := cap
+		go func() {
+			defer wg.Done()
+			select {
+			case output := <-c.logs:
+				results <- captureResult{c.jobName, output}
+			case <-time.After(collectLogsTimeout):
+			}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	for r := range results {
+		if len(r.output) == 0 {
 			continue
 		}
-		if len(output) == 0 {
-			continue
-		}
-		job := jobs[cap.jobName]
-		job.Name = cap.jobName
-		job.Stdout = string(output)
-		jobs[cap.jobName] = job
+		job := jobs[r.jobName]
+		job.Name = r.jobName
+		job.Stdout = string(r.output)
+		jobs[r.jobName] = job
 	}
 }
 

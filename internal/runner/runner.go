@@ -194,13 +194,14 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 
 		testResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
 
-		// For Docker tests that fail at the infrastructure level (pipeline
-		// error, no jobs ran at all), retry once. This handles transient
-		// daemon failures on Docker Desktop / WSL2 — e.g. a container that
-		// fails to start due to accumulated daemon load — without retrying
-		// genuine job or assertion failures.
+		// For Docker tests that fail at the infrastructure level (volume
+		// creation, daemon communication), retry once. Checking for
+		// workspace.InfraError is more precise than a proxy on JobOutputs:
+		// it only fires for errors explicitly tagged as infrastructure
+		// failures, never for genuine job crashes that produce no output.
+		var infraErr *workspace.InfraError
 		if testNeedsDocker(&testFile) && !testResult.Passed &&
-			testResult.Error != nil && len(testResult.JobOutputs) == 0 {
+			errors.As(testResult.Error, &infraErr) {
 			for _, sink := range opts.Progress {
 				sink.TestRetry(testResult.TestName, testResult.Error)
 			}

@@ -24,6 +24,15 @@ const (
 	volumePopulateRetryDelay = 500 * time.Millisecond
 )
 
+// InfraError indicates a Docker infrastructure failure (volume creation,
+// daemon communication) rather than a test job failure. runner.Run uses
+// this type to distinguish transient daemon errors from genuine test failures
+// and retry only the former.
+type InfraError struct{ Err error }
+
+func (e *InfraError) Error() string { return e.Err.Error() }
+func (e *InfraError) Unwrap() error { return e.Err }
+
 // shellMockWrapper is a busybox-sh-compatible script placed at bin/{name} inside
 // the Docker volume. It logs the call to GLUT_MOCK_LOG_DIR as a JSON line and
 // then execs the real script from GLUT_MOCK_BIN_REAL/{name}.
@@ -114,7 +123,7 @@ func CreateDockerVolume(workDir, originRepo string, mocks *parser.MocksConfig) (
 	}
 	if populateErr != nil {
 		_ = exec.Command("docker", "volume", "rm", volName).Run()
-		return "", populateErr
+		return "", &InfraError{Err: populateErr}
 	}
 
 	return volName, nil
@@ -133,15 +142,22 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 	tarCmd := exec.Command("docker", "run", "--name", ctrName,
 		"--volume", volName+":"+workDir,
 		"alpine", "tar", "-cC", MockBinaryLogDir(workDir), ".")
-	tarData, err := tarCmd.Output()
+	var stdout, stderr bytes.Buffer
+	tarCmd.Stdout = &stdout
+	tarCmd.Stderr = &stderr
+	runErr := tarCmd.Run()
 	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
-	if err != nil {
-		// No log files written is not an error.
+	if runErr != nil {
+		// Propagate Docker daemon errors (stderr starts with "Error"); treat a
+		// non-zero tar exit with no daemon error as "log directory was empty".
+		if se := bytes.TrimSpace(stderr.Bytes()); bytes.HasPrefix(se, []byte("Error")) {
+			return fmt.Errorf("read mock logs from volume: %w (%s)", runErr, se)
+		}
 		return nil
 	}
 
 	extractCmd := exec.Command("tar", "-xC", logDir)
-	extractCmd.Stdin = bytes.NewReader(tarData)
+	extractCmd.Stdin = &stdout
 	if out, err := extractCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("extract mock logs: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
