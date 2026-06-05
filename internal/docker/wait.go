@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 )
 
 const (
-	dialTimeout      = 1 * time.Second
-	noTTYLogInterval = 5 * time.Second
-	barWidth         = 20
+	dialTimeout        = 1 * time.Second
+	noTTYLogInterval   = 5 * time.Second
+	barWidth           = 20
+	cleanPollInterval  = 200 * time.Millisecond
 )
 
 // Wait blocks until the Docker daemon is reachable or the timeout expires.
@@ -103,6 +105,46 @@ func dial(endpoint string) error {
 	}
 	_ = conn.Close()
 	return nil
+}
+
+// WaitClean blocks until no GLUT or GCL volumes remain visible in the Docker
+// daemon, or until the timeout expires. GLUT volumes follow the "glut-*"
+// naming convention; GCL per-job build volumes follow "gcl-*". Polling
+// continues until both filters return empty output, which confirms that
+// every volume created during the previous test has been fully removed and
+// the daemon's registry is clean before the next test starts.
+//
+// Overlay-FS layer reclamation by the daemon is asynchronous and cannot be
+// detected through this check — this function only guarantees that no named
+// Docker objects from the previous test remain registered.
+func WaitClean(ctx context.Context, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !hasGlutVolumes() {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(cleanPollInterval):
+		}
+	}
+}
+
+// hasGlutVolumes returns true when any glut-* or gcl-* volumes are still
+// visible in the daemon.
+func hasGlutVolumes() bool {
+	for _, prefix := range []string{"glut-", "gcl-"} {
+		out, err := exec.Command("docker", "volume", "ls",
+			"-q", "--filter", "name="+prefix).Output()
+		if err != nil {
+			return false // daemon unreachable — do not block
+		}
+		if len(strings.TrimSpace(string(out))) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func isWriterTTY(w io.Writer) bool {

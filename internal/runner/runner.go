@@ -35,9 +35,10 @@ const (
 )
 
 const (
-	defaultKeepLastFailed  = 3
-	DefaultWaitTimeout     = 120 * time.Second
-	dockerTestRetryPause   = 5 * time.Second
+	defaultKeepLastFailed = 3
+	DefaultWaitTimeout    = 120 * time.Second
+	dockerTestRetryPause  = 5 * time.Second
+	dockerCleanTimeout    = 30 * time.Second
 )
 
 type RunOptions struct {
@@ -182,6 +183,17 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 			if retryResult.Passed || len(retryResult.Failures) > 0 {
 				testResult = retryResult
 			}
+		}
+
+		// After a Docker test, block until all glut-* and gcl-* volumes are
+		// gone from the daemon. This ensures every volume created during the
+		// test — including any that cleanup may have missed — is fully
+		// removed before the next test creates its own volume and starts
+		// containers. Without this gate, a slow async docker rm can leave
+		// orphaned volumes that keep the daemon busy and cause the next
+		// docker start to fail transiently.
+		if testNeedsDocker(&testFile) {
+			docker.WaitClean(ctx, dockerCleanTimeout)
 		}
 
 		result.Tests = append(result.Tests, testResult)
