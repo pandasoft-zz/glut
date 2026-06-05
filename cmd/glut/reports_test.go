@@ -98,11 +98,10 @@ type fakeFileReport struct {
 	err  error
 }
 
-func (f *fakeFileReport) Start(_ int) {}
-
-func (f *fakeFileReport) TestDone(_ runner.TestResult) {}
-
-func (f *fakeFileReport) Summary(_ runner.RunResult) {}
+func (f *fakeFileReport) Start(_ int)                       {}
+func (f *fakeFileReport) TestRetry(_ string, _ error)       {}
+func (f *fakeFileReport) TestDone(_ runner.TestResult)      {}
+func (f *fakeFileReport) Summary(_ runner.RunResult)        {}
 
 func (f *fakeFileReport) WriteFile(path string) error {
 	f.path = path
