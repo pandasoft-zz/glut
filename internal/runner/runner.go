@@ -35,8 +35,9 @@ const (
 )
 
 const (
-	defaultKeepLastFailed = 3
-	DefaultWaitTimeout    = 120 * time.Second
+	defaultKeepLastFailed  = 3
+	DefaultWaitTimeout     = 120 * time.Second
+	dockerTestRetryPause   = 5 * time.Second
 )
 
 type RunOptions struct {
@@ -176,7 +177,7 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		// genuine job or assertion failures.
 		if testNeedsDocker(&testFile) && !testResult.Passed &&
 			testResult.Error != nil && len(testResult.Failures) == 0 {
-			time.Sleep(2 * time.Second)
+			time.Sleep(dockerTestRetryPause)
 			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, &preservedFailed)
 			if retryResult.Passed || len(retryResult.Failures) > 0 {
 				testResult = retryResult

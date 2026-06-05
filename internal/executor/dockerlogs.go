@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+const (
+	// logCaptureTimeout caps how long captureAfterExit waits for a container
+	// to exit and its logs to be streamed.
+	logCaptureTimeout = 5 * time.Minute
+	// collectLogsTimeout is the per-container deadline inside collectLogs.
+	collectLogsTimeout = 15 * time.Second
+)
+
 // gclBuildVolumeRE matches the gcl build volume naming pattern:
 // gcl-{safeJobName}-{rand}-build
 var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
@@ -102,7 +110,7 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 // output has already been received, so a concurrent docker rm cannot cause a
 // "No such container" error on a separate docker logs call.
 func captureAfterExit(cap *containerCapture) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), logCaptureTimeout)
 	defer cancel()
 
 	// --follow streams stdout until the container exits, then terminates.
@@ -160,7 +168,7 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 		var output []byte
 		select {
 		case output = <-cap.logs:
-		case <-time.After(15 * time.Second):
+		case <-time.After(collectLogsTimeout):
 			continue
 		}
 		if len(output) == 0 {
