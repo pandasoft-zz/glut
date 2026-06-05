@@ -96,11 +96,16 @@ func CreateDockerVolume(workDir, originRepo string, mocks *parser.MocksConfig) (
 				return "", fmt.Errorf("reset volume archive for retry: %w", err)
 			}
 		}
-		cmd := exec.Command("docker", "run", "--rm", "-i",
+		// Use an explicit container name so we can docker rm it synchronously
+		// after the run completes. This avoids the --rm async daemon cleanup
+		// that kept the daemon busy between tests on Docker Desktop / WSL2.
+		ctrName := fmt.Sprintf("glut-pop-%s-%d", volName, attempt)
+		cmd := exec.Command("docker", "run", "--name", ctrName, "-i",
 			"--volume", volName+":"+workDir,
 			"alpine", "tar", "-xC", workDir)
 		cmd.Stdin = archive
 		out, err := cmd.CombinedOutput()
+		_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 		if err == nil {
 			populateErr = nil
 			break
@@ -124,10 +129,12 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 	}
 
 	// Produce a tar of the mock-logs directory contents from inside the volume.
-	tarCmd := exec.Command("docker", "run", "--rm",
+	ctrName := "glut-logs-" + volName
+	tarCmd := exec.Command("docker", "run", "--name", ctrName,
 		"--volume", volName+":"+workDir,
 		"alpine", "tar", "-cC", MockBinaryLogDir(workDir), ".")
 	tarData, err := tarCmd.Output()
+	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 	if err != nil {
 		// No log files written is not an error.
 		return nil
@@ -145,10 +152,12 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 // from inside a Docker volume. The archive can be passed to NewLazyTarOrigin
 // to provide lazy access to the origin repo without immediately extracting it.
 func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
-	tarCmd := exec.Command("docker", "run", "--rm",
+	ctrName := "glut-orig-" + volName
+	tarCmd := exec.Command("docker", "run", "--name", ctrName,
 		"--volume", volName+":"+workDir,
 		"alpine", "tar", "-cC", workDir, ".glut-origin.git")
 	tarData, err := tarCmd.Output()
+	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 	if err != nil {
 		return nil, fmt.Errorf("tar git origin from docker volume: %w", err)
 	}
