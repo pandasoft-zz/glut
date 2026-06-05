@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/pandasoft-zz/glut/internal/reporter"
@@ -78,8 +80,11 @@ current directory. Each test gets its own workspace and mock services.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := runOptionsFromCommand(args)
 
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
 		if runInteractive {
-			result, exitCode := selectAndRun(context.Background(), opts)
+			result, exitCode := selectAndRun(ctx, opts)
 			if result.Error != nil {
 				writeError(result.Error)
 			}
@@ -91,7 +96,7 @@ current directory. Each test gets its own workspace and mock services.`,
 			writeError(err)
 			os.Exit(ExitError)
 		}
-		result, exitCode := runner.Run(context.Background(), opts.Paths, runner.RunOptions{
+		result, exitCode := runner.Run(ctx, opts.Paths, runner.RunOptions{
 			RunPattern:       opts.Pattern,
 			FailFast:         opts.FailFast,
 			MaxFail:          opts.MaxFail,
