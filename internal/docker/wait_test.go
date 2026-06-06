@@ -52,7 +52,7 @@ func TestWaitSucceedsWhenDaemonReachable(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot open tcp listener: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	addr := "tcp://" + ln.Addr().String()
 	t.Setenv("DOCKER_HOST", addr)
