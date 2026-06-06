@@ -97,10 +97,7 @@ func RunWithOptions(opts RunOptions) int {
 		writeError(opts.Stderr, "mock wrapper failed to run %s: %v\n", realPath, err)
 		return 127
 	}
-	if cmd.ProcessState != nil {
-		return cmd.ProcessState.ExitCode()
-	}
-	return 0
+	return cmd.ProcessState.ExitCode()
 }
 
 func ReadBinaryLogs(logDir string) (map[string][]BinaryCall, error) {
@@ -172,9 +169,7 @@ func (opts RunOptions) withDefaults() RunOptions {
 }
 
 func writeError(stderr io.Writer, format string, args ...any) {
-	if _, err := fmt.Fprintf(stderr, format, args...); err != nil {
-		return
-	}
+	_, _ = fmt.Fprintf(stderr, format, args...) // best-effort: nothing useful to do if stderr write fails
 }
 
 func readStdin(stdin io.Reader) (string, io.Reader, error) {

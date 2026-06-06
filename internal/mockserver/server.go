@@ -319,7 +319,7 @@ func (s *Server) handleResource(w http.ResponseWriter, r *http.Request, rest str
 					writeNotFound(w)
 					return true
 				}
-				writeJSON(w, http.StatusOK, map[string]any{"message": "202 Accepted"})
+				writeJSON(w, http.StatusOK, map[string]any{"message": "200 OK"})
 			default:
 				writeNotFound(w)
 			}

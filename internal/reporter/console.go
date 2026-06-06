@@ -212,6 +212,14 @@ func (c *dotsConsole) TestDone(result runner.TestResult) {
 		}
 		writeJobLogs(c.writer, c.st, result.JobOutputs, false)
 	}
+
+	if result.PreservedWorkspace {
+		if c.wroteStatus {
+			writef(c.writer, "\n")
+			c.wroteStatus = false
+		}
+		writef(c.writer, "  workspace kept: %s\n", result.WorkspacePath)
+	}
 }
 
 func (c *dotsConsole) Summary(result runner.RunResult) {

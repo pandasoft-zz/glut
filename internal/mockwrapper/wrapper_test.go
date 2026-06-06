@@ -106,6 +106,7 @@ func TestRunWithOptionsPropagatesExitCode(t *testing.T) {
 }
 
 func TestAppendBinaryCallKeepsJSONLValidForConcurrentWrites(t *testing.T) {
+	t.Parallel()
 	logDir := t.TempDir()
 	const count = 40
 

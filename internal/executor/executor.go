@@ -215,7 +215,7 @@ func runCommand(ctx context.Context, cfg ExecutorConfig, args ...string) (string
 		}
 		return stdout.String(), stderr.String(), nil
 	}
-	return "", "", fmt.Errorf("executor: runCommand: could not exec binary after %d attempts", maxAttempts)
+	panic("unreachable: runCommand loop always returns on the final attempt")
 }
 
 func buildCommandEnv(cfg ExecutorConfig) []string {
@@ -482,6 +482,7 @@ func mergeJobLogs(jobs map[string]JobOutput, workspacePath string) {
 		}
 		job := jobs[jobName]
 		job.Name = jobName
+		job.Present = true
 		job.Stdout = string(data)
 		jobs[jobName] = job
 	}

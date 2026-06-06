@@ -207,7 +207,10 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 			for _, sink := range opts.Progress {
 				sink.TestRetry(testResult.TestName, testResult.Error)
 			}
-			time.Sleep(dockerTestRetryPause)
+			select {
+			case <-time.After(dockerTestRetryPause):
+			case <-ctx.Done():
+			}
 			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
 			if retryResult.Passed || len(retryResult.Failures) > 0 {
 				testResult = retryResult
@@ -271,10 +274,7 @@ func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, 
 }
 
 func discoverTests(paths []string, pattern string) ([]parser.TestFile, error) {
-	matcher, err := compilePattern(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("compile run pattern: %w", err)
-	}
+	matcher := compilePattern(pattern)
 
 	inputs := normalizePaths(paths)
 	collected := make([]parser.TestFile, 0)
@@ -704,20 +704,21 @@ func isYAMLPath(path string) bool {
 	return ext == ".yml" || ext == ".yaml"
 }
 
-func compilePattern(pattern string) (func(*parser.TestFile) bool, error) {
+func compilePattern(pattern string) func(*parser.TestFile) bool {
 	if pattern == "" {
-		return func(*parser.TestFile) bool { return true }, nil
+		return func(*parser.TestFile) bool { return true }
 	}
 
 	if re, err := regexp.Compile(pattern); err == nil {
 		return func(testFile *parser.TestFile) bool {
 			return re.MatchString(testFile.Glut.Name) || re.MatchString(testFile.FilePath)
-		}, nil
+		}
 	}
 
+	// Invalid regex: treat pattern as a substring match.
 	return func(testFile *parser.TestFile) bool {
 		return strings.Contains(testFile.Glut.Name, pattern) || strings.Contains(testFile.FilePath, pattern)
-	}, nil
+	}
 }
 
 func validateDebugPause(point string) error {
@@ -961,7 +962,6 @@ func outboundIP() string {
 	return "host.docker.internal"
 }
 
-// toHostPath translates a workspace path from the GLUT container's perspective to
 // resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
 // nil (absent) → full Docker mode, same as &true.
 // &true → full Docker mode with volume/extra-host support.

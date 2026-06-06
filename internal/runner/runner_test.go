@@ -441,17 +441,11 @@ func TestRunnerHelperBranches(t *testing.T) {
 		t.Fatalf("normalizePaths(paths) = %#v", got)
 	}
 
-	regexMatcher, err := compilePattern("pass.*test")
-	if err != nil {
-		t.Fatal(err)
-	}
+	regexMatcher := compilePattern("pass.*test")
 	if !regexMatcher(testFileForPattern("pass my test", "tests/a.yml")) {
 		t.Fatal("regex matcher did not match test name")
 	}
-	substringMatcher, err := compilePattern("[")
-	if err != nil {
-		t.Fatal(err)
-	}
+	substringMatcher := compilePattern("[")
 	if !substringMatcher(testFileForPattern("literal [ value", "tests/a.yml")) {
 		t.Fatal("substring fallback did not match test name")
 	}

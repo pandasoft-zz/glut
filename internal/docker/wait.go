@@ -36,6 +36,11 @@ func Wait(ctx context.Context, w io.Writer, timeout time.Duration) error {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	var renderer *lipgloss.Renderer
+	if isTTY {
+		renderer = lipgloss.NewRenderer(w)
+	}
+
 	var nextLog time.Time // zero value causes first log to fire immediately
 
 	for {
@@ -63,7 +68,7 @@ func Wait(ctx context.Context, w io.Writer, timeout time.Duration) error {
 			}
 
 			if isTTY {
-				renderProgress(w, elapsed, timeout)
+				renderProgress(w, elapsed, timeout, renderer)
 			} else if !t.Before(nextLog) {
 				_, _ = fmt.Fprintf(w, "waiting for Docker daemon at %s (%ds elapsed, timeout %ds)\n",
 					endpoint, int(elapsed.Seconds()), int(timeout.Seconds()))
@@ -126,7 +131,7 @@ const (
 	VolumeStrategyVolume = "volume"
 )
 
-// ResolveVolumeStrategy returns the effective volume strategy for workDir.
+// ResolveVolumeStrategy returns the effective volume strategy.
 // When strategy is VolumeStrategyAuto (or empty) it checks whether GLUT is
 // running inside a Docker container by looking for /.dockerenv, which Docker
 // creates in every container it starts.
@@ -176,9 +181,7 @@ func isWriterTTY(w io.Writer) bool {
 	return isatty.IsTerminal(f.Fd())
 }
 
-func renderProgress(w io.Writer, elapsed, timeout time.Duration) {
-	r := lipgloss.NewRenderer(w)
-
+func renderProgress(w io.Writer, elapsed, timeout time.Duration, r *lipgloss.Renderer) {
 	pct := float64(elapsed) / float64(timeout)
 	if pct > 1 {
 		pct = 1

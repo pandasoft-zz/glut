@@ -67,8 +67,8 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		if created {
 			return
 		}
-		if removeErr := os.RemoveAll(tmpWork); removeErr != nil && err != nil {
-			err = fmt.Errorf("%w; failed to remove temp workspace %s: %v", err, tmpWork, removeErr)
+		if removeErr := os.RemoveAll(tmpWork); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to remove temp workspace %s: %v", tmpWork, removeErr))
 		}
 	}()
 

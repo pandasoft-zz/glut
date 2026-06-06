@@ -190,8 +190,6 @@ func junitSeconds(durationMsOrDuration any) string {
 	switch value := durationMsOrDuration.(type) {
 	case int64:
 		return fmt.Sprintf("%.3f", float64(value)/1000)
-	case runner.RunResult:
-		return fmt.Sprintf("%.3f", value.Duration.Seconds())
 	default:
 		return fmt.Sprintf("%.3f", value.(interface{ Seconds() float64 }).Seconds())
 	}
