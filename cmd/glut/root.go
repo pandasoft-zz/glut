@@ -19,10 +19,6 @@ var (
 )
 
 const (
-	ExitOK       = 0
-	ExitTestFail = 1
-	ExitError    = 2
-
 	defaultRunTimeout = 10 * time.Minute
 )
 
@@ -95,7 +91,7 @@ current directory. Each test gets its own workspace and mock services.`,
 		sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
 		if err != nil {
 			writeError(err)
-			os.Exit(ExitError)
+			os.Exit(int(runner.ExitRunnerError))
 		}
 		result, exitCode := runner.Run(ctx, opts.Paths, runner.RunOptions{
 			RunPattern:       opts.Pattern,
@@ -120,7 +116,7 @@ current directory. Each test gets its own workspace and mock services.`,
 		}
 		if err := writeFileReports(fileReports); err != nil {
 			writeError(err)
-			os.Exit(ExitError)
+			os.Exit(int(runner.ExitRunnerError))
 		}
 		os.Exit(int(exitCode))
 	},
@@ -142,7 +138,7 @@ A path can be a directory or a YAML file. Use --run to filter by test name.`,
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(ExitError)
+			os.Exit(int(runner.ExitRunnerError))
 		}
 		reporter.PrintList(os.Stdout, tests)
 	},
@@ -163,12 +159,12 @@ assert.job references to missing pipeline jobs.`,
 		report := buildLintReport(opts.Paths)
 		if err := printLintReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
 			writeError(err)
-			os.Exit(ExitError)
+			os.Exit(int(runner.ExitRunnerError))
 		}
 		if report.HasErrors {
-			os.Exit(ExitTestFail)
+			os.Exit(int(runner.ExitTestFailed))
 		}
-		os.Exit(ExitOK)
+		os.Exit(int(runner.ExitOK))
 	},
 }
 
@@ -189,12 +185,12 @@ Use JSON output when another tool or AI assistant needs structured feedback.`,
 		report := buildDoctorReportFiltered(opts.Paths, doctorPattern)
 		if err := printDoctorReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
 			writeError(err)
-			os.Exit(ExitError)
+			os.Exit(int(runner.ExitRunnerError))
 		}
 		if report.HasErrors {
-			os.Exit(ExitTestFail)
+			os.Exit(int(runner.ExitTestFailed))
 		}
-		os.Exit(ExitOK)
+		os.Exit(int(runner.ExitOK))
 	},
 }
 
@@ -211,7 +207,7 @@ var versionCmd = &cobra.Command{
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(ExitError)
+		os.Exit(int(runner.ExitRunnerError))
 	}
 }
 

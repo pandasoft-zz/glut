@@ -116,9 +116,8 @@ func buildJUnitSuites(result runner.RunResult) junitSuites {
 	sort.Strings(names)
 
 	report := junitSuites{
-		Tests:    len(result.Tests),
-		Failures: result.Failed,
-		Time:     junitSeconds(result.Duration),
+		Tests: len(result.Tests),
+		Time:  junitSeconds(result.Duration),
 	}
 
 	for _, name := range names {
@@ -152,6 +151,7 @@ func buildJUnitSuites(result runner.RunResult) junitSuites {
 			suite.Cases = append(suite.Cases, testCase)
 		}
 		suite.Time = junitSeconds(sumSuiteDuration(suite.Cases))
+		report.Failures += suite.Failures
 		report.Suites = append(report.Suites, suite)
 	}
 
@@ -190,8 +190,6 @@ func junitSeconds(durationMsOrDuration any) string {
 	switch value := durationMsOrDuration.(type) {
 	case int64:
 		return fmt.Sprintf("%.3f", float64(value)/1000)
-	case runner.RunResult:
-		return fmt.Sprintf("%.3f", value.Duration.Seconds())
 	default:
 		return fmt.Sprintf("%.3f", value.(interface{ Seconds() float64 }).Seconds())
 	}

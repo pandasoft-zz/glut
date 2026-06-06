@@ -11,16 +11,25 @@ import (
 //go:embed glut.schema.json
 var glutSchema string
 
+var compiledSchema *gojsonschema.Schema
+
+func init() {
+	var err error
+	compiledSchema, err = gojsonschema.NewSchema(gojsonschema.NewStringLoader(glutSchema))
+	if err != nil {
+		panic(fmt.Sprintf("failed to compile glut JSON schema: %v", err))
+	}
+}
+
 type ValidationError struct {
 	Field       string
 	Description string
 }
 
 func ValidateGlut(value interface{}) ([]ValidationError, error) {
-	schemaLoader := gojsonschema.NewStringLoader(glutSchema)
 	documentLoader := gojsonschema.NewGoLoader(value)
 
-	result, err := gojsonschema.Validate(schemaLoader, documentLoader)
+	result, err := compiledSchema.Validate(documentLoader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate glut schema: %w", err)
 	}

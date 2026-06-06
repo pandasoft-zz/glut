@@ -127,6 +127,12 @@ func applyPipelineEnv(env map[string]string, setup parser.SetupConfig, defaultBr
 }
 
 func applyBranchOrTagEnv(env map[string]string, setup parser.SetupConfig, defaultBranch string) {
+	refProtected := "false"
+	if setup.RefProtected != nil && *setup.RefProtected {
+		refProtected = "true"
+	}
+	env["CI_COMMIT_REF_PROTECTED"] = refProtected
+
 	if setup.Tag != "" {
 		env["CI_COMMIT_TAG"] = setup.Tag
 		env["CI_COMMIT_REF_NAME"] = setup.Tag
@@ -141,11 +147,6 @@ func applyBranchOrTagEnv(env map[string]string, setup parser.SetupConfig, defaul
 	env["CI_COMMIT_BRANCH"] = branch
 	env["CI_COMMIT_REF_NAME"] = branch
 	env["CI_COMMIT_REF_SLUG"] = slugify(branch)
-	refProtected := "false"
-	if setup.RefProtected != nil && *setup.RefProtected {
-		refProtected = "true"
-	}
-	env["CI_COMMIT_REF_PROTECTED"] = refProtected
 	env["CI_COMMIT_BEFORE_SHA"] = "0000000000000000000000000000000000000000"
 }
 

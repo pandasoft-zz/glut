@@ -100,7 +100,7 @@ func lintGlutName(filePath string, glutMap map[string]interface{}) []LintError {
 func lintAssertSection(filePath string, glutMap map[string]interface{}) []LintError {
 	var lints []LintError
 	assertVal, hasAssert := glutMap["assert"]
-	if !hasAssert {
+	if !hasAssert || assertVal == nil {
 		return []LintError{{File: filePath, Level: LevelWarning, Message: ".glut.assert is empty"}}
 	}
 

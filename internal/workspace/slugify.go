@@ -5,8 +5,9 @@ import (
 	"strings"
 )
 
+var nonAlphanumRE = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+
 func slugify(ref string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9]+`)
-	slug := re.ReplaceAllString(ref, "-")
+	slug := nonAlphanumRE.ReplaceAllString(ref, "-")
 	return strings.ToLower(strings.Trim(slug, "-"))
 }

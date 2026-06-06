@@ -195,17 +195,22 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		testResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
 
 		// For Docker tests that fail at the infrastructure level (volume
-		// creation, daemon communication), retry once. Checking for
-		// workspace.InfraError is more precise than a proxy on JobOutputs:
-		// it only fires for errors explicitly tagged as infrastructure
-		// failures, never for genuine job crashes that produce no output.
+		// creation, daemon communication), retry once. InfraError covers
+		// failures explicitly tagged as infrastructure (e.g. volume create,
+		// populate). The fallback covers executor-level daemon failures that
+		// occur before any job starts and are therefore not wrapped as
+		// InfraError — those also produce error + no job outputs.
 		var infraErr *workspace.InfraError
+		executorFailedBeforeJobs := testResult.Error != nil && len(testResult.JobOutputs) == 0
 		if testNeedsDocker(&testFile) && !testResult.Passed &&
-			errors.As(testResult.Error, &infraErr) {
+			(errors.As(testResult.Error, &infraErr) || executorFailedBeforeJobs) {
 			for _, sink := range opts.Progress {
 				sink.TestRetry(testResult.TestName, testResult.Error)
 			}
-			time.Sleep(dockerTestRetryPause)
+			select {
+			case <-time.After(dockerTestRetryPause):
+			case <-ctx.Done():
+			}
 			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
 			if retryResult.Passed || len(retryResult.Failures) > 0 {
 				testResult = retryResult
@@ -250,7 +255,7 @@ func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, 
 		}
 	}
 
-	tests, err := discoverTests(absifyPaths(paths, opts.WorkDir), opts.RunPattern)
+	tests, err := discoverTests(absifyPaths(paths, workDir), opts.RunPattern)
 	if err != nil {
 		return nil, err
 	}
@@ -269,10 +274,7 @@ func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, 
 }
 
 func discoverTests(paths []string, pattern string) ([]parser.TestFile, error) {
-	matcher, err := compilePattern(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("compile run pattern: %w", err)
-	}
+	matcher := compilePattern(pattern)
 
 	inputs := normalizePaths(paths)
 	collected := make([]parser.TestFile, 0)
@@ -442,8 +444,8 @@ func runSingleTest(
 				RawStderr:       execResult.RawStderr,
 				BinaryLogs:      binaryLogs,
 				APICalls:        apiCalls,
-				WorkspaceGitLog: safeGitLog(result.WorkspacePath),
-				OriginGitLog:    safeGitLog(result.WorkspacePath, "--git-dir="+filepath.Join(result.WorkspacePath, ".glut-origin.git")),
+				WorkspaceGitLog: safeGitLog(work.WorkspaceDir),
+				OriginGitLog:    safeGitLog(work.WorkspaceDir, "--git-dir="+filepath.Join(work.WorkspaceDir, ".glut-origin.git")),
 				PhaseTimings:    copyPhaseTimings(phaseTimings),
 				CleanupErrors:   errorsToStrings(cleanupErrors),
 			}
@@ -702,20 +704,21 @@ func isYAMLPath(path string) bool {
 	return ext == ".yml" || ext == ".yaml"
 }
 
-func compilePattern(pattern string) (func(*parser.TestFile) bool, error) {
+func compilePattern(pattern string) func(*parser.TestFile) bool {
 	if pattern == "" {
-		return func(*parser.TestFile) bool { return true }, nil
+		return func(*parser.TestFile) bool { return true }
 	}
 
 	if re, err := regexp.Compile(pattern); err == nil {
 		return func(testFile *parser.TestFile) bool {
 			return re.MatchString(testFile.Glut.Name) || re.MatchString(testFile.FilePath)
-		}, nil
+		}
 	}
 
+	// Invalid regex: treat pattern as a substring match.
 	return func(testFile *parser.TestFile) bool {
 		return strings.Contains(testFile.Glut.Name, pattern) || strings.Contains(testFile.FilePath, pattern)
-	}, nil
+	}
 }
 
 func validateDebugPause(point string) error {
@@ -959,7 +962,6 @@ func outboundIP() string {
 	return "host.docker.internal"
 }
 
-// toHostPath translates a workspace path from the GLUT container's perspective to
 // resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
 // nil (absent) → full Docker mode, same as &true.
 // &true → full Docker mode with volume/extra-host support.
