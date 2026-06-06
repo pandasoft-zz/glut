@@ -43,20 +43,22 @@ func selectAndRun(ctx context.Context, opts RunOptions) (runner.RunResult, runne
 		return runner.RunResult{Error: err}, runner.ExitRunnerError
 	}
 	result, code := runner.Run(ctx, selected, runner.RunOptions{
-		RunPattern:     opts.Pattern,
-		FailFast:       opts.FailFast,
-		MaxFail:        opts.MaxFail,
-		Verbose:        opts.Verbose,
-		Quiet:          opts.Quiet,
-		Timeout:        opts.Timeout,
-		Debug:          opts.Debug,
-		KeepWorkspace:  opts.KeepWorkspace,
-		DebugPause:     opts.DebugPause,
-		KeepLastFailed: opts.KeepLastFailed,
+		RunPattern:           opts.Pattern,
+		FailFast:             opts.FailFast,
+		MaxFail:              opts.MaxFail,
+		Verbose:              opts.Verbose,
+		Quiet:                opts.Quiet,
+		Timeout:              opts.Timeout,
+		WaitTimeout:          opts.WaitTimeout,
+		Debug:                opts.Debug,
+		KeepWorkspace:        opts.KeepWorkspace,
+		DebugPause:           opts.DebugPause,
+		KeepLastFailed:       opts.KeepLastFailed,
 		CopyStrategy:         opts.CopyStrategy,
 		DockerVolumeStrategy: opts.DockerVolumeStrategy,
 		Include:              opts.Include,
-		Progress:       sinks,
+		Progress:             sinks,
+		DockerWaitOutput:     os.Stderr,
 	})
 	if werr := writeFileReports(fileReports); werr != nil {
 		return result, runner.ExitRunnerError

@@ -13,6 +13,10 @@ func runJobAsserts(asserts map[string]config.JobAssert, ctx AssertContext) []Ass
 
 		if jobAssert.Present != nil {
 			results = append(results, resultFromBool(basePath+".present", *jobAssert.Present == present, *jobAssert.Present, present))
+			if !*jobAssert.Present {
+				// Expected the job to be absent — skip field assertions regardless of actual state.
+				continue
+			}
 		} else if !present {
 			results = append(results, failResult(basePath+".present", true, false))
 		}

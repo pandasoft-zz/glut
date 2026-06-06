@@ -25,8 +25,7 @@ func runArtifactAsserts(asserts map[string]config.ArtifactAssert, ctx AssertCont
 	return results
 }
 
-func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactAssert) []AssertResult {
-	var results []AssertResult
+func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactAssert) (results []AssertResult) {
 
 	info, err := os.Lstat(fullPath)
 	exists := err == nil
@@ -37,7 +36,7 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 		if err != nil && !os.IsNotExist(err) {
 			results = append(results, failResult(basePath, "read artifact", err))
 		}
-		return results
+		return
 	}
 
 	if assert.Mode != "" {
@@ -76,7 +75,10 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 					results = append(results, resultFromBool(basePath+".md5", assert.MD5 == sum, assert.MD5, sum))
 				}
 			}
-			if _, seekErr := file.Seek(0, 0); seekErr == nil && assert.SHA256 != "" {
+			if _, seekErr := file.Seek(0, 0); seekErr != nil && assert.SHA256 != "" {
+				results = append(results, failResult(basePath+".sha256", assert.SHA256,
+					fmt.Errorf("seek file: %w", seekErr)))
+			} else if seekErr == nil && assert.SHA256 != "" {
 				sum, sumErr := checksumFile(file, sha256.New())
 				if sumErr != nil {
 					results = append(results, failResult(basePath+".sha256", assert.SHA256, sumErr))
@@ -86,7 +88,7 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 			}
 		}
 	}
-	return results
+	return
 }
 
 func checksumFile(file *os.File, digest hash.Hash) (string, error) {

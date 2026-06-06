@@ -179,7 +179,7 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	}
 	defer func() {
 		if err := os.RemoveAll(worktree); err != nil {
-			fmt.Printf("Failed to remove origin worktree: %v\n", err)
+			fmt.Fprintf(os.Stderr, "failed to remove origin worktree: %v\n", err)
 		}
 	}()
 
@@ -207,6 +207,10 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 	if len(origin.Files) > 0 {
 		for name, content := range origin.Files {
 			path := filepath.Join(worktree, name)
+			rel, relErr := filepath.Rel(worktree, path)
+			if relErr != nil || strings.HasPrefix(rel, "..") {
+				return fmt.Errorf("setup.git.origin.files key %q escapes workspace", name)
+			}
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				return err
 			}

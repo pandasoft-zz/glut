@@ -434,7 +434,6 @@ func TestRunKeepWorkspacePreservesPassingWorkspace(t *testing.T) {
 }
 
 func TestRunnerHelperBranches(t *testing.T) {
-	t.Parallel()
 	if got := normalizePaths(nil); len(got) != 1 || got[0] != "." {
 		t.Fatalf("normalizePaths(nil) = %#v", got)
 	}

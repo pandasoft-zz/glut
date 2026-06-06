@@ -103,7 +103,7 @@ func (s *InMemoryStore) setDefaultIdentifierLocked(resource string, obj map[stri
 func seedStore(cfgSeed map[string][]map[string]interface{}, store *InMemoryStore) {
 	for resource, objects := range cfgSeed {
 		for _, obj := range objects {
-			store.Create(resource, anyMap(obj))
+			store.Create(resource, obj)
 		}
 	}
 }
@@ -122,10 +122,3 @@ func mergeObject(dst map[string]any, src map[string]any) {
 	}
 }
 
-func anyMap(src map[string]interface{}) map[string]any {
-	dst := make(map[string]any, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
-}

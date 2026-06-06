@@ -58,6 +58,7 @@ func (r *tapReport) WriteFile(path string) error {
 		if message == "" {
 			message = "test failed"
 		}
+		message = strings.ReplaceAll(message, "\n", " ")
 		builder.WriteString("  ---\n")
 		fmt.Fprintf(&builder, "  message: %s\n", message)
 		builder.WriteString("  ...\n")

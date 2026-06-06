@@ -174,12 +174,19 @@ func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
 	tarCmd := exec.Command("docker", "run", "--name", ctrName,
 		"--volume", volName+":"+workDir,
 		"alpine", "tar", "-cC", workDir, ".glut-origin.git")
-	tarData, err := tarCmd.Output()
+	var tarData bytes.Buffer
+	var stderr bytes.Buffer
+	tarCmd.Stdout = &tarData
+	tarCmd.Stderr = &stderr
+	err := tarCmd.Run()
 	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 	if err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("tar git origin from docker volume: %w: %s", err, stderr.String())
+		}
 		return nil, fmt.Errorf("tar git origin from docker volume: %w", err)
 	}
-	return tarData, nil
+	return tarData.Bytes(), nil
 }
 
 // DestroyDockerVolume removes the named Docker volume created by CreateDockerVolume.

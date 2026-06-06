@@ -519,7 +519,7 @@ func parseJobList(stdout string, stderr string) []string {
 	scanner := newLineScanner(stdout)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "GLUT_JOB|") {
+		if line == "" || strings.HasPrefix(line, jobMarkerPrefix) {
 			continue
 		}
 		if strings.HasPrefix(line, "- ") {

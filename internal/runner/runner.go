@@ -252,7 +252,7 @@ func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, 
 		}
 	}
 
-	tests, err := discoverTests(absifyPaths(paths, opts.WorkDir), opts.RunPattern)
+	tests, err := discoverTests(absifyPaths(paths, workDir), opts.RunPattern)
 	if err != nil {
 		return nil, err
 	}
@@ -444,8 +444,8 @@ func runSingleTest(
 				RawStderr:       execResult.RawStderr,
 				BinaryLogs:      binaryLogs,
 				APICalls:        apiCalls,
-				WorkspaceGitLog: safeGitLog(result.WorkspacePath),
-				OriginGitLog:    safeGitLog(result.WorkspacePath, "--git-dir="+filepath.Join(result.WorkspacePath, ".glut-origin.git")),
+				WorkspaceGitLog: safeGitLog(work.WorkspaceDir),
+				OriginGitLog:    safeGitLog(work.WorkspaceDir, "--git-dir="+filepath.Join(work.WorkspaceDir, ".glut-origin.git")),
 				PhaseTimings:    copyPhaseTimings(phaseTimings),
 				CleanupErrors:   errorsToStrings(cleanupErrors),
 			}

@@ -47,18 +47,19 @@ func Wait(ctx context.Context, w io.Writer, timeout time.Duration) error {
 			return ctx.Err()
 		case t := <-ticker.C:
 			elapsed := t.Sub(start)
-			if elapsed >= timeout {
-				if isTTY {
-					_, _ = fmt.Fprintln(w, "")
-				}
-				return fmt.Errorf("docker daemon not ready after %s (%s)", timeout.Round(time.Second), endpoint)
-			}
 
 			if dial(endpoint) == nil {
 				if isTTY {
 					_, _ = fmt.Fprintln(w, "")
 				}
 				return nil
+			}
+
+			if elapsed >= timeout {
+				if isTTY {
+					_, _ = fmt.Fprintln(w, "")
+				}
+				return fmt.Errorf("docker daemon not ready after %s (%s)", timeout.Round(time.Second), endpoint)
 			}
 
 			if isTTY {

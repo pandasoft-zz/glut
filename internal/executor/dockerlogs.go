@@ -82,7 +82,7 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 		if containerID == "" {
 			continue
 		}
-		jobName, ok := containerInfo(containerID, m.volumeName)
+		jobName, ok := containerInfo(ctx, containerID, m.volumeName)
 		if !ok {
 			continue
 		}
@@ -98,7 +98,7 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 		// docker wait blocks until container exits, then we immediately call
 		// docker logs — this races against gcl's docker rm but wins because
 		// gcl's cleanup runs through multiple async Node.js Promise hops.
-		go captureAfterExit(cap)
+		go captureAfterExit(ctx, cap)
 	}
 }
 
@@ -107,8 +107,8 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 // async docker rm: by the time the container exits and --follow returns, all
 // output has already been received, so a concurrent docker rm cannot cause a
 // "No such container" error on a separate docker logs call.
-func captureAfterExit(cap *containerCapture) {
-	ctx, cancel := context.WithTimeout(context.Background(), logCaptureTimeout)
+func captureAfterExit(parentCtx context.Context, cap *containerCapture) {
+	ctx, cancel := context.WithTimeout(parentCtx, logCaptureTimeout)
 	defer cancel()
 
 	// --follow streams stdout until the container exits, then terminates.
@@ -178,8 +178,8 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 // containerInfo inspects a container and returns the CI job name and whether
 // the GLUT volume is mounted. ok is false when the container is not part of
 // this GLUT test run or when inspect fails.
-func containerInfo(containerID, glutVolumeName string) (jobName string, ok bool) {
-	out, err := exec.Command("docker", "inspect",
+func containerInfo(ctx context.Context, containerID, glutVolumeName string) (jobName string, ok bool) {
+	out, err := exec.CommandContext(ctx, "docker", "inspect",
 		"--format", "{{range .Mounts}}{{if eq .Type \"volume\"}}{{.Name}}\n{{end}}{{end}}",
 		containerID).Output()
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -29,6 +30,7 @@ type Server struct {
 	listenAddr string
 	started    bool
 	stopped    bool
+	serveErr   error
 }
 
 func New(cfg config.APISetupConfig) (*Server, error) {
@@ -70,7 +72,11 @@ func (s *Server) Start() error {
 	s.stopped = false
 
 	go func() {
-		_ = s.http.Serve(listener)
+		if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.mu.Lock()
+			s.serveErr = err
+			s.mu.Unlock()
+		}
 	}()
 
 	return nil
@@ -444,9 +450,7 @@ func readJSONBody(w http.ResponseWriter, r *http.Request) (map[string]any, bool)
 func writeJSON(w http.ResponseWriter, statusCode int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(value); err != nil {
-		http.Error(w, fmt.Sprintf("response write: %v", err), http.StatusInternalServerError)
-	}
+	_ = json.NewEncoder(w).Encode(value) // headers already sent; nothing useful to do on error
 }
 
 func writeNotFound(w http.ResponseWriter) {
