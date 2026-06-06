@@ -85,7 +85,7 @@ func CreateDockerVolume(workDir, originRepo string, mocks *parser.MocksConfig) (
 	volName := "glut-" + filepath.Base(workDir)
 
 	if out, err := exec.Command("docker", "volume", "create", volName).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker volume create %s: %w (%s)", volName, err, strings.TrimSpace(string(out)))
+		return "", &InfraError{Err: fmt.Errorf("docker volume create %s: %w (%s)", volName, err, strings.TrimSpace(string(out)))}
 	}
 
 	archive, err := buildVolumeArchive(workDir, originRepo, mocks)
@@ -148,9 +148,11 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 	runErr := tarCmd.Run()
 	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 	if runErr != nil {
-		// Propagate Docker daemon errors (stderr starts with "Error"); treat a
-		// non-zero tar exit with no daemon error as "log directory was empty".
-		if se := bytes.TrimSpace(stderr.Bytes()); bytes.HasPrefix(se, []byte("Error")) {
+		// Any non-empty stderr indicates a real Docker or tar error; propagate
+		// it so the caller can distinguish an infrastructure failure from an
+		// intentionally empty log directory (tar exits non-zero but stderr is
+		// empty in that case).
+		if se := bytes.TrimSpace(stderr.Bytes()); len(se) > 0 {
 			return fmt.Errorf("read mock logs from volume: %w (%s)", runErr, se)
 		}
 		return nil

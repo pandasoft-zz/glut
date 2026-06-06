@@ -152,10 +152,12 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 		c := cap
 		go func() {
 			defer wg.Done()
+			t := time.NewTimer(collectLogsTimeout)
+			defer t.Stop()
 			select {
 			case output := <-c.logs:
 				results <- captureResult{c.jobName, output}
-			case <-time.After(collectLogsTimeout):
+			case <-t.C:
 			}
 		}()
 	}

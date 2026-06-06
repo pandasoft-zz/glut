@@ -195,13 +195,15 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		testResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
 
 		// For Docker tests that fail at the infrastructure level (volume
-		// creation, daemon communication), retry once. Checking for
-		// workspace.InfraError is more precise than a proxy on JobOutputs:
-		// it only fires for errors explicitly tagged as infrastructure
-		// failures, never for genuine job crashes that produce no output.
+		// creation, daemon communication), retry once. InfraError covers
+		// failures explicitly tagged as infrastructure (e.g. volume create,
+		// populate). The fallback covers executor-level daemon failures that
+		// occur before any job starts and are therefore not wrapped as
+		// InfraError — those also produce error + no job outputs.
 		var infraErr *workspace.InfraError
+		executorFailedBeforeJobs := testResult.Error != nil && len(testResult.JobOutputs) == 0
 		if testNeedsDocker(&testFile) && !testResult.Passed &&
-			errors.As(testResult.Error, &infraErr) {
+			(errors.As(testResult.Error, &infraErr) || executorFailedBeforeJobs) {
 			for _, sink := range opts.Progress {
 				sink.TestRetry(testResult.TestName, testResult.Error)
 			}
