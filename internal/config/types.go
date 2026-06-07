@@ -37,6 +37,7 @@ type SetupConfig struct {
 	Branch         string           `yaml:"branch"`
 	DefaultBranch  string           `yaml:"default_branch"`
 	Tag            string           `yaml:"tag"`
+	TagMessage     string           `yaml:"tag_message"`
 	PipelineSource string           `yaml:"pipeline_source"`
 	Docker         *bool            `yaml:"docker"`
 	RefProtected   *bool            `yaml:"ref_protected"`
@@ -67,6 +68,9 @@ type MRConfig struct {
 	Draft        bool   `yaml:"draft"`
 	Labels       string `yaml:"labels"`
 	Assignees    string `yaml:"assignees"`
+	Description  string `yaml:"description"`
+	Milestone    string `yaml:"milestone"`
+	Squash       bool   `yaml:"squash"`
 }
 
 type UpstreamConfig struct {
@@ -105,6 +109,21 @@ type APISetupConfig struct {
 	Token   *TokenConfig   `yaml:"token"`
 	Project *ProjectConfig `yaml:"project"`
 	Seed    *APISeedConfig `yaml:"seed"`
+	User    *UserConfig    `yaml:"user"`
+	Group   *GroupConfig   `yaml:"group"`
+}
+
+type UserConfig struct {
+	ID    int    `yaml:"id"`
+	Name  string `yaml:"name"`
+	Email string `yaml:"email"`
+	Login string `yaml:"login"`
+}
+
+type GroupConfig struct {
+	ID   int    `yaml:"id"`
+	Path string `yaml:"path"`
+	Name string `yaml:"name"`
 }
 
 type TokenConfig struct {
@@ -167,6 +186,8 @@ type APISeedConfig struct {
 	Releases      []map[string]interface{} `yaml:"releases"`
 	MergeRequests []map[string]interface{} `yaml:"merge_requests"`
 	Labels        []map[string]interface{} `yaml:"labels"`
+	Pipelines     []map[string]interface{} `yaml:"pipelines"`
+	Jobs          []map[string]interface{} `yaml:"jobs"`
 }
 
 type MocksConfig struct {

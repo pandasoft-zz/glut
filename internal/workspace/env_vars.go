@@ -19,6 +19,7 @@ func (w *Workspace) EnvVars(setup parser.SetupConfig, port int, sha string, shor
 	applyProjectEnv(env, setup)
 	applyPipelineEnv(env, setup, defaultBranch)
 	applyPipelineUserEnv(env, setup)
+	applyDerivedURLEnv(env)
 	if setup.Mocks != nil && len(setup.Mocks.Binaries) > 0 {
 		effectiveHostEnv := w.hostEnv
 		if effectiveHostEnv == nil {
@@ -51,9 +52,14 @@ func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName stri
 		workspacePath = w.Dir
 	}
 
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	return map[string]string{
 		"CI":                   "true",
-		"CI_SERVER_URL":        fmt.Sprintf("http://127.0.0.1:%d", port),
+		"CI_SERVER_URL":        serverURL,
+		"CI_SERVER_HOST":       "127.0.0.1",
+		"CI_SERVER_NAME":       "GitLab",
+		"CI_SERVER_VERSION":    "16.11.0",
+		"CI_SERVER_REVISION":   "mock",
 		"CI_API_V4_URL":        fmt.Sprintf("http://127.0.0.1:%d/api/v4", port),
 		"CI_PROJECT_ID":        "1",
 		"CI_PROJECT_PATH":      "test-group/test-project",
@@ -64,17 +70,33 @@ func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName stri
 		"CI_DEFAULT_BRANCH":    defaultBranch,
 		"CI_PIPELINE_SOURCE":   config.PipelineSourcePush,
 		"CI_PIPELINE_ID":       "1",
+		"CI_JOB_ID":            "1",
 		"CI_JOB_TOKEN":         "mock-job-token",
 		"CI_REGISTRY":          "registry.example.com",
 		"CI_REGISTRY_IMAGE":    "registry.example.com/test-group/test-project",
 		"GITLAB_USER_NAME":     config.DefaultUserName,
 		"GITLAB_USER_EMAIL":    config.DefaultUserEmail,
 		"GITLAB_USER_LOGIN":    config.DefaultUserLogin,
+		"GITLAB_USER_ID":       "1",
 		"GLUT_WORKSPACE":       workspacePath,
 		"GLUT_TEST_NAME":       glutName,
 		"GLUT_ORIGIN_REPO":     w.OriginRepo,
 		"CI_REPOSITORY_URL":    "file://" + w.OriginRepo,
 	}
+}
+
+// applyDerivedURLEnv computes URL variables that depend on earlier apply steps
+// (project path may have been overridden by applyProjectEnv).
+func applyDerivedURLEnv(env map[string]string) {
+	serverURL := env["CI_SERVER_URL"]
+	projectPath := env["CI_PROJECT_PATH"]
+	pipelineID := env["CI_PIPELINE_ID"]
+	jobID := env["CI_JOB_ID"]
+
+	projectURL := serverURL + "/" + projectPath
+	env["CI_PROJECT_URL"] = projectURL
+	env["CI_PIPELINE_URL"] = projectURL + "/-/pipelines/" + pipelineID
+	env["CI_JOB_URL"] = projectURL + "/-/jobs/" + jobID
 }
 
 func applyProjectEnv(env map[string]string, setup parser.SetupConfig) {
@@ -140,6 +162,7 @@ func applyBranchOrTagEnv(env map[string]string, setup parser.SetupConfig, defaul
 		env["CI_COMMIT_TAG"] = setup.Tag
 		env["CI_COMMIT_REF_NAME"] = setup.Tag
 		env["CI_COMMIT_REF_SLUG"] = slugify(setup.Tag)
+		env["CI_COMMIT_TAG_MESSAGE"] = setup.TagMessage
 		return
 	}
 
@@ -225,9 +248,18 @@ func applyMergeRequestEnv(env map[string]string, setup parser.SetupConfig) {
 		env["CI_MERGE_REQUEST_DRAFT"] = fmt.Sprintf("%t", setup.MergeRequest.Draft)
 		env["CI_MERGE_REQUEST_LABELS"] = setup.MergeRequest.Labels
 		env["CI_MERGE_REQUEST_ASSIGNEES"] = setup.MergeRequest.Assignees
+		env["CI_MERGE_REQUEST_DESCRIPTION"] = setup.MergeRequest.Description
+		env["CI_MERGE_REQUEST_MILESTONE"] = setup.MergeRequest.Milestone
+		env["CI_MERGE_REQUEST_SQUASH"] = fmt.Sprintf("%t", setup.MergeRequest.Squash)
 	}
 	env["CI_COMMIT_REF_NAME"] = setup.Branch
 	env["CI_COMMIT_REF_SLUG"] = slugify(setup.Branch)
 	env["CI_MERGE_REQUEST_PROJECT_ID"] = "1"
 	env["CI_MERGE_REQUEST_PROJECT_PATH"] = env["CI_PROJECT_PATH"]
+	env["CI_MERGE_REQUEST_SOURCE_PROJECT_ID"] = "1"
+	env["CI_MERGE_REQUEST_SOURCE_PROJECT_PATH"] = env["CI_PROJECT_PATH"]
+	env["CI_MERGE_REQUEST_SOURCE_PROJECT_URL"] = env["CI_SERVER_URL"] + "/" + env["CI_PROJECT_PATH"]
+	env["CI_MERGE_REQUEST_APPROVED"] = "false"
+	env["CI_MERGE_REQUEST_EVENT_TYPE"] = "detached"
+	env["CI_MERGE_REQUEST_DIFF_BASE_SHA"] = "0000000000000000000000000000000000000000"
 }
