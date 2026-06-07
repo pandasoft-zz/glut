@@ -786,11 +786,19 @@ func (s *Server) defaultBranch() string {
 
 func seedMap(seed *config.APISeedConfig) map[string][]map[string]interface{} {
 	return map[string][]map[string]interface{}{
-		"releases":       seed.Releases,
-		"merge_requests": seed.MergeRequests,
-		"labels":         seed.Labels,
-		"pipelines":      seed.Pipelines,
-		"jobs":           seed.Jobs,
+		"releases":            seed.Releases,
+		"merge_requests":      seed.MergeRequests,
+		"labels":              seed.Labels,
+		"milestones":          seed.Milestones,
+		"issues":              seed.Issues,
+		"variables":           seed.Variables,
+		"hooks":               seed.Hooks,
+		"repository/tags":     seed.Tags,
+		"repository/branches": seed.Branches,
+		"environments":        seed.Environments,
+		"deployments":         seed.Deployments,
+		"pipelines":           seed.Pipelines,
+		"jobs":                seed.Jobs,
 	}
 }
 

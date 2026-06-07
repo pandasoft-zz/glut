@@ -189,6 +189,14 @@ type APISeedConfig struct {
 	Releases      []map[string]interface{} `yaml:"releases"`
 	MergeRequests []map[string]interface{} `yaml:"merge_requests"`
 	Labels        []map[string]interface{} `yaml:"labels"`
+	Milestones    []map[string]interface{} `yaml:"milestones"`
+	Issues        []map[string]interface{} `yaml:"issues"`
+	Variables     []map[string]interface{} `yaml:"variables"`
+	Hooks         []map[string]interface{} `yaml:"hooks"`
+	Tags          []map[string]interface{} `yaml:"tags"`
+	Branches      []map[string]interface{} `yaml:"branches"`
+	Environments  []map[string]interface{} `yaml:"environments"`
+	Deployments   []map[string]interface{} `yaml:"deployments"`
 	Pipelines     []map[string]interface{} `yaml:"pipelines"`
 	Jobs          []map[string]interface{} `yaml:"jobs"`
 }
