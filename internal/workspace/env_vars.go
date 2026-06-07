@@ -259,7 +259,22 @@ func applyMergeRequestEnv(env map[string]string, setup parser.SetupConfig) {
 	env["CI_MERGE_REQUEST_SOURCE_PROJECT_ID"] = "1"
 	env["CI_MERGE_REQUEST_SOURCE_PROJECT_PATH"] = env["CI_PROJECT_PATH"]
 	env["CI_MERGE_REQUEST_SOURCE_PROJECT_URL"] = env["CI_SERVER_URL"] + "/" + env["CI_PROJECT_PATH"]
-	env["CI_MERGE_REQUEST_APPROVED"] = "false"
-	env["CI_MERGE_REQUEST_EVENT_TYPE"] = "detached"
-	env["CI_MERGE_REQUEST_DIFF_BASE_SHA"] = "0000000000000000000000000000000000000000"
+
+	approved := "false"
+	eventType := "detached"
+	diffBaseSHA := "0000000000000000000000000000000000000000"
+	if setup.MergeRequest != nil {
+		if setup.MergeRequest.Approved {
+			approved = "true"
+		}
+		if setup.MergeRequest.EventType != "" {
+			eventType = setup.MergeRequest.EventType
+		}
+		if setup.MergeRequest.DiffBaseSHA != "" {
+			diffBaseSHA = setup.MergeRequest.DiffBaseSHA
+		}
+	}
+	env["CI_MERGE_REQUEST_APPROVED"] = approved
+	env["CI_MERGE_REQUEST_EVENT_TYPE"] = eventType
+	env["CI_MERGE_REQUEST_DIFF_BASE_SHA"] = diffBaseSHA
 }

@@ -374,8 +374,8 @@ Special project endpoints have custom behavior. They are still recorded for
 | `GET` | `/api/v4/projects/:id/repository/commits/:sha` | Returns a mock commit object for the given SHA. |
 | `POST` | `/api/v4/projects/:id/repository/commits` | Creates a mock commit response. |
 | `GET` | `/api/v4/projects/:id/repository/commits/:sha/merge_requests` | Returns empty list. |
-| `GET` | `/api/v4/projects/:id/repository/commits/:sha/statuses` | Returns empty list. |
-| `POST` | `/api/v4/projects/:id/statuses/:sha` | Creates a commit status record. |
+| `GET` | `/api/v4/projects/:id/repository/commits/:sha/statuses` | Returns stored statuses for this SHA (empty until POST). |
+| `POST` | `/api/v4/projects/:id/statuses/:sha` | Stores status; subsequent GET returns it. |
 
 #### Create Commit
 
@@ -416,8 +416,8 @@ Response includes `sha`, `state`, `name`, `target_url`, `description`, and `crea
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `GET` | `/api/v4/projects/:id/merge_requests/:iid/notes` | Returns empty notes list. |
-| `POST` | `/api/v4/projects/:id/merge_requests/:iid/notes` | Returns a mock note response. |
+| `GET` | `/api/v4/projects/:id/merge_requests/:iid/notes` | Returns stored notes (empty until POST). |
+| `POST` | `/api/v4/projects/:id/merge_requests/:iid/notes` | Stores note; subsequent GET returns it. |
 | `GET` | `/api/v4/projects/:id/merge_requests/:iid/approvals` | Returns approval state (not approved by default). |
 | `POST` | `/api/v4/projects/:id/merge_requests/:iid/approve` | Returns an approved response. |
 | `POST` | `/api/v4/projects/:id/merge_requests/:iid/unapprove` | Returns an unapproved response. |
@@ -471,8 +471,8 @@ Response includes `state: "merged"` and `merge_commit_sha`.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `GET` | `/api/v4/projects/:id/issues/:iid/notes` | Returns empty notes list. |
-| `POST` | `/api/v4/projects/:id/issues/:iid/notes` | Returns a mock note response. |
+| `GET` | `/api/v4/projects/:id/issues/:iid/notes` | Returns stored notes (empty until POST). |
+| `POST` | `/api/v4/projects/:id/issues/:iid/notes` | Stores note; subsequent GET returns it. |
 
 ### Pipelines
 
@@ -481,7 +481,7 @@ Response includes `state: "merged"` and `merge_commit_sha`.
 | `POST` | `/api/v4/projects/:id/pipeline` | Triggers a new pipeline. Returns pending pipeline. |
 | `POST` | `/api/v4/projects/:id/pipelines/:id/retry` | Returns pending pipeline. |
 | `POST` | `/api/v4/projects/:id/pipelines/:id/cancel` | Returns pending pipeline. |
-| `GET` | `/api/v4/projects/:id/pipelines/:id/jobs` | Returns jobs from the store (seeded or created). |
+| `GET` | `/api/v4/projects/:id/pipelines/:id/jobs` | Returns jobs from the store filtered by `pipeline_id`. Jobs without `pipeline_id` are always included. |
 
 #### Trigger Pipeline
 
@@ -548,9 +548,9 @@ Available when `setup.pipeline_source: merge_request_event`.
 | `CI_MERGE_REQUEST_SOURCE_PROJECT_ID` | `1` |
 | `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH` | Same as `CI_PROJECT_PATH` |
 | `CI_MERGE_REQUEST_SOURCE_PROJECT_URL` | `CI_SERVER_URL/CI_PROJECT_PATH` |
-| `CI_MERGE_REQUEST_APPROVED` | `false` |
-| `CI_MERGE_REQUEST_EVENT_TYPE` | `detached` |
-| `CI_MERGE_REQUEST_DIFF_BASE_SHA` | `0000000000000000000000000000000000000000` |
+| `CI_MERGE_REQUEST_APPROVED` | `setup.merge_request.approved` (default: `false`) |
+| `CI_MERGE_REQUEST_EVENT_TYPE` | `setup.merge_request.event_type` (default: `detached`) |
+| `CI_MERGE_REQUEST_DIFF_BASE_SHA` | `setup.merge_request.diff_base_sha` (default: `000…0`) |
 
 Example MR setup:
 
@@ -566,6 +566,9 @@ setup:
     labels: "ready,backend"
     squash: true
     milestone: "v2.0"
+    approved: true
+    event_type: merged_result
+    diff_base_sha: "abc123def456"
 ```
 
 ### Tag Pipeline Variables
@@ -767,8 +770,8 @@ Known limitations:
 - List endpoints ignore filtering and sorting query parameters.
 - `/api/v4/users/:id` always returns the same configured user regardless of the requested ID.
 - `/api/v4/groups/:id` always returns the same configured group regardless of the requested ID.
-- MR notes are not stored for later retrieval — `GET .../notes` always returns an empty list.
 - Repository file content (`/repository/files/:path`) is not implemented.
+- `GET /repository/commits` always returns an empty list — individual commits are only accessible via `GET /repository/commits/:sha`.
 
 Add new HTTP behavior in `internal/mockserver`. Keep request recording there so
 `assert.api` can see the calls.

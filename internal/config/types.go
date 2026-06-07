@@ -71,6 +71,9 @@ type MRConfig struct {
 	Description  string `yaml:"description"`
 	Milestone    string `yaml:"milestone"`
 	Squash       bool   `yaml:"squash"`
+	Approved     bool   `yaml:"approved"`
+	EventType    string `yaml:"event_type"`
+	DiffBaseSHA  string `yaml:"diff_base_sha"`
 }
 
 type UpstreamConfig struct {

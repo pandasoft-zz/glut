@@ -25,6 +25,12 @@ type Server struct {
 	store    *InMemoryStore
 	recorder *Recorder
 
+	notesMu        sync.RWMutex
+	notes          map[string][]map[string]any // "merge_requests/5" → []note
+
+	statusesMu     sync.RWMutex
+	commitStatuses map[string][]map[string]any // sha → []status
+
 	mu         sync.Mutex
 	http       *http.Server
 	port       int
@@ -41,9 +47,11 @@ func New(cfg config.APISetupConfig) (*Server, error) {
 	}
 
 	return &Server{
-		cfg:      cfg,
-		store:    store,
-		recorder: &Recorder{},
+		cfg:            cfg,
+		store:          store,
+		recorder:       &Recorder{},
+		notes:          make(map[string][]map[string]any),
+		commitStatuses: make(map[string][]map[string]any),
 	}, nil
 }
 
@@ -194,7 +202,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rest == "" && r.Method == http.MethodGet {
-		s.handleProject(w)
+		s.handleProject(w, r)
 		return
 	}
 
@@ -263,9 +271,10 @@ func (s *Server) handleTokenSelf(w http.ResponseWriter) {
 	})
 }
 
-func (s *Server) handleProject(w http.ResponseWriter) {
+func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 	path := s.projectPathValue()
 	namespace := namespaceFromProjectPath(path)
+	baseURL := "http://" + r.Host
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":                         1,
 		"path_with_namespace":        path,
@@ -274,9 +283,9 @@ func (s *Server) handleProject(w http.ResponseWriter) {
 		"default_branch":             s.defaultBranch(),
 		"visibility":                 "private",
 		"ssh_url_to_repo":            "git@example.com:" + path + ".git",
-		"http_url_to_repo":           "https://example.com/" + path + ".git",
-		"web_url":                    "https://example.com/" + path,
-		"readme_url":                 "https://example.com/" + path + "/-/blob/main/README.md",
+		"http_url_to_repo":           baseURL + "/" + path + ".git",
+		"web_url":                    baseURL + "/" + path,
+		"readme_url":                 baseURL + "/" + path + "/-/blob/" + s.defaultBranch() + "/README.md",
 		"archived":                   false,
 		"empty_repo":                 false,
 		"star_count":                 0,
@@ -309,6 +318,56 @@ func (s *Server) projectAccessLevel() int {
 	return int(config.AccessLevelMaintainer)
 }
 
+// addNote stores a note for the given resource (e.g. "merge_requests") and ID.
+func (s *Server) addNote(resource, id string, note map[string]any) {
+	s.notesMu.Lock()
+	defer s.notesMu.Unlock()
+	key := resource + "/" + id
+	s.notes[key] = append(s.notes[key], note)
+}
+
+// listNotes returns stored notes for the given resource and ID.
+func (s *Server) listNotes(resource, id string) []map[string]any {
+	s.notesMu.RLock()
+	defer s.notesMu.RUnlock()
+	key := resource + "/" + id
+	src := s.notes[key]
+	result := make([]map[string]any, len(src))
+	copy(result, src)
+	return result
+}
+
+// addCommitStatus stores a commit build status for the given SHA.
+func (s *Server) addCommitStatus(sha string, status map[string]any) {
+	s.statusesMu.Lock()
+	defer s.statusesMu.Unlock()
+	s.commitStatuses[sha] = append(s.commitStatuses[sha], status)
+}
+
+// listCommitStatuses returns stored build statuses for the given SHA.
+func (s *Server) listCommitStatuses(sha string) []map[string]any {
+	s.statusesMu.RLock()
+	defer s.statusesMu.RUnlock()
+	src := s.commitStatuses[sha]
+	result := make([]map[string]any, len(src))
+	copy(result, src)
+	return result
+}
+
+// jobsForPipeline returns jobs from the store that belong to the given pipeline.
+// Jobs without a pipeline_id field are included for all pipelines (backwards compat).
+func (s *Server) jobsForPipeline(pipelineID string) []map[string]any {
+	all := s.store.List("jobs")
+	result := make([]map[string]any, 0, len(all))
+	for _, job := range all {
+		pid, hasPID := job["pipeline_id"]
+		if !hasPID || fmt.Sprintf("%v", pid) == pipelineID {
+			result = append(result, job)
+		}
+	}
+	return result
+}
+
 func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.Request, rest string) bool {
 	// GET /repository/commits/:sha/merge_requests
 	if r.Method == http.MethodGet && strings.HasSuffix(rest, "/merge_requests") && strings.Contains(rest, "/repository/commits/") {
@@ -318,7 +377,8 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 
 	// GET /repository/commits/:sha/statuses
 	if r.Method == http.MethodGet && strings.HasSuffix(rest, "/statuses") && strings.Contains(rest, "/repository/commits/") {
-		writeJSONList(w, []map[string]any{})
+		sha := pathSegment(rest, 2) // "/repository/commits/<sha>/statuses"
+		writeJSONList(w, s.listCommitStatuses(sha))
 		return true
 	}
 
@@ -363,7 +423,7 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 		return true
 	}
 
-	// POST /statuses/:sha
+	// POST /statuses/:sha — store and return
 	if r.Method == http.MethodPost && strings.HasPrefix(rest, "/statuses/") {
 		body, ok := readJSONBody(w, r)
 		if !ok {
@@ -371,15 +431,18 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 		}
 		sha := strings.TrimPrefix(rest, "/statuses/")
 		state, _ := body["state"].(string)
-		writeJSON(w, http.StatusCreated, map[string]any{
-			"id":          1,
+		existing := s.listCommitStatuses(sha)
+		status := map[string]any{
+			"id":          len(existing) + 1,
 			"sha":         sha,
 			"state":       state,
 			"name":        body["name"],
 			"target_url":  body["target_url"],
 			"description": body["description"],
 			"created_at":  time.Now().UTC().Format(time.RFC3339),
-		})
+		}
+		s.addCommitStatus(sha, status)
+		writeJSON(w, http.StatusCreated, status)
 		return true
 	}
 
@@ -411,28 +474,34 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 		return true
 	}
 
-	// GET /pipelines/:id/jobs
+	// GET /pipelines/:id/jobs — filter by pipeline_id
 	if r.Method == http.MethodGet && strings.Contains(rest, "/pipelines/") && strings.HasSuffix(rest, "/jobs") {
-		writeJSONList(w, s.store.List("jobs"))
+		pipelineID := pathSegment(rest, 1) // "/pipelines/<id>/jobs"
+		writeJSONList(w, s.jobsForPipeline(pipelineID))
 		return true
 	}
 
-	// GET /merge_requests/:iid/notes
+	// GET /merge_requests/:iid/notes — return stored notes
 	if r.Method == http.MethodGet && strings.Contains(rest, "/merge_requests/") && strings.HasSuffix(rest, "/notes") {
-		writeJSONList(w, []map[string]any{})
+		iid := pathSegment(rest, 1) // "/merge_requests/<iid>/notes"
+		writeJSONList(w, s.listNotes("merge_requests", iid))
 		return true
 	}
 
-	// POST /merge_requests/:iid/notes
+	// POST /merge_requests/:iid/notes — store and return
 	if r.Method == http.MethodPost && strings.HasSuffix(rest, "/notes") && strings.Contains(rest, "/merge_requests/") {
 		body, ok := readJSONBody(w, r)
 		if !ok {
 			return true
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{
-			"id":   1,
+		iid := pathSegment(rest, 1)
+		existing := s.listNotes("merge_requests", iid)
+		note := map[string]any{
+			"id":   len(existing) + 1,
 			"body": body["body"],
-		})
+		}
+		s.addNote("merge_requests", iid, note)
+		writeJSON(w, http.StatusCreated, note)
 		return true
 	}
 
@@ -455,8 +524,8 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 	// PUT /merge_requests/:iid/merge
 	if r.Method == http.MethodPut && strings.HasSuffix(rest, "/merge") && strings.Contains(rest, "/merge_requests/") {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"state":      "merged",
-			"merged_at":  time.Now().UTC().Format(time.RFC3339),
+			"state":            "merged",
+			"merged_at":        time.Now().UTC().Format(time.RFC3339),
 			"merge_commit_sha": "mock-merge-sha",
 		})
 		return true
@@ -488,22 +557,27 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 		return true
 	}
 
-	// GET /issues/:iid/notes
+	// GET /issues/:iid/notes — return stored notes
 	if r.Method == http.MethodGet && strings.Contains(rest, "/issues/") && strings.HasSuffix(rest, "/notes") {
-		writeJSONList(w, []map[string]any{})
+		iid := pathSegment(rest, 1) // "/issues/<iid>/notes"
+		writeJSONList(w, s.listNotes("issues", iid))
 		return true
 	}
 
-	// POST /issues/:iid/notes
+	// POST /issues/:iid/notes — store and return
 	if r.Method == http.MethodPost && strings.Contains(rest, "/issues/") && strings.HasSuffix(rest, "/notes") {
 		body, ok := readJSONBody(w, r)
 		if !ok {
 			return true
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{
-			"id":   1,
+		iid := pathSegment(rest, 1)
+		existing := s.listNotes("issues", iid)
+		note := map[string]any{
+			"id":   len(existing) + 1,
 			"body": body["body"],
-		})
+		}
+		s.addNote("issues", iid, note)
+		writeJSON(w, http.StatusCreated, note)
 		return true
 	}
 
@@ -773,6 +847,16 @@ func namespaceFromProjectPath(projectPath string) string {
 func groupBaseName(path string) string {
 	parts := strings.Split(path, "/")
 	return parts[len(parts)-1]
+}
+
+// pathSegment returns the n-th path segment (0-based) from rest like "/merge_requests/5/notes".
+// Segment 0 = "merge_requests", 1 = "5", 2 = "notes".
+func pathSegment(rest string, n int) string {
+	parts := strings.Split(strings.TrimPrefix(rest, "/"), "/")
+	if n < len(parts) {
+		return parts[n]
+	}
+	return ""
 }
 
 type statusRecorder struct {

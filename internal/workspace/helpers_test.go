@@ -742,7 +742,7 @@ func TestNewCIVariables(t *testing.T) {
 	t.Run("MR pipeline new variables", func(t *testing.T) {
 		iid := 7
 		env := map[string]string{
-			"CI_SERVER_URL":  "http://127.0.0.1:8080",
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
 			"CI_PROJECT_PATH": "myorg/myapp",
 		}
 		setup := parser.SetupConfig{
@@ -759,15 +759,15 @@ func TestNewCIVariables(t *testing.T) {
 		applyMergeRequestEnv(env, setup)
 
 		cases := map[string]string{
-			"CI_MERGE_REQUEST_DESCRIPTION":           "implements X",
-			"CI_MERGE_REQUEST_MILESTONE":             "v2.0",
-			"CI_MERGE_REQUEST_SQUASH":                "true",
-			"CI_MERGE_REQUEST_APPROVED":              "false",
-			"CI_MERGE_REQUEST_EVENT_TYPE":            "detached",
-			"CI_MERGE_REQUEST_DIFF_BASE_SHA":         "0000000000000000000000000000000000000000",
-			"CI_MERGE_REQUEST_SOURCE_PROJECT_ID":     "1",
-			"CI_MERGE_REQUEST_SOURCE_PROJECT_PATH":   "myorg/myapp",
-			"CI_MERGE_REQUEST_SOURCE_PROJECT_URL":    "http://127.0.0.1:8080/myorg/myapp",
+			"CI_MERGE_REQUEST_DESCRIPTION":         "implements X",
+			"CI_MERGE_REQUEST_MILESTONE":           "v2.0",
+			"CI_MERGE_REQUEST_SQUASH":              "true",
+			"CI_MERGE_REQUEST_APPROVED":            "false",
+			"CI_MERGE_REQUEST_EVENT_TYPE":          "detached",
+			"CI_MERGE_REQUEST_DIFF_BASE_SHA":       "0000000000000000000000000000000000000000",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_ID":   "1",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_PATH": "myorg/myapp",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_URL":  "http://127.0.0.1:8080/myorg/myapp",
 		}
 		for k, want := range cases {
 			if env[k] != want {
@@ -787,6 +787,62 @@ func TestNewCIVariables(t *testing.T) {
 		})
 		if env["CI_MERGE_REQUEST_SQUASH"] != "false" {
 			t.Errorf("CI_MERGE_REQUEST_SQUASH = %q, want false", env["CI_MERGE_REQUEST_SQUASH"])
+		}
+	})
+
+	t.Run("CI_MERGE_REQUEST_APPROVED configurable", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{
+			Branch:       "feature/z",
+			MergeRequest: &parser.MRConfig{IID: 1, Approved: true},
+		})
+		if env["CI_MERGE_REQUEST_APPROVED"] != "true" {
+			t.Errorf("CI_MERGE_REQUEST_APPROVED = %q, want true", env["CI_MERGE_REQUEST_APPROVED"])
+		}
+	})
+
+	t.Run("CI_MERGE_REQUEST_EVENT_TYPE configurable", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{
+			Branch:       "feature/z",
+			MergeRequest: &parser.MRConfig{IID: 1, EventType: "merged_result"},
+		})
+		if env["CI_MERGE_REQUEST_EVENT_TYPE"] != "merged_result" {
+			t.Errorf("CI_MERGE_REQUEST_EVENT_TYPE = %q, want merged_result", env["CI_MERGE_REQUEST_EVENT_TYPE"])
+		}
+	})
+
+	t.Run("CI_MERGE_REQUEST_DIFF_BASE_SHA configurable", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{
+			Branch:       "feature/z",
+			MergeRequest: &parser.MRConfig{IID: 1, DiffBaseSHA: "deadbeef1234"},
+		})
+		if env["CI_MERGE_REQUEST_DIFF_BASE_SHA"] != "deadbeef1234" {
+			t.Errorf("CI_MERGE_REQUEST_DIFF_BASE_SHA = %q, want deadbeef1234", env["CI_MERGE_REQUEST_DIFF_BASE_SHA"])
+		}
+	})
+
+	t.Run("MR fields default when merge_request is nil", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{Branch: "feature/z"})
+		if env["CI_MERGE_REQUEST_APPROVED"] != "false" {
+			t.Errorf("CI_MERGE_REQUEST_APPROVED with nil MR = %q, want false", env["CI_MERGE_REQUEST_APPROVED"])
+		}
+		if env["CI_MERGE_REQUEST_EVENT_TYPE"] != "detached" {
+			t.Errorf("CI_MERGE_REQUEST_EVENT_TYPE with nil MR = %q, want detached", env["CI_MERGE_REQUEST_EVENT_TYPE"])
 		}
 	})
 
