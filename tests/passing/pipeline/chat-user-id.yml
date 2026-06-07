@@ -1,0 +1,28 @@
+stages: [test]
+
+check-vars:
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "chat"
+  script:
+    - echo "user_id=$CI_CHAT_USER_ID"
+    - echo "channel=$CI_CHAT_CHANNEL"
+    - echo "input=$CI_CHAT_INPUT"
+---
+.glut:
+  name: "chat pipeline sets CI_CHAT_USER_ID from setup.chat.user_id"
+  setup:
+    branch: "main"
+    pipeline_source: "chat"
+    chat:
+      channel: "#deployments"
+      input: "deploy production"
+      user_id: "U98765"
+  assert:
+    job:
+      check-vars:
+        exit-status: 0
+        stdout:
+          - "user_id=U98765"
+          - "channel=#deployments"
+          - "input=deploy production"

@@ -1,0 +1,43 @@
+stages: [test]
+
+check-var:
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - echo "protected=$CI_COMMIT_REF_PROTECTED"
+
+protected-only:
+  stage: test
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true"
+  script:
+    - echo "should not run"
+
+unprotected-only:
+  stage: test
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED != "true"
+  script:
+    - echo "unprotected runs"
+---
+.glut:
+  name: "CI_COMMIT_REF_PROTECTED is false by default in MR pipeline"
+  setup:
+    branch: "feature/my-feature"
+    pipeline_source: "merge_request_event"
+    merge_request:
+      iid: 7
+      target_branch: "main"
+  assert:
+    job:
+      check-var:
+        exit-status: 0
+        stdout:
+          - "protected=false"
+      protected-only:
+        present: false
+      unprotected-only:
+        exit-status: 0
+        stdout:
+          - "unprotected runs"

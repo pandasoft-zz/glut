@@ -178,6 +178,66 @@ func TestEnvVars(t *testing.T) {
 			t.Errorf("expected CI_COMMIT_REF_PROTECTED=false, got %s", env["CI_COMMIT_REF_PROTECTED"])
 		}
 	})
+
+	t.Run("merge_request_event sets CI_COMMIT_REF_PROTECTED false by default", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			PipelineSource: "merge_request_event",
+			Branch:         "feature/x",
+			MergeRequest:   &parser.MRConfig{IID: 1, TargetBranch: "main"},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "t")
+		if env["CI_COMMIT_REF_PROTECTED"] != "false" {
+			t.Errorf("expected CI_COMMIT_REF_PROTECTED=false in MR pipeline, got %q", env["CI_COMMIT_REF_PROTECTED"])
+		}
+	})
+
+	t.Run("merge_request_event respects ref_protected true", func(t *testing.T) {
+		v := true
+		cfg := parser.SetupConfig{
+			PipelineSource: "merge_request_event",
+			Branch:         "feature/x",
+			RefProtected:   &v,
+			MergeRequest:   &parser.MRConfig{IID: 1, TargetBranch: "main"},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "t")
+		if env["CI_COMMIT_REF_PROTECTED"] != "true" {
+			t.Errorf("expected CI_COMMIT_REF_PROTECTED=true in protected MR pipeline, got %q", env["CI_COMMIT_REF_PROTECTED"])
+		}
+	})
+
+	t.Run("tag pipeline sets CI_COMMIT_BEFORE_SHA", func(t *testing.T) {
+		cfg := parser.SetupConfig{Tag: "v1.0.0"}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "t")
+		got, ok := env["CI_COMMIT_BEFORE_SHA"]
+		if !ok {
+			t.Fatal("CI_COMMIT_BEFORE_SHA missing in tag pipeline")
+		}
+		if got != "0000000000000000000000000000000000000000" {
+			t.Errorf("expected zero SHA, got %q", got)
+		}
+	})
+
+	t.Run("chat pipeline sets CI_CHAT_USER_ID", func(t *testing.T) {
+		cfg := parser.SetupConfig{
+			PipelineSource: "chat",
+			Branch:         "main",
+			Chat: &parser.ChatConfig{
+				Channel: "#ops",
+				Input:   "deploy",
+				UserID:  "U12345",
+			},
+		}
+		env := w.EnvVars(cfg, 8080, "sha", "sha", "t")
+		if env["CI_CHAT_USER_ID"] != "U12345" {
+			t.Errorf("expected CI_CHAT_USER_ID=U12345, got %q", env["CI_CHAT_USER_ID"])
+		}
+		if env["CI_CHAT_INPUT"] != "deploy" {
+			t.Errorf("expected CI_CHAT_INPUT=deploy, got %q", env["CI_CHAT_INPUT"])
+		}
+		if env["CI_CHAT_CHANNEL"] != "#ops" {
+			t.Errorf("expected CI_CHAT_CHANNEL=#ops, got %q", env["CI_CHAT_CHANNEL"])
+		}
+	})
 }
 
 func TestUnsetVars(t *testing.T) {

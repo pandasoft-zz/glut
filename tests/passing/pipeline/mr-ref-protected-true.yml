@@ -1,0 +1,33 @@
+stages: [test]
+
+protected-only:
+  stage: test
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true"
+  script:
+    - echo "protected MR job runs"
+
+unprotected-only:
+  stage: test
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED != "true"
+  script:
+    - echo "should not run"
+---
+.glut:
+  name: "CI_COMMIT_REF_PROTECTED is true in MR pipeline when ref_protected is set"
+  setup:
+    branch: "main"
+    pipeline_source: "merge_request_event"
+    ref_protected: true
+    merge_request:
+      iid: 3
+      target_branch: "stable"
+  assert:
+    job:
+      protected-only:
+        exit-status: 0
+        stdout:
+          - "protected MR job runs"
+      unprotected-only:
+        present: false
