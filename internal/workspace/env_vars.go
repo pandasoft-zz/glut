@@ -110,6 +110,12 @@ func applyPipelineEnv(env map[string]string, setup parser.SetupConfig, defaultBr
 	case config.PipelineSourceTrigger:
 		env["CI_PIPELINE_TRIGGERED"] = "true"
 		env["CI_TRIGGER_SHORT_TOKEN"] = "glut"
+	case config.PipelineSourceChat:
+		if setup.Chat != nil {
+			env["CI_CHAT_INPUT"] = setup.Chat.Input
+			env["CI_CHAT_CHANNEL"] = setup.Chat.Channel
+			env["CI_CHAT_USER_ID"] = setup.Chat.UserID
+		}
 	case config.PipelineSourceAPI:
 		// nothing extra
 	case config.PipelineSourceParent:
@@ -117,11 +123,6 @@ func applyPipelineEnv(env map[string]string, setup parser.SetupConfig, defaultBr
 			env["CI_UPSTREAM_PIPELINE_ID"] = fmt.Sprintf("%d", setup.Upstream.PipelineID)
 			env["CI_UPSTREAM_PROJECT_ID"] = fmt.Sprintf("%d", setup.Upstream.ProjectID)
 			env["CI_UPSTREAM_JOB_ID"] = fmt.Sprintf("%d", setup.Upstream.JobID)
-		}
-	case config.PipelineSourceChat:
-		if setup.Chat != nil {
-			env["CI_CHAT_INPUT"] = setup.Chat.Input
-			env["CI_CHAT_CHANNEL"] = setup.Chat.Channel
 		}
 	}
 }
@@ -132,6 +133,8 @@ func applyBranchOrTagEnv(env map[string]string, setup parser.SetupConfig, defaul
 		refProtected = "true"
 	}
 	env["CI_COMMIT_REF_PROTECTED"] = refProtected
+
+	env["CI_COMMIT_BEFORE_SHA"] = "0000000000000000000000000000000000000000"
 
 	if setup.Tag != "" {
 		env["CI_COMMIT_TAG"] = setup.Tag
@@ -147,7 +150,6 @@ func applyBranchOrTagEnv(env map[string]string, setup parser.SetupConfig, defaul
 	env["CI_COMMIT_BRANCH"] = branch
 	env["CI_COMMIT_REF_NAME"] = branch
 	env["CI_COMMIT_REF_SLUG"] = slugify(branch)
-	env["CI_COMMIT_BEFORE_SHA"] = "0000000000000000000000000000000000000000"
 }
 
 // applyPipelineUserEnv sets GITLAB_USER_NAME, GITLAB_USER_EMAIL, and
@@ -209,6 +211,12 @@ func (w *Workspace) UnsetVars(setup parser.SetupConfig) []string {
 }
 
 func applyMergeRequestEnv(env map[string]string, setup parser.SetupConfig) {
+	refProtected := "false"
+	if setup.RefProtected != nil && *setup.RefProtected {
+		refProtected = "true"
+	}
+	env["CI_COMMIT_REF_PROTECTED"] = refProtected
+
 	if setup.MergeRequest != nil {
 		env["CI_MERGE_REQUEST_IID"] = fmt.Sprintf("%d", setup.MergeRequest.IID)
 		env["CI_MERGE_REQUEST_TITLE"] = setup.MergeRequest.Title
