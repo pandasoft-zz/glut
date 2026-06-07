@@ -30,6 +30,10 @@
         "tag": {
           "type": "string"
         },
+        "tag_message": {
+          "type": "string",
+          "description": "Sets CI_COMMIT_TAG_MESSAGE. Only used when setup.tag is set."
+        },
         "pipeline_source": {
           "type": "string",
           "enum": [
@@ -105,6 +109,31 @@
         },
         "assignees": {
           "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "description": "Sets CI_MERGE_REQUEST_DESCRIPTION."
+        },
+        "milestone": {
+          "type": "string",
+          "description": "Sets CI_MERGE_REQUEST_MILESTONE."
+        },
+        "squash": {
+          "type": "boolean",
+          "description": "Sets CI_MERGE_REQUEST_SQUASH. Default false."
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "Sets CI_MERGE_REQUEST_APPROVED. Default false."
+        },
+        "event_type": {
+          "type": "string",
+          "enum": ["detached", "merged_result", "merge_train"],
+          "description": "Sets CI_MERGE_REQUEST_EVENT_TYPE. Default detached."
+        },
+        "diff_base_sha": {
+          "type": "string",
+          "description": "Sets CI_MERGE_REQUEST_DIFF_BASE_SHA. Default 0000…0."
         }
       }
     },
@@ -232,6 +261,12 @@
         },
         "seed": {
           "$ref": "#/definitions/api_seed"
+        },
+        "user": {
+          "$ref": "#/definitions/api_user"
+        },
+        "group": {
+          "$ref": "#/definitions/api_group"
         }
       }
     },
@@ -300,6 +335,113 @@
           "items": {
             "type": "object"
           }
+        },
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Pre-populate project CI/CD variables. Each object must contain at least 'key' and 'value'."
+        },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Pre-populate repository tags (GET /repository/tags)."
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Pre-populate repository branches (GET /repository/branches)."
+        },
+        "environments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "deployments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "pipelines": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Pre-populate mock pipeline list. Each object is returned verbatim with richer defaults merged in."
+        },
+        "jobs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Pre-populate mock job list. Use pipeline_id to associate jobs with a specific pipeline."
+        }
+      }
+    },
+    "api_user": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Simulated GitLab user returned by GET /api/v4/user and /api/v4/users/:id.",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "User ID. Default 1."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name. Default 'Test User'."
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address. Default 'test@example.com'."
+        },
+        "login": {
+          "type": "string",
+          "description": "Username (username field). Default 'test-user'."
+        }
+      }
+    },
+    "api_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Simulated GitLab group returned by GET /api/v4/groups/:id.",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Group ID. Default 1."
+        },
+        "path": {
+          "type": "string",
+          "description": "Full group path (e.g. 'platform/infra'). Default 'test-group'."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name. Default 'Test Group'."
         }
       }
     },

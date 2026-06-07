@@ -13,6 +13,7 @@ var resourceBases = map[string]string{
 	"deployments":         "/deployments",
 	"environments":        "/environments",
 	"pipelines":           "/pipelines",
+	"jobs":                "/jobs",
 }
 
 var resourceIdentifiers = map[string]string{
@@ -28,6 +29,7 @@ var resourceIdentifiers = map[string]string{
 	"deployments":         "id",
 	"environments":        "id",
 	"pipelines":           "id",
+	"jobs":                "id",
 }
 
 func identifierFor(resource string) string {
@@ -44,23 +46,42 @@ func defaultObject(resource string) map[string]any {
 			"tag_name":    "",
 			"name":        "",
 			"description": "",
+			"assets": map[string]any{
+				"count": 0,
+				"links": []any{},
+			},
 		}
 	case "merge_requests":
 		return map[string]any{
-			"iid":    0,
-			"title":  "",
-			"state":  "opened",
-			"labels": []any{},
+			"iid":                 0,
+			"title":               "",
+			"state":               "opened",
+			"labels":              []any{},
+			"source_branch":       "",
+			"target_branch":       "",
+			"web_url":             "",
+			"author":              map[string]any{"id": 1, "username": "test-user"},
+			"draft":               false,
+			"merge_status":        "can_be_merged",
+			"merge_commit_sha":    nil,
 		}
 	case "repository/tags":
 		return map[string]any{
 			"name":    "",
 			"message": "",
+			"commit": map[string]any{
+				"id": "",
+			},
 		}
 	case "repository/branches":
 		return map[string]any{
 			"name":      "",
 			"protected": false,
+			"merged":    false,
+			"default":   false,
+			"commit": map[string]any{
+				"id": "",
+			},
 		}
 	case "labels":
 		return map[string]any{
@@ -70,8 +91,58 @@ func defaultObject(resource string) map[string]any {
 		}
 	case "variables":
 		return map[string]any{
-			"key":   "",
-			"value": "",
+			"key":              "",
+			"value":            "",
+			"variable_type":    "env_var",
+			"protected":        false,
+			"masked":           false,
+			"environment_scope": "*",
+		}
+	case "issues":
+		return map[string]any{
+			"iid":    0,
+			"title":  "",
+			"state":  "opened",
+			"labels": []any{},
+			"web_url": "",
+			"author": map[string]any{"id": 1, "username": "test-user"},
+		}
+	case "pipelines":
+		return map[string]any{
+			"id":         0,
+			"status":     "success",
+			"ref":        "",
+			"sha":        "",
+			"web_url":    "",
+			"created_at": "",
+			"updated_at": "",
+		}
+	case "jobs":
+		return map[string]any{
+			"id":         0,
+			"name":       "",
+			"stage":      "",
+			"status":     "success",
+			"ref":        "",
+			"web_url":    "",
+			"created_at": "",
+		}
+	case "environments":
+		return map[string]any{
+			"id":           0,
+			"name":         "",
+			"slug":         "",
+			"state":        "available",
+			"external_url": nil,
+		}
+	case "deployments":
+		return map[string]any{
+			"id":          0,
+			"status":      "success",
+			"ref":         "",
+			"sha":         "",
+			"created_at":  "",
+			"updated_at":  "",
 		}
 	default:
 		return map[string]any{

@@ -686,6 +686,190 @@ func TestWorkspaceCreationErrorBranches(t *testing.T) {
 	})
 }
 
+func TestNewCIVariables(t *testing.T) {
+	w := &Workspace{Dir: t.TempDir(), OriginRepo: t.TempDir()}
+
+	t.Run("server info variables", func(t *testing.T) {
+		env := w.baseEnv(9090, "sha", "short", "name", "main")
+		cases := map[string]string{
+			"CI_SERVER_HOST":     "127.0.0.1",
+			"CI_SERVER_NAME":     "GitLab",
+			"CI_SERVER_VERSION":  "16.11.0",
+			"CI_SERVER_REVISION": "mock",
+		}
+		for k, want := range cases {
+			if env[k] != want {
+				t.Errorf("%s = %q, want %q", k, env[k], want)
+			}
+		}
+	})
+
+	t.Run("job and user ID variables", func(t *testing.T) {
+		env := w.baseEnv(9090, "sha", "short", "name", "main")
+		if env["CI_JOB_ID"] != "1" {
+			t.Errorf("CI_JOB_ID = %q, want 1", env["CI_JOB_ID"])
+		}
+		if env["GITLAB_USER_ID"] != "1" {
+			t.Errorf("GITLAB_USER_ID = %q, want 1", env["GITLAB_USER_ID"])
+		}
+	})
+
+	t.Run("derived URL variables are set after EnvVars", func(t *testing.T) {
+		env := w.EnvVars(parser.SetupConfig{}, 8080, "sha", "short", "name")
+		if env["CI_PROJECT_URL"] != "http://127.0.0.1:8080/test-group/test-project" {
+			t.Errorf("CI_PROJECT_URL = %q", env["CI_PROJECT_URL"])
+		}
+		if env["CI_PIPELINE_URL"] != "http://127.0.0.1:8080/test-group/test-project/-/pipelines/1" {
+			t.Errorf("CI_PIPELINE_URL = %q", env["CI_PIPELINE_URL"])
+		}
+		if env["CI_JOB_URL"] != "http://127.0.0.1:8080/test-group/test-project/-/jobs/1" {
+			t.Errorf("CI_JOB_URL = %q", env["CI_JOB_URL"])
+		}
+	})
+
+	t.Run("derived URL variables use custom project path", func(t *testing.T) {
+		setup := parser.SetupConfig{
+			API: &parser.APISetupConfig{
+				Project: &parser.ProjectConfig{Path: "acme/backend"},
+			},
+		}
+		env := w.EnvVars(setup, 8080, "sha", "short", "name")
+		if env["CI_PROJECT_URL"] != "http://127.0.0.1:8080/acme/backend" {
+			t.Errorf("CI_PROJECT_URL with custom path = %q", env["CI_PROJECT_URL"])
+		}
+	})
+
+	t.Run("MR pipeline new variables", func(t *testing.T) {
+		iid := 7
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "myorg/myapp",
+		}
+		setup := parser.SetupConfig{
+			Branch:         "feature/x",
+			PipelineSource: config.PipelineSourceMR,
+			MergeRequest: &parser.MRConfig{
+				IID:         iid,
+				Title:       "Add feature",
+				Description: "implements X",
+				Milestone:   "v2.0",
+				Squash:      true,
+			},
+		}
+		applyMergeRequestEnv(env, setup)
+
+		cases := map[string]string{
+			"CI_MERGE_REQUEST_DESCRIPTION":         "implements X",
+			"CI_MERGE_REQUEST_MILESTONE":           "v2.0",
+			"CI_MERGE_REQUEST_SQUASH":              "true",
+			"CI_MERGE_REQUEST_APPROVED":            "false",
+			"CI_MERGE_REQUEST_EVENT_TYPE":          "detached",
+			"CI_MERGE_REQUEST_DIFF_BASE_SHA":       "0000000000000000000000000000000000000000",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_ID":   "1",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_PATH": "myorg/myapp",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_URL":  "http://127.0.0.1:8080/myorg/myapp",
+		}
+		for k, want := range cases {
+			if env[k] != want {
+				t.Errorf("%s = %q, want %q", k, env[k], want)
+			}
+		}
+	})
+
+	t.Run("MR squash defaults to false", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{
+			Branch:       "feature/y",
+			MergeRequest: &parser.MRConfig{IID: 1},
+		})
+		if env["CI_MERGE_REQUEST_SQUASH"] != "false" {
+			t.Errorf("CI_MERGE_REQUEST_SQUASH = %q, want false", env["CI_MERGE_REQUEST_SQUASH"])
+		}
+	})
+
+	t.Run("CI_MERGE_REQUEST_APPROVED configurable", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{
+			Branch:       "feature/z",
+			MergeRequest: &parser.MRConfig{IID: 1, Approved: true},
+		})
+		if env["CI_MERGE_REQUEST_APPROVED"] != "true" {
+			t.Errorf("CI_MERGE_REQUEST_APPROVED = %q, want true", env["CI_MERGE_REQUEST_APPROVED"])
+		}
+	})
+
+	t.Run("CI_MERGE_REQUEST_EVENT_TYPE configurable", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{
+			Branch:       "feature/z",
+			MergeRequest: &parser.MRConfig{IID: 1, EventType: "merged_result"},
+		})
+		if env["CI_MERGE_REQUEST_EVENT_TYPE"] != "merged_result" {
+			t.Errorf("CI_MERGE_REQUEST_EVENT_TYPE = %q, want merged_result", env["CI_MERGE_REQUEST_EVENT_TYPE"])
+		}
+	})
+
+	t.Run("CI_MERGE_REQUEST_DIFF_BASE_SHA configurable", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{
+			Branch:       "feature/z",
+			MergeRequest: &parser.MRConfig{IID: 1, DiffBaseSHA: "deadbeef1234"},
+		})
+		if env["CI_MERGE_REQUEST_DIFF_BASE_SHA"] != "deadbeef1234" {
+			t.Errorf("CI_MERGE_REQUEST_DIFF_BASE_SHA = %q, want deadbeef1234", env["CI_MERGE_REQUEST_DIFF_BASE_SHA"])
+		}
+	})
+
+	t.Run("MR fields default when merge_request is nil", func(t *testing.T) {
+		env := map[string]string{
+			"CI_SERVER_URL":   "http://127.0.0.1:8080",
+			"CI_PROJECT_PATH": "g/p",
+		}
+		applyMergeRequestEnv(env, parser.SetupConfig{Branch: "feature/z"})
+		if env["CI_MERGE_REQUEST_APPROVED"] != "false" {
+			t.Errorf("CI_MERGE_REQUEST_APPROVED with nil MR = %q, want false", env["CI_MERGE_REQUEST_APPROVED"])
+		}
+		if env["CI_MERGE_REQUEST_EVENT_TYPE"] != "detached" {
+			t.Errorf("CI_MERGE_REQUEST_EVENT_TYPE with nil MR = %q, want detached", env["CI_MERGE_REQUEST_EVENT_TYPE"])
+		}
+	})
+
+	t.Run("tag pipeline CI_COMMIT_TAG_MESSAGE", func(t *testing.T) {
+		env := map[string]string{}
+		setup := parser.SetupConfig{
+			Tag:        "v1.2.3",
+			TagMessage: "Release 1.2.3",
+		}
+		applyBranchOrTagEnv(env, setup, "main")
+		if env["CI_COMMIT_TAG"] != "v1.2.3" {
+			t.Errorf("CI_COMMIT_TAG = %q, want v1.2.3", env["CI_COMMIT_TAG"])
+		}
+		if env["CI_COMMIT_TAG_MESSAGE"] != "Release 1.2.3" {
+			t.Errorf("CI_COMMIT_TAG_MESSAGE = %q, want Release 1.2.3", env["CI_COMMIT_TAG_MESSAGE"])
+		}
+	})
+
+	t.Run("tag pipeline empty tag message", func(t *testing.T) {
+		env := map[string]string{}
+		applyBranchOrTagEnv(env, parser.SetupConfig{Tag: "v1.0.0"}, "main")
+		if v, ok := env["CI_COMMIT_TAG_MESSAGE"]; !ok || v != "" {
+			t.Errorf("CI_COMMIT_TAG_MESSAGE = %q (ok=%v), want empty string", v, ok)
+		}
+	})
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
