@@ -46,10 +46,26 @@ if [ -r /proc/$pid/status ]; then
 fi
 cwd=$(pwd 2>/dev/null || echo "/")
 
+# json_str escapes a value for use inside a JSON string literal (no surrounding
+# quotes). Handles: backslash, double-quote, newline, carriage-return, tab.
+json_str() {
+    printf '%s' "$1" | awk '
+        BEGIN { ORS = ""; cr = "\r" }
+        NR > 1 { printf "\\n" }
+        {
+            gsub(/\\/, "\\\\")
+            gsub(/"/, "\\\"")
+            gsub(/\t/, "\\t")
+            gsub(cr, "\\r")
+            print
+        }
+    '
+}
+
 args_json="["
 first=1
 for a in "$@"; do
-    esc=$(printf '%s' "$a" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    esc=$(json_str "$a")
     if [ $first -eq 0 ]; then
         args_json="${args_json},"
     fi
@@ -60,10 +76,13 @@ args_json="${args_json}]"
 
 if [ -n "$GLUT_MOCK_LOG_DIR" ]; then
     mkdir -p "$GLUT_MOCK_LOG_DIR" 2>/dev/null
-    cwd_esc=$(printf '%s' "$cwd" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    barrier="$GLUT_MOCK_LOG_DIR/.${name}.jsonl.${pid}"
+    touch "$barrier" 2>/dev/null
+    cwd_esc=$(json_str "$cwd")
     printf '{"ts":"%s","pid":%d,"ppid":%d,"cwd":"%s","name":"%s","args":%s,"stdin":""}\n' \
         "$ts" "$pid" "$ppid" "$cwd_esc" "$name" "$args_json" \
         >> "$GLUT_MOCK_LOG_DIR/${name}.jsonl"
+    rm -f "$barrier" 2>/dev/null
 fi
 
 if [ -z "$GLUT_MOCK_BIN_REAL" ]; then
@@ -127,6 +146,22 @@ func CreateDockerVolume(workDir, originRepo string, mocks *parser.MocksConfig) (
 	}
 
 	return volName, nil
+}
+
+// SyncDockerVolume runs sync(1) inside the Docker volume so that all
+// filesystem writes made by the pipeline container are committed before the
+// logs are copied back to the host. Call this after the pipeline container
+// exits and before ReadLogsFromDockerVolume.
+func SyncDockerVolume(volName, workDir string) error {
+	ctrName := "glut-sync-" + volName
+	out, err := exec.Command("docker", "run", "--name", ctrName,
+		"--volume", volName+":"+workDir,
+		"alpine", "sync").CombinedOutput()
+	_ = exec.Command("docker", "rm", ctrName).Run()
+	if err != nil {
+		return fmt.Errorf("sync docker volume %s: %w (%s)", volName, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // ReadLogsFromDockerVolume copies mock-logs written inside the Docker volume

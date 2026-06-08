@@ -54,7 +54,7 @@ func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 
-	logs, err := ReadBinaryLogs(logDir)
+	logs, err := ReadBinaryLogs(logDir, nil)
 	if err != nil {
 		t.Fatalf("read logs: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestAppendBinaryCallKeepsJSONLValidForConcurrentWrites(t *testing.T) {
 		}
 	}
 
-	logs, err := ReadBinaryLogs(logDir)
+	logs, err := ReadBinaryLogs(logDir, nil)
 	if err != nil {
 		t.Fatalf("read logs: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestRunUsesProcessDefaults(t *testing.T) {
 
 func TestReadBinaryLogsErrors(t *testing.T) {
 	t.Run("missing directory", func(t *testing.T) {
-		_, err := ReadBinaryLogs(filepath.Join(t.TempDir(), "missing"))
+		_, err := ReadBinaryLogs(filepath.Join(t.TempDir(), "missing"), nil)
 		if err == nil {
 			t.Fatal("expected missing directory error")
 		}
@@ -287,7 +287,7 @@ func TestReadBinaryLogsErrors(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(logDir, "tool.jsonl"), []byte("{bad json}\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := ReadBinaryLogs(logDir)
+		_, err := ReadBinaryLogs(logDir, nil)
 		if err == nil || !strings.Contains(err.Error(), "parse mock log") {
 			t.Fatalf("ReadBinaryLogs() error = %v", err)
 		}
@@ -299,7 +299,7 @@ func TestReadBinaryLogsErrors(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(logDir, "tool.jsonl"), []byte(longLine), 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := ReadBinaryLogs(logDir)
+		_, err := ReadBinaryLogs(logDir, nil)
 		if err == nil || !strings.Contains(err.Error(), "scan mock log") {
 			t.Fatalf("ReadBinaryLogs() error = %v", err)
 		}
@@ -316,7 +316,7 @@ func TestReadBinaryLogsErrors(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(logDir, "subdir"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		logs, err := ReadBinaryLogs(logDir)
+		logs, err := ReadBinaryLogs(logDir, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,11 +333,140 @@ func TestReadBinaryLogsErrors(t *testing.T) {
 			}
 			t.Fatal(err)
 		}
-		_, err := ReadBinaryLogs(logDir)
+		_, err := ReadBinaryLogs(logDir, nil)
 		if err == nil || !strings.Contains(err.Error(), "read mock log") {
 			t.Fatalf("ReadBinaryLogs() error = %v", err)
 		}
 	})
+
+	t.Run("skips file not in only filter", func(t *testing.T) {
+		logDir := t.TempDir()
+		// curl.jsonl is malformed — simulates a truncated/corrupted file
+		if err := os.WriteFile(filepath.Join(logDir, "curl.jsonl"), []byte("{bad\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// git.jsonl is valid and is the only asserted binary
+		if err := os.WriteFile(filepath.Join(logDir, "git.jsonl"), []byte("{\"name\":\"git\"}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		only := map[string]struct{}{"git": {}}
+		logs, err := ReadBinaryLogs(logDir, only)
+		if err != nil {
+			t.Fatalf("ReadBinaryLogs() with filter should skip curl: %v", err)
+		}
+		if len(logs["git"]) != 1 {
+			t.Fatalf("ReadBinaryLogs() logs[git] = %d, want 1", len(logs["git"]))
+		}
+		if _, ok := logs["curl"]; ok {
+			t.Fatal("ReadBinaryLogs() should not include curl when not in only filter")
+		}
+	})
+
+	t.Run("empty only filter reads nothing", func(t *testing.T) {
+		logDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(logDir, "curl.jsonl"), []byte("{bad\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		logs, err := ReadBinaryLogs(logDir, map[string]struct{}{})
+		if err != nil {
+			t.Fatalf("ReadBinaryLogs() with empty filter: %v", err)
+		}
+		if len(logs) != 0 {
+			t.Fatalf("ReadBinaryLogs() with empty filter returned %d entries, want 0", len(logs))
+		}
+	})
+}
+
+func TestCheckMockLogBarriers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("clean directory returns no error", func(t *testing.T) {
+		logDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(logDir, "curl.jsonl"), []byte("{}\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckMockLogBarriers(logDir); err != nil {
+			t.Fatalf("CheckMockLogBarriers() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("missing directory is not an error", func(t *testing.T) {
+		if err := CheckMockLogBarriers(filepath.Join(t.TempDir(), "missing")); err != nil {
+			t.Fatalf("CheckMockLogBarriers() on missing dir: %v", err)
+		}
+	})
+
+	t.Run("barrier file signals interrupted write", func(t *testing.T) {
+		logDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(logDir, ".curl.jsonl.1234"), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+		err := CheckMockLogBarriers(logDir)
+		if err == nil {
+			t.Fatal("CheckMockLogBarriers() expected error for barrier file")
+		}
+		if !strings.Contains(err.Error(), "curl") {
+			t.Fatalf("CheckMockLogBarriers() error should mention binary name: %v", err)
+		}
+	})
+
+	t.Run("multiple barrier files reported together", func(t *testing.T) {
+		logDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(logDir, ".curl.jsonl.1234"), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(logDir, ".git.jsonl.5678"), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+		err := CheckMockLogBarriers(logDir)
+		if err == nil {
+			t.Fatal("CheckMockLogBarriers() expected error")
+		}
+		if !strings.Contains(err.Error(), "curl") || !strings.Contains(err.Error(), "git") {
+			t.Fatalf("CheckMockLogBarriers() should name both binaries: %v", err)
+		}
+	})
+}
+
+func TestBarrierBinaryName(t *testing.T) {
+	cases := []struct {
+		input    string
+		wantName string
+		wantOK   bool
+	}{
+		{".curl.jsonl.1234", "curl", true},
+		{".release-cli.jsonl.99", "release-cli", true},
+		{"curl.jsonl.1234", "", false},   // no leading dot
+		{".curl.jsonl.", "", false},      // empty pid
+		{".curl.jsonl.abc", "", false},   // non-numeric pid
+		{".curl.txt.1234", "", false},    // wrong extension
+		{".curl.jsonl", "", false},       // missing pid
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		gotName, gotOK := barrierBinaryName(tc.input)
+		if gotOK != tc.wantOK || gotName != tc.wantName {
+			t.Errorf("barrierBinaryName(%q) = (%q, %v), want (%q, %v)",
+				tc.input, gotName, gotOK, tc.wantName, tc.wantOK)
+		}
+	}
+}
+
+func TestAppendBinaryCallRemovesBarrierOnSuccess(t *testing.T) {
+	t.Parallel()
+	logDir := t.TempDir()
+	if err := appendBinaryCall(logDir, BinaryCall{Name: "curl", PID: 1}); err != nil {
+		t.Fatalf("appendBinaryCall: %v", err)
+	}
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if _, ok := barrierBinaryName(e.Name()); ok {
+			t.Errorf("barrier file %s was not removed after successful write", e.Name())
+		}
+	}
 }
 
 func TestRunOptionsWithDefaults(t *testing.T) {
