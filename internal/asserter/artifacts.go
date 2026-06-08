@@ -75,10 +75,14 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 					results = append(results, resultFromBool(basePath+".md5", assert.MD5 == sum, assert.MD5, sum))
 				}
 			}
-			if _, seekErr := file.Seek(0, 0); seekErr != nil && assert.SHA256 != "" {
-				results = append(results, failResult(basePath+".sha256", assert.SHA256,
-					fmt.Errorf("seek file: %w", seekErr)))
-			} else if seekErr == nil && assert.SHA256 != "" {
+			if assert.SHA256 != "" {
+				if assert.MD5 != "" {
+					if _, seekErr := file.Seek(0, 0); seekErr != nil {
+						results = append(results, failResult(basePath+".sha256", assert.SHA256,
+							fmt.Errorf("seek file: %w", seekErr)))
+						return
+					}
+				}
 				sum, sumErr := checksumFile(file, sha256.New())
 				if sumErr != nil {
 					results = append(results, failResult(basePath+".sha256", assert.SHA256, sumErr))
@@ -109,6 +113,10 @@ func fileTypeOf(info os.FileInfo) string {
 		return "symlink"
 	case mode&os.ModeSocket != 0:
 		return "socket"
+	case mode&os.ModeNamedPipe != 0:
+		return "pipe"
+	case mode&os.ModeDevice != 0:
+		return "device"
 	default:
 		return mode.String()
 	}

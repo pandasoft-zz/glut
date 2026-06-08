@@ -1,0 +1,18 @@
+stages: [test]
+
+builder:
+  stage: test
+  script:
+    - printf "hello" > data.txt
+---
+.glut:
+  name: "artifact size matches byte count of written content"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "data.txt":
+        exists: true
+        size:
+          equal: 5

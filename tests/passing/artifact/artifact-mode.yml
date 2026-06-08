@@ -1,0 +1,18 @@
+stages: [test]
+
+builder:
+  stage: test
+  script:
+    - printf "data" > output.txt
+    - chmod 0755 output.txt
+---
+.glut:
+  name: "artifact mode matches chmod value"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "output.txt":
+        exists: true
+        mode: "0755"

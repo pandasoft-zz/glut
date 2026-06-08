@@ -1,6 +1,9 @@
 package asserter
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -54,6 +57,56 @@ func TestRunArtifactAssertsRejectsPathEscape(t *testing.T) {
 	}
 	if results[0].Passed {
 		t.Fatalf("expected path escape to fail, got %+v", results[0])
+	}
+}
+
+func TestRunArtifactAssertsSize(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("hello")
+	if err := os.WriteFile(filepath.Join(root, "data.txt"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	results := Run(config.AssertConfig{
+		Artifacts: map[string]config.ArtifactAssert{
+			"data.txt": {
+				Size: int64(len(content)),
+			},
+		},
+	}, AssertContext{WorkspacePath: root})
+
+	for _, result := range results {
+		if !result.Passed {
+			t.Fatalf("unexpected failure: %+v", result)
+		}
+	}
+}
+
+func TestRunArtifactAssertsChecksums(t *testing.T) {
+	root := t.TempDir()
+	content := []byte("checksum-test-content")
+	if err := os.WriteFile(filepath.Join(root, "checksum.txt"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rawMD5 := md5.Sum(content)
+	rawSHA256 := sha256.Sum256(content)
+	expectedMD5 := fmt.Sprintf("%x", rawMD5[:])
+	expectedSHA256 := fmt.Sprintf("%x", rawSHA256[:])
+
+	results := Run(config.AssertConfig{
+		Artifacts: map[string]config.ArtifactAssert{
+			"checksum.txt": {
+				MD5:    expectedMD5,
+				SHA256: expectedSHA256,
+			},
+		},
+	}, AssertContext{WorkspacePath: root})
+
+	for _, result := range results {
+		if !result.Passed {
+			t.Fatalf("unexpected failure: %+v", result)
+		}
 	}
 }
 

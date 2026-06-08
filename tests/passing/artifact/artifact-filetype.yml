@@ -1,0 +1,21 @@
+stages: [test]
+
+builder:
+  stage: test
+  script:
+    - mkdir -p build
+    - echo "data" > build/output.txt
+---
+.glut:
+  name: "artifact filetype distinguishes directory from file"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "build":
+        exists: true
+        filetype: "directory"
+      "build/output.txt":
+        exists: true
+        filetype: "file"
