@@ -40,6 +40,7 @@ type SetupConfig struct {
 	TagMessage     string           `yaml:"tag_message"`
 	PipelineSource string           `yaml:"pipeline_source"`
 	Docker         *bool            `yaml:"docker"`
+	Privileged     *bool            `yaml:"privileged"`
 	RefProtected   *bool            `yaml:"ref_protected"`
 	MergeRequest   *MRConfig        `yaml:"merge_request"`
 	Upstream       *UpstreamConfig  `yaml:"upstream"`

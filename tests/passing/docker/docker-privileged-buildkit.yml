@@ -1,0 +1,42 @@
+stages: [build]
+
+build-image-job:
+  stage: build
+  image:
+    name: moby/buildkit:rootless
+    entrypoint: [""]
+  variables:
+    BUILDKITD_FLAGS: "--oci-worker-no-process-sandbox"
+  script:
+    - mkdir -p /tmp/ctx
+    - printf 'FROM alpine:latest\nRUN echo "build ok"\n' > /tmp/ctx/Dockerfile
+    - buildctl-daemonless.sh build
+        --frontend dockerfile.v0
+        --local context=/tmp/ctx
+        --local dockerfile=/tmp/ctx
+        --output type=oci,dest=/tmp/image.tar
+    - echo "docker image built ok"
+    - mkdir -p dist
+    - echo "privileged build ok" > dist/result.txt
+  artifacts:
+    paths:
+      - dist/result.txt
+---
+.glut:
+  name: "setup.privileged: true allows building Docker images with buildkit:rootless"
+  setup:
+    branch: main
+    docker: true
+    privileged: true
+  assert:
+    job:
+      build-image-job:
+        present: true
+        exit-status: 0
+        stdout:
+          - "docker image built ok"
+    artifacts:
+      "dist/result.txt":
+        exists: true
+        contents:
+          - "privileged build ok"

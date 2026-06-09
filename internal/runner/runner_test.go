@@ -1041,6 +1041,27 @@ func TestResolveDockerMode(t *testing.T) {
 	}
 }
 
+func TestResolvePrivileged(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	cases := []struct {
+		name     string
+		input    *bool
+		expected bool
+	}{
+		{"nil", nil, false},
+		{"false", &falseVal, false},
+		{"true", &trueVal, true},
+	}
+	for _, c := range cases {
+		got := c.input != nil && *c.input
+		if got != c.expected {
+			t.Errorf("privileged %s: got %v, want %v", c.name, got, c.expected)
+		}
+	}
+}
+
 func fakeGitLabCILocalListErrorScript() string {
 	return `#!/bin/sh
 if [ "$1" = "--list" ]; then

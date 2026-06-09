@@ -43,6 +43,7 @@ type ExecutorConfig struct {
 	Verbose          bool
 	UseDocker        bool
 	ForceShell       bool
+	Privileged       bool
 	DockerVolumes    []string
 	DockerExtraHosts []string
 	HostEnv          []string // nil falls back to os.Environ()
@@ -329,6 +330,9 @@ func dockerArgs(cfg ExecutorConfig) []string {
 	}
 	for _, host := range cfg.DockerExtraHosts {
 		args = append(args, "--extra-host", host)
+	}
+	if cfg.Privileged {
+		args = append(args, "--privileged")
 	}
 	return args
 }

@@ -491,6 +491,7 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
+	usePrivileged := testFile.Glut.Setup.Privileged != nil && *testFile.Glut.Setup.Privileged
 	if useDocker && volumeStrategy == docker.VolumeStrategyVolume {
 		// Named volume: populate from host and collect for deferred cleanup.
 		var mocks *parser.MocksConfig
@@ -549,6 +550,7 @@ func runSingleTest(
 		Verbose:          opts.Verbose,
 		UseDocker:        useDocker,
 		ForceShell:       forceShell,
+		Privileged:       usePrivileged,
 		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName, volumeStrategy),
 		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
 		HostEnv:          opts.HostEnv,
