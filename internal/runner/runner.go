@@ -587,14 +587,28 @@ func runSingleTest(
 
 	phaseStart = time.Now()
 	if hasMockBinaries(testFile) {
-		// Named volume: copy mock logs from the volume back to the host so
-		// the asserter can read them. Bind mount: logs are already on the host.
 		if dockerVolumeName != "" {
+			// Flush filesystem writes inside the volume before copying logs so
+			// that all wrapper writes are visible to the tar command.
+			if syncErr := workspace.SyncDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
+				primaryErr = fmt.Errorf("sync docker volume: %w", syncErr)
+			}
+			// Copy mock logs from the volume back to the host.
 			if syncErr := workspace.ReadLogsFromDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
 				primaryErr = fmt.Errorf("sync mock logs from docker volume: %w", syncErr)
 			}
 		}
-		binaryLogs, err = mockwrapper.ReadBinaryLogs(workspace.MockBinaryLogDir(work.Dir))
+		// Detect wrapper processes killed before completing their log write.
+		if barrierErr := mockwrapper.CheckMockLogBarriers(workspace.MockBinaryLogDir(work.Dir)); barrierErr != nil && primaryErr == nil {
+			primaryErr = fmt.Errorf("mock log write interrupted: %w", barrierErr)
+		}
+		// Read logs only for binaries that have assertions — a partially-written
+		// or missing log for an un-asserted binary must not fail the test.
+		assertedBinaries := make(map[string]struct{}, len(testFile.Glut.Assert.Binary))
+		for name := range testFile.Glut.Assert.Binary {
+			assertedBinaries[name] = struct{}{}
+		}
+		binaryLogs, err = mockwrapper.ReadBinaryLogs(workspace.MockBinaryLogDir(work.Dir), assertedBinaries)
 	}
 	phaseTimings["mock-logs"] = time.Since(phaseStart)
 	if err != nil && primaryErr == nil {

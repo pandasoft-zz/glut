@@ -100,7 +100,64 @@ func RunWithOptions(opts RunOptions) int {
 	return cmd.ProcessState.ExitCode()
 }
 
-func ReadBinaryLogs(logDir string) (map[string][]BinaryCall, error) {
+// CheckMockLogBarriers looks for barrier files left behind by mock wrapper
+// processes that were killed before completing their log write. Each call to
+// appendBinaryCall creates a file named .{binary}.jsonl.{pid} at the start of
+// the write and removes it on normal exit. A remaining barrier file means the
+// write was interrupted and the corresponding log may be incomplete.
+func CheckMockLogBarriers(logDir string) error {
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read mock log directory %s: %w", logDir, err)
+	}
+	var interrupted []string
+	for _, entry := range entries {
+		if name, ok := barrierBinaryName(entry.Name()); ok {
+			interrupted = append(interrupted, name)
+		}
+	}
+	if len(interrupted) > 0 {
+		return fmt.Errorf("mock binary log write was interrupted for: %s", strings.Join(interrupted, ", "))
+	}
+	return nil
+}
+
+// barrierBinaryName reports whether name matches the barrier file pattern
+// .{binary}.jsonl.{pid} and returns the binary name if so.
+func barrierBinaryName(name string) (string, bool) {
+	if !strings.HasPrefix(name, ".") {
+		return "", false
+	}
+	inner := name[1:] // strip leading dot → "{binary}.jsonl.{pid}"
+	lastDot := strings.LastIndex(inner, ".")
+	if lastDot < 0 {
+		return "", false
+	}
+	pidPart := inner[lastDot+1:]
+	if len(pidPart) == 0 {
+		return "", false
+	}
+	for _, c := range pidPart {
+		if c < '0' || c > '9' {
+			return "", false
+		}
+	}
+	rest := inner[:lastDot] // "{binary}.jsonl"
+	if !strings.HasSuffix(rest, ".jsonl") {
+		return "", false
+	}
+	return strings.TrimSuffix(rest, ".jsonl"), true
+}
+
+// ReadBinaryLogs reads binary call logs from logDir.
+// only restricts which binary names are read; if nil, all log files are read.
+// Pass the set of binary names that have assertions so log files for binaries
+// without assertions are not parsed — a partially-written log for an
+// un-asserted binary should not fail a test.
+func ReadBinaryLogs(logDir string, only map[string]struct{}) (map[string][]BinaryCall, error) {
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		return nil, fmt.Errorf("read mock log directory %s: %w", logDir, err)
@@ -113,6 +170,11 @@ func ReadBinaryLogs(logDir string) (map[string][]BinaryCall, error) {
 		}
 
 		name := strings.TrimSuffix(entry.Name(), ".jsonl")
+		if only != nil {
+			if _, ok := only[name]; !ok {
+				continue
+			}
+		}
 		path := filepath.Join(logDir, entry.Name())
 		file, err := os.Open(path)
 		if err != nil {
@@ -194,6 +256,14 @@ func appendBinaryCall(logDir string, call BinaryCall) (err error) {
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("create mock log directory %s: %w", logDir, err)
 	}
+
+	// Create a barrier file before writing. It signals that a write is in
+	// progress. On normal exit (success or error) the defer below removes it.
+	// If this process is killed before the defer runs, the file remains and
+	// CheckMockLogBarriers will detect the interrupted write.
+	barrierPath := filepath.Join(logDir, fmt.Sprintf(".%s.jsonl.%d", call.Name, os.Getpid()))
+	_ = os.WriteFile(barrierPath, nil, 0644) // best-effort; don't fail if it can't be created
+	defer func() { _ = os.Remove(barrierPath) }()
 
 	path := filepath.Join(logDir, call.Name+".jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
