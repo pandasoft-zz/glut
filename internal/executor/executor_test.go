@@ -678,6 +678,26 @@ func TestBuildCommandEnvForwardsDockerVars(t *testing.T) {
 	})
 }
 
+func TestDockerArgsPrivilegedFlag(t *testing.T) {
+	t.Parallel()
+	t.Run("includes_privileged_when_true", func(t *testing.T) {
+		t.Parallel()
+		args := dockerArgs(ExecutorConfig{UseDocker: true, Privileged: true})
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--privileged") {
+			t.Fatalf("args = %q, want --privileged", joined)
+		}
+	})
+	t.Run("omits_privileged_when_false", func(t *testing.T) {
+		t.Parallel()
+		args := dockerArgs(ExecutorConfig{UseDocker: true, Privileged: false})
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--privileged") {
+			t.Fatalf("args = %q, --privileged must be absent when Privileged=false", joined)
+		}
+	})
+}
+
 func TestBaseArgsDockerMode(t *testing.T) {
 	t.Parallel()
 	args := baseArgs(ExecutorConfig{UseDocker: true})

@@ -421,6 +421,21 @@ setup:
 | `true` | Docker with volume/extra-host support. `CI_API_V4_URL` uses the bridge IP (reachable from Docker and shell). |
 | `false` | all jobs forced to shell, `image:` ignored |
 
+#### Privileged containers
+
+Set `privileged: true` to run all job containers with the Docker `--privileged` flag.
+This is required for images that create user namespaces, such as `moby/buildkit:rootless`
+used for building container images.
+
+```yaml
+setup:
+  docker: true
+  privileged: true
+```
+
+> **Security note:** Privileged containers have full access to the host kernel.
+> Use only in isolated test environments.
+
 ### Docker image entrypoint
 
 GLUT follows GitLab Runner Docker behavior for image entrypoint.
