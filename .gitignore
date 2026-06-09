@@ -8,3 +8,5 @@
 /.artifacts/
 .claude/settings.json
 .claude/settings.local.json
+.claude/CLAUDE.local.md
+.claude/CLAUDE.local.md
