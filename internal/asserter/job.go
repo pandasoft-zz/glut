@@ -36,6 +36,11 @@ func runJobAsserts(asserts map[string]config.JobAssert, ctx AssertContext) []Ass
 			state := matchTextPatterns(jobAssert.Stderr, output.Stderr)
 			results = append(results, resultFromState(basePath+".stderr", state))
 		}
+		if jobAssert.Output != nil {
+			combined := output.Stdout + "\n" + output.Stderr
+			state := matchTextPatterns(jobAssert.Output, combined)
+			results = append(results, resultFromState(basePath+".output", state))
+		}
 	}
 	return results
 }

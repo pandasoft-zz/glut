@@ -353,6 +353,7 @@ Job assert fields:
 - `exit-status`
 - `stdout`
 - `stderr`
+- `output` — combined stdout + stderr; use when the stream does not matter
 
 Artifact content:
 
