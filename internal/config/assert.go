@@ -13,6 +13,7 @@ type JobAssert struct {
 	Present    *bool `yaml:"present"`
 	Stdout     any   `yaml:"stdout"`
 	Stderr     any   `yaml:"stderr"`
+	Output     any   `yaml:"output"`
 }
 
 type ArtifactAssert struct {

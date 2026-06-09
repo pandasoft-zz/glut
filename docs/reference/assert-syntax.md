@@ -144,7 +144,7 @@ assert:
 
 ## Text Pattern Lists
 
-`stdout`, `stderr`, and some `contents` fields can use a list of text patterns.
+`stdout`, `stderr`, `output`, and some `contents` fields can use a list of text patterns.
 Each item is checked against the actual text.
 
 | Pattern | Meaning |
@@ -177,6 +177,7 @@ the GitLab CI job name.
 | `exit-status` | value or matcher | Process exit status. |
 | `stdout` | text list or matcher | Standard output. |
 | `stderr` | text list or matcher | Standard error. |
+| `output` | text list or matcher | Combined stdout and stderr (stdout first). Use when the stream does not matter. |
 
 Basic success:
 
@@ -200,6 +201,17 @@ assert:
       stderr:
         - "missing tag"
         - "!/panic|stack trace/"
+```
+
+Combined output (stream does not matter):
+
+```yaml
+assert:
+  job:
+    install:
+      output:
+        - "Composer Install"
+        - "/Composer version/"
 ```
 
 Skipped or missing job:

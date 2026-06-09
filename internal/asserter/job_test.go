@@ -23,6 +23,56 @@ func TestRunJobAssertsFailsWhenJobNotPresent(t *testing.T) {
 	}
 }
 
+func TestRunJobAssertsOutput(t *testing.T) {
+	asserts := config.AssertConfig{
+		Job: map[string]config.JobAssert{
+			"build": {
+				Output: []any{"from-stdout", "from-stderr", "!/missing/"},
+			},
+		},
+	}
+
+	results := Run(asserts, AssertContext{
+		JobOutputs: map[string]executor.JobOutput{
+			"build": {
+				ExitStatus: 0,
+				Stdout:     "from-stdout\n",
+				Stderr:     "from-stderr\n",
+			},
+		},
+	})
+
+	for _, result := range results {
+		if !result.Passed {
+			t.Fatalf("unexpected failure: %+v", result)
+		}
+	}
+}
+
+func TestRunJobAssertsOutputFailsWhenPatternMissing(t *testing.T) {
+	asserts := config.AssertConfig{
+		Job: map[string]config.JobAssert{
+			"build": {
+				Output: []any{"nowhere-to-be-found"},
+			},
+		},
+	}
+
+	results := Run(asserts, AssertContext{
+		JobOutputs: map[string]executor.JobOutput{
+			"build": {
+				ExitStatus: 0,
+				Stdout:     "stdout line\n",
+				Stderr:     "stderr line\n",
+			},
+		},
+	})
+
+	if len(results) != 1 || results[0].Passed {
+		t.Fatalf("expected one failing assertion, got %+v", results)
+	}
+}
+
 func TestRunJobAsserts(t *testing.T) {
 	presentFalse := false
 	asserts := config.AssertConfig{

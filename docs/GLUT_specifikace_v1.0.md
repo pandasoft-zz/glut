@@ -928,6 +928,7 @@ assert:
 | `present` | bool | `true` = job must be in the pipeline; `false` = job must not exist |
 | `stdout` | patterns or matcher | Pattern matching on job stdout |
 | `stderr` | patterns or matcher | Pattern matching on job stderr |
+| `output` | patterns or matcher | Pattern matching on combined stdout + stderr (stdout first). Use when the stream does not matter. |
 
 `present: false` is used for skip scenarios. It checks via `gitlab-ci-local --list` that the job is not in the pipeline.
 

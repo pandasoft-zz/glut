@@ -517,6 +517,9 @@
         },
         "stderr": {
           "$ref": "#/definitions/text_or_matcher"
+        },
+        "output": {
+          "$ref": "#/definitions/text_or_matcher"
         }
       }
     },
