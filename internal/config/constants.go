@@ -5,6 +5,7 @@ const (
 	DefaultUserName   = "Test User"
 	DefaultUserEmail  = "test@example.com"
 	DefaultUserLogin  = "test-user"
+	MockJobToken      = "mock-job-token"
 
 	PipelineSourcePush     = "push"
 	PipelineSourceWeb      = "web"

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -54,9 +55,17 @@ func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName stri
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	return map[string]string{
-		"CI":                   "true",
-		"CI_SERVER_URL":        serverURL,
+		"CI":            "true",
+		"CI_SERVER_URL": serverURL,
+		// CI_SERVER_PROTOCOL/HOST/PORT/FQDN must be set explicitly: gitlab-ci-local
+		// derives them from the workspace git remote, and because GLUT's origin is a
+		// local path it cannot parse, GCL falls back to https/gitlab.com/443. Those
+		// fallback values leak into jobs and break tools that compose URLs from them
+		// (issue #83).
+		"CI_SERVER_PROTOCOL":   "http",
 		"CI_SERVER_HOST":       "127.0.0.1",
+		"CI_SERVER_PORT":       fmt.Sprintf("%d", port),
+		"CI_SERVER_FQDN":       fmt.Sprintf("127.0.0.1:%d", port),
 		"CI_SERVER_NAME":       "GitLab",
 		"CI_SERVER_VERSION":    "16.11.0",
 		"CI_SERVER_REVISION":   "mock",
@@ -78,10 +87,25 @@ func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName stri
 		"GITLAB_USER_EMAIL":    config.DefaultUserEmail,
 		"GITLAB_USER_LOGIN":    config.DefaultUserLogin,
 		"GITLAB_USER_ID":       "1",
-		"GLUT_WORKSPACE":       workspacePath,
-		"GLUT_TEST_NAME":       glutName,
-		"GLUT_ORIGIN_REPO":     w.OriginRepo,
-		"CI_REPOSITORY_URL":    "file://" + w.OriginRepo,
+		"GLUT_WORKSPACE":   workspacePath,
+		"GLUT_TEST_NAME":   glutName,
+		"GLUT_ORIGIN_REPO": w.OriginRepo,
+	}
+}
+
+// ApplyServerBaseURL points every CI variable derived from the mock server URL
+// at http://host:port. The runner uses it in Docker mode, where containers
+// cannot reach 127.0.0.1 and the bridge IP must be used instead (issue #83:
+// the whole CI_SERVER_* family must stay consistent, not just CI_SERVER_URL).
+func ApplyServerBaseURL(env map[string]string, host string, port int) {
+	env["CI_SERVER_URL"] = fmt.Sprintf("http://%s:%d", host, port)
+	env["CI_API_V4_URL"] = fmt.Sprintf("http://%s:%d/api/v4", host, port)
+	env["CI_SERVER_HOST"] = host
+	env["CI_SERVER_PORT"] = fmt.Sprintf("%d", port)
+	env["CI_SERVER_FQDN"] = fmt.Sprintf("%s:%d", host, port)
+	applyDerivedURLEnv(env)
+	if _, ok := env["CI_MERGE_REQUEST_SOURCE_PROJECT_URL"]; ok {
+		env["CI_MERGE_REQUEST_SOURCE_PROJECT_URL"] = env["CI_SERVER_URL"] + "/" + env["CI_PROJECT_PATH"]
 	}
 }
 
@@ -97,6 +121,16 @@ func applyDerivedURLEnv(env map[string]string) {
 	env["CI_PROJECT_URL"] = projectURL
 	env["CI_PIPELINE_URL"] = projectURL + "/-/pipelines/" + pipelineID
 	env["CI_JOB_URL"] = projectURL + "/-/jobs/" + jobID
+
+	// CI_REPOSITORY_URL: HTTP URL with embedded job token, matching real GitLab CI
+	// format (https://gitlab-ci-token:TOKEN@host/group/project.git). Using HTTP
+	// keeps it consistent with CI_SERVER_URL and prevents tools like semantic-release
+	// from applying URL transformations that break when the scheme is "file" (issue #83).
+	// The mock server serves the origin repo via git smart HTTP at this path.
+	repoURL, _ := url.Parse(serverURL)
+	repoURL.User = url.UserPassword("gitlab-ci-token", env["CI_JOB_TOKEN"])
+	repoURL.Path = "/" + projectPath + ".git"
+	env["CI_REPOSITORY_URL"] = repoURL.String()
 }
 
 func applyProjectEnv(env map[string]string, setup parser.SetupConfig) {

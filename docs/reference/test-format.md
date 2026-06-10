@@ -197,6 +197,10 @@ variable values in scripts or tests.
 | --- | --- |
 | `CI` | `"true"` |
 | `CI_SERVER_URL` | mock server URL |
+| `CI_SERVER_PROTOCOL` | `"http"` |
+| `CI_SERVER_HOST` | mock server host (`127.0.0.1`, or the Docker bridge IP with `docker: true`) |
+| `CI_SERVER_PORT` | mock server port |
+| `CI_SERVER_FQDN` | mock server `host:port` |
 | `CI_API_V4_URL` | mock server `/api/v4` URL |
 | `CI_PROJECT_ID` | `"1"` |
 | `CI_PROJECT_PATH` | `"test-group/test-project"` (or `setup.api.project.path`) |
@@ -213,7 +217,7 @@ variable values in scripts or tests.
 | `GITLAB_USER_NAME` | `setup.pipeline.user.name` → `setup.git.user.name` → `"Test User"` |
 | `GITLAB_USER_EMAIL` | `setup.pipeline.user.email` → `setup.git.user.email` → `"test@example.com"` |
 | `GITLAB_USER_LOGIN` | `setup.pipeline.user.login` → `"test-user"` |
-| `CI_REPOSITORY_URL` | `file://` path to the fake origin |
+| `CI_REPOSITORY_URL` | `http://gitlab-ci-token:<CI_JOB_TOKEN>@<CI_SERVER_HOST>:<CI_SERVER_PORT>/<CI_PROJECT_PATH>.git` — served by GLUT's git smart HTTP handler |
 
 **Branch pipelines** (`push`, `web`, `api`, `trigger`, `schedule`,
 `parent_pipeline`, `chat` — any source except `merge_request_event` and tag):

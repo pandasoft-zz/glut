@@ -696,6 +696,32 @@ func TestNewCIVariables(t *testing.T) {
 			"CI_SERVER_NAME":     "GitLab",
 			"CI_SERVER_VERSION":  "16.11.0",
 			"CI_SERVER_REVISION": "mock",
+			"CI_SERVER_PROTOCOL": "http",
+			"CI_SERVER_PORT":     "9090",
+			"CI_SERVER_FQDN":     "127.0.0.1:9090",
+		}
+		for k, want := range cases {
+			if env[k] != want {
+				t.Errorf("%s = %q, want %q", k, env[k], want)
+			}
+		}
+	})
+
+	t.Run("ApplyServerBaseURL repoints server family and derived URLs", func(t *testing.T) {
+		env := w.EnvVars(parser.SetupConfig{}, 8080, "sha", "short", "name")
+		env["CI_MERGE_REQUEST_SOURCE_PROJECT_URL"] = "http://127.0.0.1:8080/test-group/test-project"
+		ApplyServerBaseURL(env, "172.17.0.2", 8080)
+		cases := map[string]string{
+			"CI_SERVER_URL":                       "http://172.17.0.2:8080",
+			"CI_API_V4_URL":                       "http://172.17.0.2:8080/api/v4",
+			"CI_SERVER_HOST":                      "172.17.0.2",
+			"CI_SERVER_PORT":                      "8080",
+			"CI_SERVER_FQDN":                      "172.17.0.2:8080",
+			"CI_PROJECT_URL":                      "http://172.17.0.2:8080/test-group/test-project",
+			"CI_PIPELINE_URL":                     "http://172.17.0.2:8080/test-group/test-project/-/pipelines/1",
+			"CI_JOB_URL":                          "http://172.17.0.2:8080/test-group/test-project/-/jobs/1",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_URL": "http://172.17.0.2:8080/test-group/test-project",
+			"CI_REPOSITORY_URL":                   "http://gitlab-ci-token:mock-job-token@172.17.0.2:8080/test-group/test-project.git",
 		}
 		for k, want := range cases {
 			if env[k] != want {
@@ -725,6 +751,10 @@ func TestNewCIVariables(t *testing.T) {
 		if env["CI_JOB_URL"] != "http://127.0.0.1:8080/test-group/test-project/-/jobs/1" {
 			t.Errorf("CI_JOB_URL = %q", env["CI_JOB_URL"])
 		}
+		wantRepo := "http://gitlab-ci-token:mock-job-token@127.0.0.1:8080/test-group/test-project.git"
+		if env["CI_REPOSITORY_URL"] != wantRepo {
+			t.Errorf("CI_REPOSITORY_URL = %q, want %q", env["CI_REPOSITORY_URL"], wantRepo)
+		}
 	})
 
 	t.Run("derived URL variables use custom project path", func(t *testing.T) {
@@ -736,6 +766,10 @@ func TestNewCIVariables(t *testing.T) {
 		env := w.EnvVars(setup, 8080, "sha", "short", "name")
 		if env["CI_PROJECT_URL"] != "http://127.0.0.1:8080/acme/backend" {
 			t.Errorf("CI_PROJECT_URL with custom path = %q", env["CI_PROJECT_URL"])
+		}
+		wantRepo := "http://gitlab-ci-token:mock-job-token@127.0.0.1:8080/acme/backend.git"
+		if env["CI_REPOSITORY_URL"] != wantRepo {
+			t.Errorf("CI_REPOSITORY_URL with custom path = %q, want %q", env["CI_REPOSITORY_URL"], wantRepo)
 		}
 	})
 

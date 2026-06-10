@@ -1,0 +1,27 @@
+stages: [test]
+
+server-vars:
+  stage: test
+  script:
+    - 'echo "PROTOCOL=[$CI_SERVER_PROTOCOL]"'
+    - 'echo "FQDN=[$CI_SERVER_FQDN]"'
+    - 'echo "PORT=[$CI_SERVER_PORT]"'
+    - 'echo "REPO=[$CI_REPOSITORY_URL]"'
+---
+.glut:
+  name: "CI_SERVER_* family is explicit, no gitlab-ci-local fallbacks leak in (issue-83)"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    docker: false
+  assert:
+    job:
+      server-vars:
+        exit-status: 0
+        stdout:
+          - "PROTOCOL=[http]"
+          - "/FQDN=\\[127\\.0\\.0\\.1:[0-9]+\\]/"
+          - "/PORT=\\[[0-9]+\\]/"
+          - "/REPO=\\[http:\\/\\/gitlab-ci-token:mock-job-token@127\\.0\\.0\\.1:[0-9]+\\/test-group\\/test-project\\.git\\]/"
+          - "!/gitlab\\.com/"
+          - "!/https/"

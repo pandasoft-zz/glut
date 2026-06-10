@@ -31,6 +31,9 @@ type Server struct {
 	statusesMu     sync.RWMutex
 	commitStatuses map[string][]map[string]any // sha → []status
 
+	gitMu       sync.RWMutex
+	gitRepoPath string // bare repo path served via git smart HTTP
+
 	mu         sync.Mutex
 	http       *http.Server
 	port       int
@@ -128,6 +131,15 @@ func (s *Server) Recorder() *Recorder {
 	return s.recorder
 }
 
+// SetGitRepo registers the bare git repository to serve over HTTP at
+// /<project-path>.git/. Call this after the workspace origin repo is ready,
+// before running jobs.
+func (s *Server) SetGitRepo(path string) {
+	s.gitMu.Lock()
+	defer s.gitMu.Unlock()
+	s.gitRepoPath = path
+}
+
 func (s *Server) record(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
@@ -157,6 +169,12 @@ func (s *Server) record(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	// Git smart HTTP: intercept before API auth so that Basic auth from the
+	// git client (gitlab-ci-token:<CI_JOB_TOKEN>) is handled separately.
+	if s.serveGitHTTP(w, r) {
+		return
+	}
+
 	path := r.URL.EscapedPath()
 	if r.Method == http.MethodGet && path == "/api/v4/version" {
 		writeJSON(w, http.StatusOK, map[string]any{

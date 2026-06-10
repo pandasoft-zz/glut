@@ -41,20 +41,20 @@ const (
 )
 
 type RunOptions struct {
-	RunPattern       string
-	FailFast         bool
-	MaxFail          int
-	Verbose          bool
-	Quiet            bool
-	Timeout          time.Duration
-	Debug            bool
-	KeepWorkspace    bool
-	DebugPause       string
-	KeepLastFailed   int
-	GlutBinPath      string
-	CopyStrategy     string
-	Include          []string
-	Progress         []ProgressSink
+	RunPattern           string
+	FailFast             bool
+	MaxFail              int
+	Verbose              bool
+	Quiet                bool
+	Timeout              time.Duration
+	Debug                bool
+	KeepWorkspace        bool
+	DebugPause           string
+	KeepLastFailed       int
+	GlutBinPath          string
+	CopyStrategy         string
+	Include              []string
+	Progress             []ProgressSink
 	HostEnv              []string      // nil falls back to os.Environ(); propagated to executor and workspace
 	WorkDir              string        // working directory for test discovery; empty falls back to os.Getwd()
 	WaitTimeout          time.Duration // max time to wait for Docker daemon; 0 uses default (120s)
@@ -488,6 +488,7 @@ func runSingleTest(
 		result.Passed = false
 		return
 	}
+	server.SetGitRepo(work.OriginRepo)
 
 	phaseStart = time.Now()
 	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
@@ -535,9 +536,7 @@ func runSingleTest(
 		// BUG-3: Docker containers cannot reach 127.0.0.1. Use the bridge IP directly
 		// so the URL works for both Docker jobs (container on same bridge) and shell jobs
 		// (same host or container). glut-mock remains an alias via --extra-host.
-		port := server.Port()
-		envVars["CI_SERVER_URL"] = fmt.Sprintf("http://%s:%d", mockHostIP, port)
-		envVars["CI_API_V4_URL"] = fmt.Sprintf("http://%s:%d/api/v4", mockHostIP, port)
+		workspace.ApplyServerBaseURL(envVars, mockHostIP, server.Port())
 	}
 	execCfg := executor.ExecutorConfig{
 		WorkspacePath:    work.WorkspaceDir,
