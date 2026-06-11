@@ -701,8 +701,8 @@ func testFileYAML(testName string, jobName string, expectedStdout string) string
 
 func fakeGitLabCILocalScript() string {
 	return `#!/bin/sh
-if [ "$1" = "--list" ]; then
-  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+if [ "$1" = "--list-json" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | awk 'BEGIN{printf "["} {if (NR>1) printf ","; printf "{\"name\":\"%s\",\"when\":\"on_success\"}", $0} END{print "]"}'
   exit 0
 fi
 
@@ -1064,7 +1064,7 @@ func TestResolvePrivileged(t *testing.T) {
 
 func fakeGitLabCILocalListErrorScript() string {
 	return `#!/bin/sh
-if [ "$1" = "--list" ]; then
+if [ "$1" = "--list-json" ]; then
   echo "list failed" >&2
   exit 2
 fi
@@ -1085,12 +1085,12 @@ for arg in "$@"; do
   case "$arg" in
     --volume) HAS_VOLUME=1 ;;
     --extra-host) HAS_EXTRA_HOST=1 ;;
-    --list) IS_LIST=1 ;;
+    --list-json) IS_LIST=1 ;;
   esac
 done
 
 if [ "$IS_LIST" = "1" ]; then
-  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | awk 'BEGIN{printf "["} {if (NR>1) printf ","; printf "{\"name\":\"%s\",\"when\":\"on_success\"}", $0} END{print "]"}'
   exit 0
 fi
 
@@ -1123,8 +1123,8 @@ printf 'GLUT_JOB|name=%s|exit=0|stdout=ok|stderr=\n' "$job_name"
 
 func fakeGitLabCILocalDockerUserModelScript() string {
 	return `#!/bin/sh
-if [ "$1" = "--list" ]; then
-  printf 'root-job\nrootless-job\n'
+if [ "$1" = "--list-json" ]; then
+  printf '[{"name":"root-job","when":"on_success"},{"name":"rootless-job","when":"on_success"}]\n'
   exit 0
 fi
 
@@ -1144,8 +1144,8 @@ printf 'GLUT_JOB|name=rootless-job|exit=0|stdout=ok|stderr=\n'
 
 func fakeGitLabCILocalEntrypointModelScript() string {
 	return `#!/bin/sh
-if [ "$1" = "--list" ]; then
-  printf 'default-entrypoint\noverride-entrypoint\n'
+if [ "$1" = "--list-json" ]; then
+  printf '[{"name":"default-entrypoint","when":"on_success"},{"name":"override-entrypoint","when":"on_success"}]\n'
   exit 0
 fi
 
@@ -1172,8 +1172,8 @@ for arg in "$@"; do
   [ "$arg" = "--force-shell-executor" ] && HAS_FORCE_SHELL=1
 done
 
-if [ "$1" = "--list" ]; then
-  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+if [ "$1" = "--list-json" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | awk 'BEGIN{printf "["} {if (NR>1) printf ","; printf "{\"name\":\"%s\",\"when\":\"on_success\"}", $0} END{print "]"}'
   exit 0
 fi
 
@@ -1337,8 +1337,8 @@ func TestAbsifyPaths(t *testing.T) {
 // value of the named environment variable as the job's stdout field.
 func fakeGitLabCILocalEnvEchoScript(envVar string) string {
 	return `#!/bin/sh
-if [ "$1" = "--list" ]; then
-  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$'
+if [ "$1" = "--list-json" ]; then
+  grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | awk 'BEGIN{printf "["} {if (NR>1) printf ","; printf "{\"name\":\"%s\",\"when\":\"on_success\"}", $0} END{print "]"}'
   exit 0
 fi
 job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"

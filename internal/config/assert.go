@@ -9,11 +9,12 @@ type AssertConfig struct {
 }
 
 type JobAssert struct {
-	ExitStatus any   `yaml:"exit-status"`
-	Present    *bool `yaml:"present"`
-	Stdout     any   `yaml:"stdout"`
-	Stderr     any   `yaml:"stderr"`
-	Output     any   `yaml:"output"`
+	ExitStatus any    `yaml:"exit-status"`
+	Present    *bool  `yaml:"present"`
+	When       string `yaml:"when"`
+	Stdout     any    `yaml:"stdout"`
+	Stderr     any    `yaml:"stderr"`
+	Output     any    `yaml:"output"`
 }
 
 type ArtifactAssert struct {

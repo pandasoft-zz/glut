@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	glutschema "github.com/pandasoft-zz/glut/schema"
 )
@@ -107,6 +108,44 @@ func lintAssertSection(filePath string, glutMap map[string]interface{}) []LintEr
 	assertMap, ok := assertVal.(map[string]interface{})
 	if ok && len(assertMap) == 0 {
 		lints = append(lints, LintError{File: filePath, Level: LevelWarning, Message: ".glut.assert is empty"})
+	}
+	if ok {
+		lints = append(lints, lintJobAsserts(filePath, assertMap)...)
+	}
+	return lints
+}
+
+func lintJobAsserts(filePath string, assertMap map[string]interface{}) []LintError {
+	jobVal, ok := assertMap["job"]
+	if !ok {
+		return nil
+	}
+	jobMap, ok := jobVal.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	jobNames := make([]string, 0, len(jobMap))
+	for name := range jobMap {
+		jobNames = append(jobNames, name)
+	}
+	sort.Strings(jobNames)
+
+	var lints []LintError
+	for _, jobName := range jobNames {
+		jobAssert, ok := jobMap[jobName].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		present, hasPresent := jobAssert["present"].(bool)
+		_, hasWhen := jobAssert["when"]
+		if hasPresent && !present && hasWhen {
+			lints = append(lints, LintError{
+				File:    filePath,
+				Level:   LevelError,
+				Message: fmt.Sprintf(".glut.assert.job.%s: \"when\" cannot be combined with \"present: false\" (an absent job has no when value)", jobName),
+			})
+		}
 	}
 	return lints
 }

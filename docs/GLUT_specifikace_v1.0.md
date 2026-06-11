@@ -925,12 +925,23 @@ assert:
 | Attribute | Type | Description |
 |---|---|---|
 | `exit-status` | int or matcher | Expected exit code of the job |
-| `present` | bool | `true` = job must be in the pipeline; `false` = job must not exist |
+| `present` | bool | `true` = job must be in the pipeline; `false` = job must not exist. A job with a matching rule and `when: manual` is present even though it does not run. |
+| `when` | enum | Evaluated `when:` value of the job (`on_success`, `on_failure`, `manual`, `delayed`, `always`). Opt-in: when omitted, the job's `when` value is not checked at all. Cannot be combined with `present: false`. |
 | `stdout` | patterns or matcher | Pattern matching on job stdout |
 | `stderr` | patterns or matcher | Pattern matching on job stderr |
 | `output` | patterns or matcher | Pattern matching on combined stdout + stderr (stdout first). Use when the stream does not matter. |
 
-`present: false` is used for skip scenarios. It checks via `gitlab-ci-local --list` that the job is not in the pipeline.
+`present: false` is used for skip scenarios. It checks via `gitlab-ci-local --list-json` that the job is not in the pipeline. A present-but-not-executed job (e.g. `when: manual`) has no output; asserting `exit-status`, `stdout`, `stderr`, or `output` on it fails with `job present but not executed`.
+
+Manual job — rule matched, the job is in the pipeline, but does not run automatically:
+
+```yaml
+assert:
+  job:
+    "release:job":
+      present: true
+      when: manual
+```
 
 ### 9.6 Resource: `artifacts`
 

@@ -630,6 +630,45 @@ func TestSemanticLintValidatesGlutMetadata(t *testing.T) {
 	}
 }
 
+func TestSemanticLintRejectsWhenWithPresentFalse(t *testing.T) {
+	lints := SemanticLint("test.yml", map[string]interface{}{
+		"assert": map[string]interface{}{
+			"job": map[string]interface{}{
+				"release:job": map[string]interface{}{
+					"present": false,
+					"when":    "manual",
+				},
+			},
+		},
+	})
+	found := false
+	for _, l := range lints {
+		if l.Level == LevelError && strings.Contains(l.Message, `"when" cannot be combined with "present: false"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("SemanticLint() did not report when/present conflict: %#v", lints)
+	}
+
+	// present: true + when, and when alone, are both valid.
+	for _, jobAssert := range []map[string]interface{}{
+		{"present": true, "when": "manual"},
+		{"when": "manual"},
+	} {
+		lints := SemanticLint("test.yml", map[string]interface{}{
+			"assert": map[string]interface{}{
+				"job": map[string]interface{}{"release:job": jobAssert},
+			},
+		})
+		for _, l := range lints {
+			if l.Level == LevelError {
+				t.Fatalf("SemanticLint() unexpected error for %#v: %#v", jobAssert, lints)
+			}
+		}
+	}
+}
+
 func TestLint_NoDynamicPipelineFalsePositives(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -521,6 +521,10 @@
         "present": {
           "type": "boolean"
         },
+        "when": {
+          "type": "string",
+          "enum": ["on_success", "on_failure", "manual", "delayed", "always"]
+        },
         "stdout": {
           "$ref": "#/definitions/text_or_matcher"
         },

@@ -1,6 +1,8 @@
 package asserter
 
 import (
+	"fmt"
+
 	"github.com/pandasoft-zz/glut/internal/config"
 )
 
@@ -21,6 +23,18 @@ func runJobAsserts(asserts map[string]config.JobAssert, ctx AssertContext) []Ass
 			results = append(results, failResult(basePath+".present", true, false))
 		}
 		if !present {
+			continue
+		}
+
+		if jobAssert.When != "" {
+			results = append(results, resultFromBool(basePath+".when", jobAssert.When == output.When, jobAssert.When, output.When))
+		}
+
+		hasFieldAsserts := jobAssert.ExitStatus != nil || jobAssert.Stdout != nil || jobAssert.Stderr != nil || jobAssert.Output != nil
+		if hasFieldAsserts && !output.Executed {
+			// A present-but-not-executed job (e.g. when: manual) has zero-value
+			// outputs; matching against them would pass spuriously.
+			results = append(results, failResult(basePath, "job executed", fmt.Sprintf("job present but not executed (when: %s)", output.When)))
 			continue
 		}
 

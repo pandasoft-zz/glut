@@ -173,7 +173,8 @@ the GitLab CI job name.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `present` | boolean | Job must exist or must not exist. |
+| `present` | boolean | Job must exist in the pipeline or must not exist. A job with a matching rule and `when: manual` **is present** even though it does not run. |
+| `when` | enum | Evaluated `when:` value of the job: `on_success`, `on_failure`, `manual`, `delayed`, or `always`. **Opt-in:** when omitted, the job's `when` value is not checked at all — existing tests behave exactly as before. (`never` is not a valid value; a never-job is simply absent, use `present: false`.) |
 | `exit-status` | value or matcher | Process exit status. |
 | `stdout` | text list or matcher | Standard output. |
 | `stderr` | text list or matcher | Standard error. |
@@ -222,6 +223,28 @@ assert:
     deploy-production:
       present: false
 ```
+
+Manual job — rule matched, the job is in the pipeline, but it does not run
+automatically:
+
+```yaml
+assert:
+  job:
+    release:job:
+      present: true
+      when: manual
+```
+
+The `when` field is opt-in: if you do not specify it, GLUT does not check the
+job's `when` value and no default is assumed. Notes on combining fields:
+
+- `exit-status`, `stdout`, `stderr`, and `output` require the job to have
+  actually executed. Asserting them on a present-but-not-executed job (such as
+  a manual job) fails with `job present but not executed` — there is no real
+  output to match against.
+- `when` combined with `present: false` is rejected by lint: an absent job has
+  no `when` value. A job whose rule sets `when: never` is absent; assert it
+  with `present: false`.
 
 Flexible log check:
 
