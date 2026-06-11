@@ -524,6 +524,12 @@ func runSingleTest(
 		result.Passed = false
 		return
 	}
+	commitMessage, commitTimestamp, err := gitHeadCommit(work.WorkspaceDir)
+	if err != nil {
+		primaryErr = err
+		result.Passed = false
+		return
+	}
 
 	var mockHostIP string
 	if useDocker {
@@ -531,6 +537,7 @@ func runSingleTest(
 	}
 
 	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
+	workspace.ApplyCommitEnv(envVars, commitMessage, commitTimestamp)
 	applyDockerCompatibilityEnv(envVars, useDocker)
 	if useDocker {
 		// BUG-3: Docker containers cannot reach 127.0.0.1. Use the bridge IP directly
@@ -811,6 +818,20 @@ func gitHeads(dir string) (string, string, error) {
 		return "", "", fmt.Errorf("read workspace short git HEAD: %w", err)
 	}
 	return sha, shortSHA, nil
+}
+
+// gitHeadCommit returns the full commit message and committer timestamp
+// (strict ISO 8601) of the workspace HEAD commit.
+func gitHeadCommit(dir string) (string, string, error) {
+	message, err := gitOutput(dir, "log", "-1", "--format=%B")
+	if err != nil {
+		return "", "", fmt.Errorf("read workspace HEAD commit message: %w", err)
+	}
+	timestamp, err := gitOutput(dir, "log", "-1", "--format=%cI")
+	if err != nil {
+		return "", "", fmt.Errorf("read workspace HEAD commit timestamp: %w", err)
+	}
+	return message, timestamp, nil
 }
 
 func gitOutput(dir string, args ...string) (string, error) {

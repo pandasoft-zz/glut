@@ -34,22 +34,22 @@ func (s *StringSlice) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type SetupConfig struct {
-	Branch         string           `yaml:"branch"`
-	DefaultBranch  string           `yaml:"default_branch"`
-	Tag            string           `yaml:"tag"`
-	TagMessage     string           `yaml:"tag_message"`
-	PipelineSource string           `yaml:"pipeline_source"`
-	Docker         *bool            `yaml:"docker"`
-	Privileged     *bool            `yaml:"privileged"`
-	RefProtected   *bool            `yaml:"ref_protected"`
-	MergeRequest   *MRConfig        `yaml:"merge_request"`
-	Upstream       *UpstreamConfig  `yaml:"upstream"`
-	Schedule       *ScheduleConfig  `yaml:"schedule"`
-	Chat           *ChatConfig      `yaml:"chat"`
-	Git            *GitSetupConfig  `yaml:"git"`
-	Pipeline       *PipelineConfig  `yaml:"pipeline"`
-	API            *APISetupConfig  `yaml:"api"`
-	Mocks          *MocksConfig     `yaml:"mocks"`
+	Branch         string          `yaml:"branch"`
+	DefaultBranch  string          `yaml:"default_branch"`
+	Tag            string          `yaml:"tag"`
+	TagMessage     string          `yaml:"tag_message"`
+	PipelineSource string          `yaml:"pipeline_source"`
+	Docker         *bool           `yaml:"docker"`
+	Privileged     *bool           `yaml:"privileged"`
+	RefProtected   *bool           `yaml:"ref_protected"`
+	MergeRequest   *MRConfig       `yaml:"merge_request"`
+	Upstream       *UpstreamConfig `yaml:"upstream"`
+	Schedule       *ScheduleConfig `yaml:"schedule"`
+	Chat           *ChatConfig     `yaml:"chat"`
+	Git            *GitSetupConfig `yaml:"git"`
+	Pipeline       *PipelineConfig `yaml:"pipeline"`
+	API            *APISetupConfig `yaml:"api"`
+	Mocks          *MocksConfig    `yaml:"mocks"`
 }
 
 type PipelineConfig struct {

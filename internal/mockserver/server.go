@@ -25,8 +25,8 @@ type Server struct {
 	store    *InMemoryStore
 	recorder *Recorder
 
-	notesMu        sync.RWMutex
-	notes          map[string][]map[string]any // "merge_requests/5" → []note
+	notesMu sync.RWMutex
+	notes   map[string][]map[string]any // "merge_requests/5" → []note
 
 	statusesMu     sync.RWMutex
 	commitStatuses map[string][]map[string]any // sha → []status

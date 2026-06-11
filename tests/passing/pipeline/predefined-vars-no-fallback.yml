@@ -1,0 +1,43 @@
+stages: [test]
+
+predefined-vars:
+  stage: test
+  script:
+    - 'echo "PATH_SLUG=[$CI_PROJECT_PATH_SLUG]"'
+    - 'echo "ROOT_NS=[$CI_PROJECT_ROOT_NAMESPACE]"'
+    - 'echo "TITLE=[$CI_PROJECT_TITLE]"'
+    - 'echo "PIPELINE_IID=[$CI_PIPELINE_IID]"'
+    - 'echo "GITLAB_CI=[$GITLAB_CI]"'
+    - 'echo "COMMIT_TITLE=[$CI_COMMIT_TITLE]"'
+    - 'echo "COMMIT_DESCRIPTION=[$CI_COMMIT_DESCRIPTION]"'
+    - 'echo "PROXY_PREFIX=[$CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX]"'
+    - env | sort
+---
+.glut:
+  name: "project identity and commit variables are real values, not gitlab-ci-local placeholders (issue-83 follow-up)"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    docker: false
+    git:
+      origin:
+        branch: main
+        commands:
+          - 'git commit --allow-empty -m "feat: real change" -m "Body line of the real change"'
+  assert:
+    job:
+      predefined-vars:
+        exit-status: 0
+        stdout:
+          - "PATH_SLUG=[test-group-test-project]"
+          - "ROOT_NS=[test-group]"
+          - "TITLE=[test-project]"
+          - "PIPELINE_IID=[1]"
+          - "GITLAB_CI=[true]"
+          - "COMMIT_TITLE=[feat: real change]"
+          - "COMMIT_DESCRIPTION=[Body line of the real change]"
+          - "/PROXY_PREFIX=\\[127\\.0\\.0\\.1:[0-9]+\\/test-group\\/dependency_proxy\\/containers\\]/"
+          - "!/fallback\\.group/"
+          - "!/fallbackProject/"
+          - "!/Commit Title/"
+          - "!/More commit text/"

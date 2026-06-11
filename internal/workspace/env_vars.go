@@ -74,22 +74,32 @@ func (w *Workspace) baseEnv(port int, sha string, shortSha string, glutName stri
 		"CI_PROJECT_PATH":      "test-group/test-project",
 		"CI_PROJECT_NAME":      "test-project",
 		"CI_PROJECT_NAMESPACE": "test-group",
-		"CI_COMMIT_SHA":        sha,
-		"CI_COMMIT_SHORT_SHA":  shortSha,
-		"CI_DEFAULT_BRANCH":    defaultBranch,
-		"CI_PIPELINE_SOURCE":   config.PipelineSourcePush,
-		"CI_PIPELINE_ID":       "1",
-		"CI_JOB_ID":            "1",
-		"CI_JOB_TOKEN":         "mock-job-token",
-		"CI_REGISTRY":          "registry.example.com",
-		"CI_REGISTRY_IMAGE":    "registry.example.com/test-group/test-project",
-		"GITLAB_USER_NAME":     config.DefaultUserName,
-		"GITLAB_USER_EMAIL":    config.DefaultUserEmail,
-		"GITLAB_USER_LOGIN":    config.DefaultUserLogin,
-		"GITLAB_USER_ID":       "1",
-		"GLUT_WORKSPACE":   workspacePath,
-		"GLUT_TEST_NAME":   glutName,
-		"GLUT_ORIGIN_REPO": w.OriginRepo,
+		// CI_PROJECT_PATH_SLUG/ROOT_NAMESPACE/TITLE, CI_PIPELINE_IID, and GITLAB_CI
+		// must be explicit for the same reason as the CI_SERVER_* family above:
+		// gitlab-ci-local derives them from the git remote and falls back to
+		// "fallback.group"/"fallback.project" (and GITLAB_CI=false) when the remote
+		// is a local path it cannot parse.
+		"CI_PROJECT_PATH_SLUG":      slugify("test-group/test-project"),
+		"CI_PROJECT_ROOT_NAMESPACE": "test-group",
+		"CI_PROJECT_TITLE":          "test-project",
+		"CI_COMMIT_SHA":             sha,
+		"CI_COMMIT_SHORT_SHA":       shortSha,
+		"CI_DEFAULT_BRANCH":         defaultBranch,
+		"CI_PIPELINE_SOURCE":        config.PipelineSourcePush,
+		"CI_PIPELINE_ID":            "1",
+		"CI_PIPELINE_IID":           "1",
+		"CI_JOB_ID":                 "1",
+		"CI_JOB_TOKEN":              config.MockJobToken,
+		"GITLAB_CI":                 "true",
+		"CI_REGISTRY":               "registry.example.com",
+		"CI_REGISTRY_IMAGE":         "registry.example.com/test-group/test-project",
+		"GITLAB_USER_NAME":          config.DefaultUserName,
+		"GITLAB_USER_EMAIL":         config.DefaultUserEmail,
+		"GITLAB_USER_LOGIN":         config.DefaultUserLogin,
+		"GITLAB_USER_ID":            "1",
+		"GLUT_WORKSPACE":            workspacePath,
+		"GLUT_TEST_NAME":            glutName,
+		"GLUT_ORIGIN_REPO":          w.OriginRepo,
 	}
 }
 
@@ -127,10 +137,36 @@ func applyDerivedURLEnv(env map[string]string) {
 	// keeps it consistent with CI_SERVER_URL and prevents tools like semantic-release
 	// from applying URL transformations that break when the scheme is "file" (issue #83).
 	// The mock server serves the origin repo via git smart HTTP at this path.
-	repoURL, _ := url.Parse(serverURL)
-	repoURL.User = url.UserPassword("gitlab-ci-token", env["CI_JOB_TOKEN"])
-	repoURL.Path = "/" + projectPath + ".git"
-	env["CI_REPOSITORY_URL"] = repoURL.String()
+	if repoURL, err := url.Parse(serverURL); err == nil {
+		repoURL.User = url.UserPassword("gitlab-ci-token", env["CI_JOB_TOKEN"])
+		repoURL.Path = "/" + projectPath + ".git"
+		env["CI_REPOSITORY_URL"] = repoURL.String()
+	}
+
+	// Dependency proxy: gitlab-ci-local builds the image prefixes from the git
+	// remote group, which degrades to "fallback.group" in GLUT workspaces. Derive
+	// them from CI_SERVER_FQDN and the root namespace instead.
+	proxyServer := env["CI_SERVER_FQDN"]
+	proxyPrefix := proxyServer + "/" + env["CI_PROJECT_ROOT_NAMESPACE"] + "/dependency_proxy/containers"
+	env["CI_DEPENDENCY_PROXY_SERVER"] = proxyServer
+	env["CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX"] = proxyPrefix
+	env["CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX"] = proxyPrefix
+	env["CI_DEPENDENCY_PROXY_USER"] = "gitlab-ci-token"
+	env["CI_DEPENDENCY_PROXY_PASSWORD"] = env["CI_JOB_TOKEN"]
+}
+
+// ApplyCommitEnv sets the commit-message variables from the workspace HEAD
+// commit. gitlab-ci-local never reads the real commit message — it hardcodes
+// "Commit Title"/"More commit text" placeholders — so these must be passed
+// explicitly or rules matching $CI_COMMIT_MESSAGE see placeholder text.
+func ApplyCommitEnv(env map[string]string, message string, timestamp string) {
+	env["CI_COMMIT_MESSAGE"] = message
+	title, description, _ := strings.Cut(message, "\n")
+	env["CI_COMMIT_TITLE"] = title
+	env["CI_COMMIT_DESCRIPTION"] = strings.TrimLeft(description, "\n")
+	if timestamp != "" {
+		env["CI_COMMIT_TIMESTAMP"] = timestamp
+	}
 }
 
 func applyProjectEnv(env map[string]string, setup parser.SetupConfig) {
@@ -140,6 +176,9 @@ func applyProjectEnv(env map[string]string, setup parser.SetupConfig) {
 		parts := strings.Split(path, "/")
 		env["CI_PROJECT_NAME"] = parts[len(parts)-1]
 		env["CI_PROJECT_NAMESPACE"] = strings.Join(parts[:len(parts)-1], "/")
+		env["CI_PROJECT_PATH_SLUG"] = slugify(path)
+		env["CI_PROJECT_ROOT_NAMESPACE"] = parts[0]
+		env["CI_PROJECT_TITLE"] = parts[len(parts)-1]
 		env["CI_REGISTRY_IMAGE"] = "registry.example.com/" + path
 	}
 }

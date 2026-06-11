@@ -1,6 +1,7 @@
 package mockserver
 
 import (
+	"compress/gzip"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -87,8 +88,22 @@ func (s *Server) serveGitInfoRefs(w http.ResponseWriter, r *http.Request, repoPa
 }
 
 func (s *Server) serveGitPack(w http.ResponseWriter, r *http.Request, repoPath, subCmd, contentType string) {
+	// Git clients gzip large request bodies (e.g. fetch negotiation over many
+	// refs); net/http does not decompress request bodies, so do it here like
+	// the real git-http-backend does.
+	body := r.Body
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		gz, err := gzip.NewReader(body)
+		if err != nil {
+			http.Error(w, "bad gzip body", http.StatusBadRequest)
+			return
+		}
+		defer func() { _ = gz.Close() }()
+		body = gz
+	}
+
 	cmd := exec.CommandContext(r.Context(), "git", subCmd, "--stateless-rpc", repoPath)
-	cmd.Stdin = r.Body
+	cmd.Stdin = body
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-cache")

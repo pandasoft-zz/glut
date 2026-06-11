@@ -712,21 +712,94 @@ func TestNewCIVariables(t *testing.T) {
 		env["CI_MERGE_REQUEST_SOURCE_PROJECT_URL"] = "http://127.0.0.1:8080/test-group/test-project"
 		ApplyServerBaseURL(env, "172.17.0.2", 8080)
 		cases := map[string]string{
-			"CI_SERVER_URL":                       "http://172.17.0.2:8080",
-			"CI_API_V4_URL":                       "http://172.17.0.2:8080/api/v4",
-			"CI_SERVER_HOST":                      "172.17.0.2",
-			"CI_SERVER_PORT":                      "8080",
-			"CI_SERVER_FQDN":                      "172.17.0.2:8080",
-			"CI_PROJECT_URL":                      "http://172.17.0.2:8080/test-group/test-project",
-			"CI_PIPELINE_URL":                     "http://172.17.0.2:8080/test-group/test-project/-/pipelines/1",
-			"CI_JOB_URL":                          "http://172.17.0.2:8080/test-group/test-project/-/jobs/1",
-			"CI_MERGE_REQUEST_SOURCE_PROJECT_URL": "http://172.17.0.2:8080/test-group/test-project",
-			"CI_REPOSITORY_URL":                   "http://gitlab-ci-token:mock-job-token@172.17.0.2:8080/test-group/test-project.git",
+			"CI_SERVER_URL":                                 "http://172.17.0.2:8080",
+			"CI_API_V4_URL":                                 "http://172.17.0.2:8080/api/v4",
+			"CI_SERVER_HOST":                                "172.17.0.2",
+			"CI_SERVER_PORT":                                "8080",
+			"CI_SERVER_FQDN":                                "172.17.0.2:8080",
+			"CI_PROJECT_URL":                                "http://172.17.0.2:8080/test-group/test-project",
+			"CI_PIPELINE_URL":                               "http://172.17.0.2:8080/test-group/test-project/-/pipelines/1",
+			"CI_JOB_URL":                                    "http://172.17.0.2:8080/test-group/test-project/-/jobs/1",
+			"CI_MERGE_REQUEST_SOURCE_PROJECT_URL":           "http://172.17.0.2:8080/test-group/test-project",
+			"CI_REPOSITORY_URL":                             "http://gitlab-ci-token:mock-job-token@172.17.0.2:8080/test-group/test-project.git",
+			"CI_DEPENDENCY_PROXY_SERVER":                    "172.17.0.2:8080",
+			"CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX":        "172.17.0.2:8080/test-group/dependency_proxy/containers",
+			"CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX": "172.17.0.2:8080/test-group/dependency_proxy/containers",
 		}
 		for k, want := range cases {
 			if env[k] != want {
 				t.Errorf("%s = %q, want %q", k, env[k], want)
 			}
+		}
+	})
+
+	t.Run("project identity variables avoid gitlab-ci-local fallbacks", func(t *testing.T) {
+		env := w.EnvVars(parser.SetupConfig{}, 8080, "sha", "short", "name")
+		cases := map[string]string{
+			"CI_PROJECT_PATH_SLUG":                   "test-group-test-project",
+			"CI_PROJECT_ROOT_NAMESPACE":              "test-group",
+			"CI_PROJECT_TITLE":                       "test-project",
+			"CI_PIPELINE_IID":                        "1",
+			"GITLAB_CI":                              "true",
+			"CI_DEPENDENCY_PROXY_SERVER":             "127.0.0.1:8080",
+			"CI_DEPENDENCY_PROXY_USER":               "gitlab-ci-token",
+			"CI_DEPENDENCY_PROXY_PASSWORD":           "mock-job-token",
+			"CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX": "127.0.0.1:8080/test-group/dependency_proxy/containers",
+		}
+		for k, want := range cases {
+			if env[k] != want {
+				t.Errorf("%s = %q, want %q", k, env[k], want)
+			}
+		}
+	})
+
+	t.Run("project identity variables use custom project path", func(t *testing.T) {
+		setup := parser.SetupConfig{
+			API: &parser.APISetupConfig{
+				Project: &parser.ProjectConfig{Path: "acme/sub/backend"},
+			},
+		}
+		env := w.EnvVars(setup, 8080, "sha", "short", "name")
+		cases := map[string]string{
+			"CI_PROJECT_PATH_SLUG":                   "acme-sub-backend",
+			"CI_PROJECT_ROOT_NAMESPACE":              "acme",
+			"CI_PROJECT_TITLE":                       "backend",
+			"CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX": "127.0.0.1:8080/acme/dependency_proxy/containers",
+		}
+		for k, want := range cases {
+			if env[k] != want {
+				t.Errorf("%s = %q, want %q", k, env[k], want)
+			}
+		}
+	})
+
+	t.Run("ApplyCommitEnv splits title and description", func(t *testing.T) {
+		env := map[string]string{}
+		ApplyCommitEnv(env, "feat: add thing\n\nLonger body\nsecond line", "2026-06-10T12:00:00+02:00")
+		cases := map[string]string{
+			"CI_COMMIT_MESSAGE":     "feat: add thing\n\nLonger body\nsecond line",
+			"CI_COMMIT_TITLE":       "feat: add thing",
+			"CI_COMMIT_DESCRIPTION": "Longer body\nsecond line",
+			"CI_COMMIT_TIMESTAMP":   "2026-06-10T12:00:00+02:00",
+		}
+		for k, want := range cases {
+			if env[k] != want {
+				t.Errorf("%s = %q, want %q", k, env[k], want)
+			}
+		}
+	})
+
+	t.Run("ApplyCommitEnv with single-line message", func(t *testing.T) {
+		env := map[string]string{}
+		ApplyCommitEnv(env, "fix: one liner", "")
+		if env["CI_COMMIT_TITLE"] != "fix: one liner" {
+			t.Errorf("CI_COMMIT_TITLE = %q", env["CI_COMMIT_TITLE"])
+		}
+		if env["CI_COMMIT_DESCRIPTION"] != "" {
+			t.Errorf("CI_COMMIT_DESCRIPTION = %q, want empty", env["CI_COMMIT_DESCRIPTION"])
+		}
+		if _, ok := env["CI_COMMIT_TIMESTAMP"]; ok {
+			t.Error("CI_COMMIT_TIMESTAMP should not be set for empty timestamp")
 		}
 	})
 

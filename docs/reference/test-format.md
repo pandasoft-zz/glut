@@ -206,12 +206,24 @@ variable values in scripts or tests.
 | `CI_PROJECT_PATH` | `"test-group/test-project"` (or `setup.api.project.path`) |
 | `CI_PROJECT_NAME` | last segment of project path |
 | `CI_PROJECT_NAMESPACE` | namespace prefix of project path |
+| `CI_PROJECT_PATH_SLUG` | slugified project path (e.g. `test-group-test-project`) |
+| `CI_PROJECT_ROOT_NAMESPACE` | first segment of project path |
+| `CI_PROJECT_TITLE` | last segment of project path |
 | `CI_COMMIT_SHA` | real SHA of workspace HEAD |
 | `CI_COMMIT_SHORT_SHA` | short SHA of workspace HEAD |
+| `CI_COMMIT_MESSAGE` | full message of workspace HEAD commit |
+| `CI_COMMIT_TITLE` | first line of workspace HEAD commit message |
+| `CI_COMMIT_DESCRIPTION` | HEAD commit message without the first line |
+| `CI_COMMIT_TIMESTAMP` | committer date of workspace HEAD (ISO 8601) |
 | `CI_DEFAULT_BRANCH` | `setup.default_branch`, or auto-detected from source repo, or `"main"` |
 | `CI_PIPELINE_SOURCE` | from `setup.pipeline_source`, default `"push"` |
 | `CI_PIPELINE_ID` | `"1"` |
+| `CI_PIPELINE_IID` | `"1"` |
 | `CI_JOB_TOKEN` | `"mock-job-token"` |
+| `GITLAB_CI` | `"true"` (matches real GitLab; gitlab-ci-local alone would set `"false"`) |
+| `CI_DEPENDENCY_PROXY_SERVER` | mock server `host:port` |
+| `CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX` | `<host:port>/<root namespace>/dependency_proxy/containers` (same for `_DIRECT_GROUP_`) |
+| `CI_DEPENDENCY_PROXY_USER` / `_PASSWORD` | `gitlab-ci-token` / `CI_JOB_TOKEN` |
 | `CI_REGISTRY` | `"registry.example.com"` |
 | `CI_REGISTRY_IMAGE` | `"registry.example.com/<CI_PROJECT_PATH>"` |
 | `GITLAB_USER_NAME` | `setup.pipeline.user.name` → `setup.git.user.name` → `"Test User"` |
