@@ -38,6 +38,9 @@ func TestServerHelperCoverage(t *testing.T) {
 		if got := projectName("group/sub/project"); got != "project" {
 			t.Fatalf("projectName() = %q", got)
 		}
+		if got := server.projectTitleValue(); got != "project" {
+			t.Fatalf("projectTitleValue() default = %q", got)
+		}
 		if !server.validProjectID("1") {
 			t.Fatal("expected project id 1 to be valid")
 		}
@@ -139,6 +142,7 @@ func TestServerEndpointsCoverage(t *testing.T) {
 		Project: &config.ProjectConfig{
 			Path:          "group/project",
 			DefaultBranch: "release",
+			Title:         "My Fancy Project",
 		},
 	})
 
@@ -164,6 +168,9 @@ func TestServerEndpointsCoverage(t *testing.T) {
 		body := decodeObject(t, resp.Body)
 		if body["default_branch"] != "release" || body["path_with_namespace"] != "group/project" {
 			t.Fatalf("project body = %#v", body)
+		}
+		if body["name"] != "My Fancy Project" {
+			t.Fatalf("project name = %v, want My Fancy Project", body["name"])
 		}
 	})
 

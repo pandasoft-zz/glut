@@ -170,8 +170,12 @@ func ApplyCommitEnv(env map[string]string, message string, timestamp string) {
 }
 
 func applyProjectEnv(env map[string]string, setup parser.SetupConfig) {
-	if setup.API != nil && setup.API.Project != nil && setup.API.Project.Path != "" {
-		path := setup.API.Project.Path
+	if setup.API == nil || setup.API.Project == nil {
+		return
+	}
+	project := setup.API.Project
+	if project.Path != "" {
+		path := project.Path
 		env["CI_PROJECT_PATH"] = path
 		parts := strings.Split(path, "/")
 		env["CI_PROJECT_NAME"] = parts[len(parts)-1]
@@ -180,6 +184,9 @@ func applyProjectEnv(env map[string]string, setup parser.SetupConfig) {
 		env["CI_PROJECT_ROOT_NAMESPACE"] = parts[0]
 		env["CI_PROJECT_TITLE"] = parts[len(parts)-1]
 		env["CI_REGISTRY_IMAGE"] = "registry.example.com/" + path
+	}
+	if project.Title != "" {
+		env["CI_PROJECT_TITLE"] = project.Title
 	}
 }
 

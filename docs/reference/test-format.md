@@ -208,7 +208,7 @@ variable values in scripts or tests.
 | `CI_PROJECT_NAMESPACE` | namespace prefix of project path |
 | `CI_PROJECT_PATH_SLUG` | slugified project path (e.g. `test-group-test-project`) |
 | `CI_PROJECT_ROOT_NAMESPACE` | first segment of project path |
-| `CI_PROJECT_TITLE` | last segment of project path |
+| `CI_PROJECT_TITLE` | `setup.api.project.title`, or last segment of project path |
 | `CI_COMMIT_SHA` | real SHA of workspace HEAD |
 | `CI_COMMIT_SHORT_SHA` | short SHA of workspace HEAD |
 | `CI_COMMIT_MESSAGE` | full message of workspace HEAD commit |
@@ -381,6 +381,7 @@ setup:
     project:
       default_branch: "main"   # deprecated: use setup.default_branch
       path: "test-group/test-project"
+      title: "My Project"      # optional: CI_PROJECT_TITLE and API project name; defaults to last path segment
     seed:
       releases:
         - tag_name: "v1.0.0"

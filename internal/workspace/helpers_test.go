@@ -773,6 +773,28 @@ func TestNewCIVariables(t *testing.T) {
 		}
 	})
 
+	t.Run("explicit project title overrides derived one", func(t *testing.T) {
+		setup := parser.SetupConfig{
+			API: &parser.APISetupConfig{
+				Project: &parser.ProjectConfig{Title: "My Fancy Project"},
+			},
+		}
+		env := w.EnvVars(setup, 8080, "sha", "short", "name")
+		if env["CI_PROJECT_TITLE"] != "My Fancy Project" {
+			t.Errorf("CI_PROJECT_TITLE = %q, want My Fancy Project", env["CI_PROJECT_TITLE"])
+		}
+		// Title alone must not disturb path-derived variables.
+		if env["CI_PROJECT_PATH_SLUG"] != "test-group-test-project" {
+			t.Errorf("CI_PROJECT_PATH_SLUG = %q", env["CI_PROJECT_PATH_SLUG"])
+		}
+
+		setup.API.Project.Path = "acme/backend"
+		env = w.EnvVars(setup, 8080, "sha", "short", "name")
+		if env["CI_PROJECT_TITLE"] != "My Fancy Project" {
+			t.Errorf("CI_PROJECT_TITLE with custom path = %q, want My Fancy Project", env["CI_PROJECT_TITLE"])
+		}
+	})
+
 	t.Run("ApplyCommitEnv splits title and description", func(t *testing.T) {
 		env := map[string]string{}
 		ApplyCommitEnv(env, "feat: add thing\n\nLonger body\nsecond line", "2026-06-10T12:00:00+02:00")

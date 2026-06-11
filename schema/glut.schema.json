@@ -304,6 +304,10 @@
         "path": {
           "type": "string"
         },
+        "title": {
+          "type": "string",
+          "description": "Human-readable project name. Sets CI_PROJECT_TITLE and the name field in mock API project responses. Defaults to the last segment of the project path."
+        },
         "access_level": {
           "description": "Member access level in permissions.project_access. Accepts string (guest, reporter, developer, maintainer, owner) or integer (10, 20, 30, 40, 50). Defaults to maintainer (40).",
           "oneOf": [

@@ -296,7 +296,7 @@ func (s *Server) handleProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":                         1,
 		"path_with_namespace":        path,
-		"name":                       projectName(path),
+		"name":                       s.projectTitleValue(),
 		"description":                "",
 		"default_branch":             s.defaultBranch(),
 		"visibility":                 "private",
@@ -793,6 +793,13 @@ func (s *Server) projectPathValue() string {
 		return s.cfg.Project.Path
 	}
 	return defaultProjectPath
+}
+
+func (s *Server) projectTitleValue() string {
+	if s.cfg.Project != nil && s.cfg.Project.Title != "" {
+		return s.cfg.Project.Title
+	}
+	return projectName(s.projectPathValue())
 }
 
 func (s *Server) defaultBranch() string {

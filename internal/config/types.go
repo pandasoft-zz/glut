@@ -139,6 +139,7 @@ type TokenConfig struct {
 type ProjectConfig struct {
 	DefaultBranch string            `yaml:"default_branch"`
 	Path          string            `yaml:"path"`
+	Title         string            `yaml:"title"`        // human-readable project name; empty → last segment of path
 	AccessLevel   *AccessLevelValue `yaml:"access_level"` // nil → 40 (Maintainer)
 }
 
