@@ -570,15 +570,15 @@ func runSingleTest(
 
 	if needsJobList(testFile) {
 		phaseStart = time.Now()
-		jobNames, err := executor.ListJobs(ctx, execCfg)
+		jobEntries, err := executor.ListJobs(ctx, execCfg)
 		phaseTimings["list-jobs"] = time.Since(phaseStart)
 		if err != nil {
 			primaryErr = fmt.Errorf("list jobs: %w", err)
 			result.Passed = false
 			return
 		}
-		for _, name := range jobNames {
-			result.JobOutputs[name] = executor.JobOutput{Name: name, Present: true}
+		for _, entry := range jobEntries {
+			result.JobOutputs[entry.Name] = executor.JobOutput{Name: entry.Name, Present: true, When: entry.When}
 		}
 	}
 
@@ -587,6 +587,12 @@ func runSingleTest(
 	phaseTimings["pipeline"] = time.Since(phaseStart)
 	for name, output := range execResult.Jobs {
 		output.Present = true
+		output.Executed = true
+		// Keep the evaluated `when` from the list phase — the run output does
+		// not carry it.
+		if existing, ok := result.JobOutputs[name]; ok {
+			output.When = existing.When
+		}
 		result.JobOutputs[name] = output
 	}
 	if err != nil {
@@ -801,7 +807,7 @@ func resolveGlutBinPath(path string) string {
 
 func needsJobList(testFile parser.TestFile) bool {
 	for _, jobAssert := range testFile.Glut.Assert.Job {
-		if jobAssert.Present != nil {
+		if jobAssert.Present != nil || jobAssert.When != "" {
 			return true
 		}
 	}

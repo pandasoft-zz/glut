@@ -1,0 +1,42 @@
+stages: [test]
+
+auto-job:
+  stage: test
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+  script:
+    - echo "runs automatically"
+
+manual-job:
+  stage: test
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  script:
+    - echo "waits for manual trigger"
+
+mismatch-job:
+  stage: test
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "release"'
+  script:
+    - echo "rule does not match"
+---
+.glut:
+  name: "manual job is present but not auto-executed; rule mismatch job is absent"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      auto-job:
+        present: true
+        when: on_success
+        exit-status: 0
+        stdout:
+          - "runs automatically"
+      manual-job:
+        present: true
+        when: manual
+      mismatch-job:
+        present: false

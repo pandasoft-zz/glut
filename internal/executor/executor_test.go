@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -199,8 +200,8 @@ func TestListJobsParsesNames(t *testing.T) {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
 
-	want := []string{"build", "test"}
-	if strings.Join(jobs, ",") != strings.Join(want, ",") {
+	want := []JobListEntry{{Name: "build", When: "on_success"}, {Name: "test", When: "manual"}}
+	if !reflect.DeepEqual(jobs, want) {
 		t.Fatalf("ListJobs() = %#v, want %#v", jobs, want)
 	}
 }
@@ -420,12 +421,84 @@ func TestParseJobOutputsHandlesMultilineAndMissingFailCode(t *testing.T) {
 	}
 }
 
-func TestParseJobListIgnoresToolWarningsOnStderr(t *testing.T) {
+func TestParseJobListJSON(t *testing.T) {
 	t.Parallel()
-	jobs := parseJobList("build\ntest\n", "Using fallback git data\n")
-	if strings.Join(jobs, ",") != "build,test" {
-		t.Fatalf("jobs = %#v", jobs)
-	}
+
+	t.Run("parses names and when, filters never", func(t *testing.T) {
+		t.Parallel()
+		stdout := `[
+			{"name": "build", "when": "on_success"},
+			{"name": "deploy", "when": "manual"},
+			{"name": "skip", "when": "never"}
+		]`
+		jobs, err := parseJobListJSON(stdout, "Using fallback git data\n")
+		if err != nil {
+			t.Fatalf("parseJobListJSON() error = %v", err)
+		}
+		want := []JobListEntry{{Name: "build", When: "on_success"}, {Name: "deploy", When: "manual"}}
+		if !reflect.DeepEqual(jobs, want) {
+			t.Fatalf("jobs = %#v, want %#v", jobs, want)
+		}
+	})
+
+	t.Run("skips diagnostics before the JSON array", func(t *testing.T) {
+		t.Parallel()
+		jobs, err := parseJobListJSON("parsing finished in 43 ms.\n[{\"name\": \"build\", \"when\": \"always\"}]", "")
+		if err != nil {
+			t.Fatalf("parseJobListJSON() error = %v", err)
+		}
+		want := []JobListEntry{{Name: "build", When: "always"}}
+		if !reflect.DeepEqual(jobs, want) {
+			t.Fatalf("jobs = %#v, want %#v", jobs, want)
+		}
+	})
+
+	t.Run("skips warnings containing brackets", func(t *testing.T) {
+		t.Parallel()
+		stdout := "WARN Avoid overriding predefined variables [CI_COMMIT_BRANCH,CI_PIPELINE_SOURCE] as it can cause...\n" +
+			`[{"name": "build", "when": "manual"}]`
+		jobs, err := parseJobListJSON(stdout, "")
+		if err != nil {
+			t.Fatalf("parseJobListJSON() error = %v", err)
+		}
+		want := []JobListEntry{{Name: "build", When: "manual"}}
+		if !reflect.DeepEqual(jobs, want) {
+			t.Fatalf("jobs = %#v, want %#v", jobs, want)
+		}
+	})
+
+	t.Run("deduplicates names", func(t *testing.T) {
+		t.Parallel()
+		jobs, err := parseJobListJSON(`[{"name": "build", "when": "always"}, {"name": "build", "when": "always"}]`, "")
+		if err != nil {
+			t.Fatalf("parseJobListJSON() error = %v", err)
+		}
+		if len(jobs) != 1 {
+			t.Fatalf("jobs = %#v, want one entry", jobs)
+		}
+	})
+
+	t.Run("empty array", func(t *testing.T) {
+		t.Parallel()
+		jobs, err := parseJobListJSON("[]", "")
+		if err != nil {
+			t.Fatalf("parseJobListJSON() error = %v", err)
+		}
+		if len(jobs) != 0 {
+			t.Fatalf("jobs = %#v, want empty", jobs)
+		}
+	})
+
+	t.Run("malformed output reports stderr tail", func(t *testing.T) {
+		t.Parallel()
+		_, err := parseJobListJSON("name  stage  when\nbuild  test  always\n", "some tool warning\n")
+		if err == nil {
+			t.Fatal("parseJobListJSON() expected error for non-JSON output")
+		}
+		if !strings.Contains(err.Error(), "--list-json") || !strings.Contains(err.Error(), "some tool warning") {
+			t.Fatalf("parseJobListJSON() error = %v", err)
+		}
+	})
 }
 
 func TestExecutorHelperErrorBranches(t *testing.T) {
@@ -589,10 +662,11 @@ func sleepScript() string {
 }
 
 func listScript() string {
+	jobsJSON := `[{"name":"build","when":"on_success"},{"name":"test","when":"manual"},{"name":"skip","when":"never"}]`
 	if runtime.GOOS == "windows" {
-		return "@echo off\r\necho build\r\necho test\r\n"
+		return "@echo off\r\necho " + jobsJSON + "\r\n"
 	}
-	return "#!/bin/sh\necho build\necho test\n"
+	return "#!/bin/sh\necho '" + jobsJSON + "'\n"
 }
 
 func failedJobScript() string {

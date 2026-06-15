@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -61,6 +62,18 @@ type JobOutput struct {
 	Stdout     string
 	Stderr     string
 	Present    bool
+	// When is the evaluated `when:` value reported by the job list phase
+	// (e.g. "on_success", "manual"). Empty when the list phase did not run.
+	When string
+	// Executed reports whether the job actually ran in the pipeline. A job can
+	// be present but not executed (e.g. `when: manual`).
+	Executed bool
+}
+
+// JobListEntry is one job from `gitlab-ci-local --list-json`.
+type JobListEntry struct {
+	Name string `json:"name"`
+	When string `json:"when"`
 }
 
 func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
@@ -108,7 +121,7 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	return result, nil
 }
 
-func ListJobs(ctx context.Context, cfg ExecutorConfig) ([]string, error) {
+func ListJobs(ctx context.Context, cfg ExecutorConfig) ([]JobListEntry, error) {
 	if err := writePipeline(cfg); err != nil {
 		return nil, err
 	}
@@ -116,7 +129,7 @@ func ListJobs(ctx context.Context, cfg ExecutorConfig) ([]string, error) {
 	runCtx, cancel := withTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	args := append([]string{"--list", "--file", pipelineFileName}, envArgs(cfg.EnvVars)...)
+	args := append([]string{"--list-json", "--file", pipelineFileName}, envArgs(cfg.EnvVars)...)
 	args = append(args, unsetArgs(cfg.UnsetVars)...)
 	stdout, stderr, err := runCommand(runCtx, cfg, args...)
 	if err != nil {
@@ -126,7 +139,7 @@ func ListJobs(ctx context.Context, cfg ExecutorConfig) ([]string, error) {
 		return nil, fmt.Errorf("list gitlab-ci-local jobs: %w", err)
 	}
 
-	return parseJobList(stdout, stderr), nil
+	return parseJobListJSON(stdout, stderr)
 }
 
 func CheckDependencies(ctx context.Context, hostEnv []string) []string {
@@ -517,26 +530,54 @@ func appendOutputLine(current string, line string) string {
 	return current + "\n" + line
 }
 
-func parseJobList(stdout string, stderr string) []string {
-	_ = stderr
-	seen := make(map[string]struct{})
-	var jobs []string
-	scanner := newLineScanner(stdout)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, jobMarkerPrefix) {
+// parseJobListJSON parses `gitlab-ci-local --list-json` stdout. Jobs whose
+// evaluated `when` is "never" are dropped: in real GitLab CI they are absent
+// from the pipeline.
+func parseJobListJSON(stdout string, stderr string) ([]JobListEntry, error) {
+	// gitlab-ci-local may print diagnostics before the JSON array — including
+	// warnings that themselves contain '[' (e.g. "[CI_COMMIT_BRANCH,...]") —
+	// so try every '[' until one parses as the job array.
+	raw := strings.TrimSpace(stdout)
+	var entries []JobListEntry
+	var parseErr error
+	parsed := false
+	for offset := 0; offset < len(raw); {
+		idx := strings.Index(raw[offset:], "[")
+		if idx < 0 {
+			break
+		}
+		start := offset + idx
+		entries = nil
+		if err := json.Unmarshal([]byte(raw[start:]), &entries); err != nil {
+			if parseErr == nil {
+				parseErr = err
+			}
+			offset = start + 1
 			continue
 		}
-		if strings.HasPrefix(line, "- ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
-		}
-		if _, ok := seen[line]; ok {
-			continue
-		}
-		seen[line] = struct{}{}
-		jobs = append(jobs, line)
+		parsed = true
+		break
 	}
-	return jobs
+	if !parsed {
+		if parseErr == nil {
+			parseErr = errors.New("no JSON array in output")
+		}
+		return nil, fmt.Errorf("parse gitlab-ci-local --list-json output (requires gitlab-ci-local with --list-json support): %w; stderr: %s", parseErr, tailForError(stderr))
+	}
+
+	seen := make(map[string]struct{}, len(entries))
+	jobs := make([]JobListEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Name == "" || entry.When == "never" {
+			continue
+		}
+		if _, ok := seen[entry.Name]; ok {
+			continue
+		}
+		seen[entry.Name] = struct{}{}
+		jobs = append(jobs, entry)
+	}
+	return jobs, nil
 }
 
 func newLineScanner(raw string) *bufio.Scanner {

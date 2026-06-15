@@ -38,6 +38,7 @@ func TestRunJobAssertsOutput(t *testing.T) {
 				ExitStatus: 0,
 				Stdout:     "from-stdout\n",
 				Stderr:     "from-stderr\n",
+				Executed:   true,
 			},
 		},
 	})
@@ -64,6 +65,7 @@ func TestRunJobAssertsOutputFailsWhenPatternMissing(t *testing.T) {
 				ExitStatus: 0,
 				Stdout:     "stdout line\n",
 				Stderr:     "stderr line\n",
+				Executed:   true,
 			},
 		},
 	})
@@ -94,6 +96,7 @@ func TestRunJobAsserts(t *testing.T) {
 				ExitStatus: 0,
 				Stdout:     "Building image\ntag: abc123\n",
 				Stderr:     "warn only\n",
+				Executed:   true,
 			},
 		},
 	})
@@ -102,5 +105,89 @@ func TestRunJobAsserts(t *testing.T) {
 		if !result.Passed {
 			t.Fatalf("unexpected failure: %+v", result)
 		}
+	}
+}
+
+func TestRunJobAssertsWhen(t *testing.T) {
+	presentTrue := true
+	t.Run("matches evaluated when", func(t *testing.T) {
+		asserts := config.AssertConfig{
+			Job: map[string]config.JobAssert{
+				"release": {Present: &presentTrue, When: "manual"},
+			},
+		}
+		results := Run(asserts, AssertContext{
+			JobOutputs: map[string]executor.JobOutput{
+				"release": {Present: true, When: "manual"},
+			},
+		})
+		for _, result := range results {
+			if !result.Passed {
+				t.Fatalf("unexpected failure: %+v", result)
+			}
+		}
+	})
+
+	t.Run("fails on when mismatch", func(t *testing.T) {
+		asserts := config.AssertConfig{
+			Job: map[string]config.JobAssert{
+				"release": {When: "manual"},
+			},
+		}
+		results := Run(asserts, AssertContext{
+			JobOutputs: map[string]executor.JobOutput{
+				"release": {Present: true, When: "on_success", Executed: true},
+			},
+		})
+		failed := 0
+		for _, result := range results {
+			if !result.Passed {
+				failed++
+				if result.Path != `assert.job."release".when` {
+					t.Fatalf("unexpected failing path: %+v", result)
+				}
+			}
+		}
+		if failed != 1 {
+			t.Fatalf("expected one failing assertion, got %+v", results)
+		}
+	})
+
+	t.Run("absent job fails on present only", func(t *testing.T) {
+		asserts := config.AssertConfig{
+			Job: map[string]config.JobAssert{
+				"release": {When: "manual"},
+			},
+		}
+		results := Run(asserts, AssertContext{
+			JobOutputs: map[string]executor.JobOutput{},
+		})
+		if len(results) != 1 || results[0].Passed {
+			t.Fatalf("expected single .present failure, got %+v", results)
+		}
+	})
+}
+
+func TestRunJobAssertsFailFieldAssertsOnNotExecutedJob(t *testing.T) {
+	// A present-but-not-executed job (when: manual) has zero-value outputs;
+	// exit-status: 0 or negation patterns must not pass against them.
+	asserts := config.AssertConfig{
+		Job: map[string]config.JobAssert{
+			"release": {ExitStatus: 0, Stdout: []any{"!FATAL"}},
+		},
+	}
+	results := Run(asserts, AssertContext{
+		JobOutputs: map[string]executor.JobOutput{
+			"release": {Present: true, When: "manual"},
+		},
+	})
+	failed := 0
+	for _, result := range results {
+		if !result.Passed {
+			failed++
+		}
+	}
+	if failed != 1 {
+		t.Fatalf("expected one failing assertion for not-executed job, got %+v", results)
 	}
 }

@@ -29,6 +29,10 @@ func TestValidateGlutValid(t *testing.T) {
 					"stdout":      []any{"Building image", "!FATAL", "/tag: [a-z0-9]+/"},
 					"stderr":      map[string]any{"not": "panic"},
 				},
+				"release:job": map[string]any{
+					"present": true,
+					"when":    "manual",
+				},
 			},
 			"artifacts": map[string]any{
 				"output.json": map[string]any{
@@ -125,6 +129,32 @@ func TestValidateGlutInvalid(t *testing.T) {
 				},
 			},
 			wantSnippet: "invalid",
+		},
+		{
+			name: "job when never is not allowed",
+			value: map[string]any{
+				"assert": map[string]any{
+					"job": map[string]any{
+						"build": map[string]any{
+							"when": "never",
+						},
+					},
+				},
+			},
+			wantSnippet: "must be one of",
+		},
+		{
+			name: "job when rejects unknown values",
+			value: map[string]any{
+				"assert": map[string]any{
+					"job": map[string]any{
+						"build": map[string]any{
+							"when": "sometimes",
+						},
+					},
+				},
+			},
+			wantSnippet: "must be one of",
 		},
 		{
 			name: "invalid artifact filetype",
