@@ -170,9 +170,24 @@ func CheckDependencies(ctx context.Context, hostEnv []string) []string {
 			}
 			continue
 		}
-		cmd := exec.CommandContext(ctx, binaryPath, item.args...)
-		cmd.Env = hostEnv // nil = inherit process env
-		if output, err := cmd.CombinedOutput(); err != nil {
+		const maxAttempts = 3
+		var output []byte
+		var err error
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			cmd := exec.CommandContext(ctx, binaryPath, item.args...)
+			cmd.Env = hostEnv // nil = inherit process env
+			output, err = cmd.CombinedOutput()
+			if err == nil {
+				break
+			}
+			// Retry on ETXTBSY (overlayfs write-reference not yet cleared).
+			if attempt < maxAttempts-1 && strings.Contains(err.Error(), "text file busy") {
+				time.Sleep(time.Duration(1<<uint(attempt)) * 10 * time.Millisecond)
+				continue
+			}
+			break
+		}
+		if err != nil {
 			if item.optional {
 				problems = append(problems, fmt.Sprintf("%s: not available (%s, GLUT can use native copy fallback)", item.name, strings.TrimSpace(firstLine(string(output), err.Error()))))
 				continue
