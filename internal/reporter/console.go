@@ -20,6 +20,7 @@ type ConsoleOptions struct {
 	Quiet   bool
 	Verbose bool
 	Debug   bool
+	Version string
 	Writer  io.Writer
 }
 
@@ -28,6 +29,7 @@ type prettyConsole struct {
 	quiet   bool
 	verbose bool
 	debug   bool
+	version string
 	total   int
 	done    int
 	st      consoleStyles
@@ -86,6 +88,7 @@ func NewConsole(opts ConsoleOptions) (runner.ProgressSink, error) {
 			quiet:   opts.Quiet,
 			verbose: opts.Verbose,
 			debug:   opts.Debug,
+			version: opts.Version,
 			st:      newConsoleStyles(writer),
 		}, nil
 	case "dots":
@@ -112,6 +115,9 @@ func (c *prettyConsole) Start(totalTests int) {
 		return
 	}
 	logo := logoEmoji + " " + c.st.logoGL.Render("GL") + c.st.logoUT.Render("UT")
+	if c.version != "" {
+		logo += " " + c.st.dim.Render("("+c.version+")")
+	}
 	count := c.st.dim.Render(fmt.Sprintf("Running %d tests", totalTests))
 	writef(c.writer, "%s  %s\n\n", logo, count)
 }

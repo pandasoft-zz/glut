@@ -18,6 +18,36 @@ import (
 	"github.com/pandasoft-zz/glut/internal/runner"
 )
 
+func TestPrettyConsoleShowsVersionInTitle(t *testing.T) {
+	var buffer bytes.Buffer
+	console, err := NewConsole(ConsoleOptions{Version: "v1.10.1", Writer: &buffer})
+	if err != nil {
+		t.Fatalf("NewConsole() error = %v", err)
+	}
+
+	console.Start(3)
+
+	output := buffer.String()
+	if !strings.Contains(output, "(v1.10.1)") {
+		t.Fatalf("title missing version: %s", output)
+	}
+}
+
+func TestPrettyConsoleOmitsVersionWhenEmpty(t *testing.T) {
+	var buffer bytes.Buffer
+	console, err := NewConsole(ConsoleOptions{Writer: &buffer})
+	if err != nil {
+		t.Fatalf("NewConsole() error = %v", err)
+	}
+
+	console.Start(3)
+
+	output := buffer.String()
+	if strings.Contains(output, "(") {
+		t.Fatalf("title should not contain version parentheses: %s", output)
+	}
+}
+
 func TestPrettyConsoleFormatsPassFailAndSummary(t *testing.T) {
 	var buffer bytes.Buffer
 	console, err := NewConsole(ConsoleOptions{Writer: &buffer})
