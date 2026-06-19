@@ -126,8 +126,8 @@ func (c *prettyConsole) TestRetry(testName string, err error) {
 	if c.quiet {
 		return
 	}
-	writef(c.writer, "  %s retrying %q after infrastructure error: %v\n",
-		c.st.dim.Render("[glut]"), testName, err)
+	writef(c.writer, "  %s retrying %q after infrastructure error: %s\n",
+		c.st.dim.Render("[glut]"), testName, condenseError(err))
 }
 
 func (c *prettyConsole) TestDone(result runner.TestResult) {
@@ -188,8 +188,8 @@ func (c *dotsConsole) TestRetry(testName string, err error) {
 		writef(c.writer, "\n")
 		c.wroteStatus = false
 	}
-	writef(c.writer, "  %s retrying %q after infrastructure error: %v\n",
-		c.st.dim.Render("[glut]"), testName, err)
+	writef(c.writer, "  %s retrying %q after infrastructure error: %s\n",
+		c.st.dim.Render("[glut]"), testName, condenseError(err))
 }
 
 func (c *dotsConsole) TestDone(result runner.TestResult) {
@@ -291,7 +291,7 @@ func writePrettyFailure(writer io.Writer, st consoleStyles, result runner.TestRe
 	}
 
 	if result.Error != nil {
-		writef(writer, "\n  %s %s\n", st.fail.Render("error:"), result.Error.Error())
+		writef(writer, "\n  %s %s\n", st.fail.Render("error:"), condenseError(result.Error))
 	}
 
 	writeJobLogs(writer, st, result.JobOutputs, !debug)
@@ -501,4 +501,24 @@ func formatDuration(duration time.Duration) string {
 
 func writef(writer io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(writer, format, args...)
+}
+
+// condenseError strips the noisy stdout blob from gitlab-ci-local errors,
+// keeping only the part before "; stdout:" and the "; stderr:" tail.
+// e.g. "run pipeline: … exit status 1; stdout: WARN …[huge list]; stderr: Invalid …"
+// becomes "run pipeline: … exit status 1; stderr: Invalid …"
+func condenseError(err error) string {
+	msg := err.Error()
+	const stdoutMarker = "; stdout:"
+	const stderrMarker = "; stderr:"
+	si := strings.Index(msg, stdoutMarker)
+	if si < 0 {
+		return msg
+	}
+	prefix := msg[:si]
+	tail := ""
+	if ei := strings.Index(msg, stderrMarker); ei > si {
+		tail = msg[ei:]
+	}
+	return prefix + tail
 }
