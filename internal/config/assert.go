@@ -18,13 +18,49 @@ type JobAssert struct {
 }
 
 type ArtifactAssert struct {
-	Exists   *bool  `yaml:"exists"`
-	Contents any    `yaml:"contents"`
-	Mode     string `yaml:"mode"`
-	Size     any    `yaml:"size"`
-	MD5      string `yaml:"md5"`
-	SHA256   string `yaml:"sha256"`
-	Filetype string `yaml:"filetype"`
+	Exists   *bool         `yaml:"exists"`
+	Contents any           `yaml:"contents"`
+	Mode     string        `yaml:"mode"`
+	Size     any           `yaml:"size"`
+	MD5      string        `yaml:"md5"`
+	SHA256   string        `yaml:"sha256"`
+	Filetype string        `yaml:"filetype"`
+	Report   *ReportAssert `yaml:"report"`
+}
+
+// ReportAssert parses a structured report file (junit, dotenv, coverage, etc.)
+// and exposes typed fields for assertion. The Format field selects the parser.
+type ReportAssert struct {
+	Format string `yaml:"format"`
+
+	// junit / coverage
+	Tests    any              `yaml:"tests"`
+	Failures any              `yaml:"failures"`
+	Errors   any              `yaml:"errors"`
+	Skipped  any              `yaml:"skipped"`
+	Suites   []SuiteAssert    `yaml:"suites"`
+
+	// coverage (Cobertura)
+	LineRate   any `yaml:"line-rate"`
+	BranchRate any `yaml:"branch-rate"`
+
+	// dotenv
+	Keys map[string]any `yaml:"keys"`
+
+	// gitlab-security (sast, dast, dependency_scanning, container_scanning, secret_detection)
+	Critical any `yaml:"critical"`
+	High     any `yaml:"high"`
+	Medium   any `yaml:"medium"`
+	Low      any `yaml:"low"`
+}
+
+// SuiteAssert holds per-suite assertions for the junit format.
+type SuiteAssert struct {
+	Name     string `yaml:"name"`
+	Tests    any    `yaml:"tests"`
+	Failures any    `yaml:"failures"`
+	Errors   any    `yaml:"errors"`
+	Skipped  any    `yaml:"skipped"`
 }
 
 type GitAssert struct {

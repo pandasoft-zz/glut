@@ -600,6 +600,7 @@ func runSingleTest(
 	}
 
 	phaseStart = time.Now()
+	volumeSynced := false
 	if hasMockBinaries(testFile) {
 		if dockerVolumeName != "" {
 			// Flush filesystem writes inside the volume before copying logs so
@@ -607,6 +608,7 @@ func runSingleTest(
 			if syncErr := workspace.SyncDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
 				primaryErr = fmt.Errorf("sync docker volume: %w", syncErr)
 			}
+			volumeSynced = true
 			// Copy mock logs from the volume back to the host.
 			if syncErr := workspace.ReadLogsFromDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
 				primaryErr = fmt.Errorf("sync mock logs from docker volume: %w", syncErr)
@@ -627,6 +629,19 @@ func runSingleTest(
 	phaseTimings["mock-logs"] = time.Since(phaseStart)
 	if err != nil && primaryErr == nil {
 		primaryErr = fmt.Errorf("read mock logs: %w", err)
+	}
+
+	// Copy workspace artifacts from the Docker named volume back to the host so
+	// the asserter can read files produced by pipeline jobs.
+	if dockerVolumeName != "" && len(testFile.Glut.Assert.Artifacts) > 0 {
+		if !volumeSynced {
+			if syncErr := workspace.SyncDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
+				primaryErr = fmt.Errorf("sync docker volume: %w", syncErr)
+			}
+		}
+		if fetchErr := workspace.FetchWorkspaceArtifacts(dockerVolumeName, work.Dir, work.WorkspaceDir); fetchErr != nil && primaryErr == nil {
+			primaryErr = fmt.Errorf("sync workspace artifacts from docker volume: %w", fetchErr)
+		}
 	}
 
 	// Build an origin source for assertions. Named volume: fetch from inside

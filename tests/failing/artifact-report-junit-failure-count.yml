@@ -1,0 +1,35 @@
+stages: [test]
+
+run-tests:
+  stage: test
+  allow_failure: true
+  script:
+    - mkdir -p reports
+    - |
+      cat > reports/junit.xml << 'EOF'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuite name="MySuite">
+        <testcase name="test_ok"/>
+        <testcase name="test_fail">
+          <failure message="assertion failed">expected true but got false</failure>
+        </testcase>
+      </testsuite>
+      EOF
+    - exit 1
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - reports/junit.xml
+---
+.glut:
+  name: "artifact report junit failures detected: assert failures=0 must fail"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "reports/junit.xml":
+        report:
+          format: junit
+          failures: 0

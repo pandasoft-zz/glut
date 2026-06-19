@@ -1,0 +1,38 @@
+stages: [test]
+
+coverage:
+  stage: test
+  script:
+    - mkdir -p coverage
+    - |
+      cat > coverage/cobertura.xml << 'EOF'
+      <?xml version="1.0" ?>
+      <coverage line-rate="0.85" branch-rate="0.72" version="1.0" timestamp="0">
+        <packages>
+          <package name="mypackage" line-rate="0.85" branch-rate="0.72" complexity="0">
+          </package>
+        </packages>
+      </coverage>
+      EOF
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura.xml
+---
+.glut:
+  name: "artifact report coverage: line-rate and branch-rate assertions"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      coverage:
+        exit-status: 0
+    artifacts:
+      "coverage/cobertura.xml":
+        exists: true
+        report:
+          format: coverage
+          line-rate: {ge: 0.80}
+          branch-rate: {ge: 0.70}

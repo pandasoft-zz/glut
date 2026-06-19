@@ -57,6 +57,9 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 			results = append(results, resultFromState(basePath+".contents", matchTextPatterns(assert.Contents, string(content))))
 		}
 	}
+	if assert.Report != nil {
+		results = append(results, assertReport(basePath, fullPath, assert.Report)...)
+	}
 	if assert.MD5 != "" || assert.SHA256 != "" {
 		file, openErr := os.Open(fullPath)
 		if openErr != nil {

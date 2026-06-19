@@ -224,6 +224,39 @@ func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
 	return tarData.Bytes(), nil
 }
 
+// FetchWorkspaceArtifacts copies the workspace directory from inside a Docker
+// named volume back to the host so that the asserter can read files produced
+// by pipeline jobs. Call this after SyncDockerVolume and before running
+// artifact assertions.
+func FetchWorkspaceArtifacts(volName, workDir, workspaceDir string) error {
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		return fmt.Errorf("create workspace dir: %w", err)
+	}
+
+	ctrName := "glut-art-" + volName
+	tarCmd := exec.Command("docker", "run", "--name", ctrName,
+		"--volume", volName+":"+workDir,
+		"alpine", "tar", "-cC", workspaceDir, ".")
+	var stdout, stderr bytes.Buffer
+	tarCmd.Stdout = &stdout
+	tarCmd.Stderr = &stderr
+	runErr := tarCmd.Run()
+	_ = exec.Command("docker", "rm", ctrName).Run()
+	if runErr != nil {
+		if se := bytes.TrimSpace(stderr.Bytes()); len(se) > 0 {
+			return fmt.Errorf("read workspace artifacts from volume: %w (%s)", runErr, se)
+		}
+		return nil
+	}
+
+	extractCmd := exec.Command("tar", "-xC", workspaceDir)
+	extractCmd.Stdin = &stdout
+	if out, err := extractCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("extract workspace artifacts: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // DestroyDockerVolume removes the named Docker volume created by CreateDockerVolume.
 // It first force-removes any containers still referencing the volume. On
 // WSL2/Docker Desktop, containers spawned with --rm may still be registered
