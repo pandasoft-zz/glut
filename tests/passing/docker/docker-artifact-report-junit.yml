@@ -1,0 +1,40 @@
+stages: [test]
+
+run-tests:
+  stage: test
+  image: alpine:latest
+  script:
+    - mkdir -p reports
+    - |
+      cat > reports/junit.xml << 'EOF'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuite name="Suite">
+        <testcase name="test_ok"/>
+        <testcase name="test_skip">
+          <skipped/>
+        </testcase>
+      </testsuite>
+      EOF
+  artifacts:
+    reports:
+      junit:
+        - reports/junit.xml
+---
+.glut:
+  name: "docker:true job report artifact synced from named volume to host asserter"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    docker: true
+  assert:
+    job:
+      run-tests:
+        exit-status: 0
+    artifacts:
+      "reports/junit.xml":
+        exists: true
+        report:
+          format: junit
+          tests: 2
+          failures: 0
+          skipped: 1
