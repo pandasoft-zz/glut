@@ -446,3 +446,35 @@ func sampleFailResultWithXML() runner.TestResult {
 	result.Error = errors.New("runner <error>")
 	return result
 }
+
+func TestCondenseError(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no stdout section passes through unchanged",
+			input: "run pipeline: exit status 1",
+			want:  "run pipeline: exit status 1",
+		},
+		{
+			name:  "stdout without stderr is stripped entirely",
+			input: "run pipeline: exit status 1; stdout: WARN huge list of vars",
+			want:  "run pipeline: exit status 1",
+		},
+		{
+			name:  "stdout between prefix and stderr is removed",
+			input: "run pipeline: exit status 1; stdout: WARN huge list; stderr: Invalid config!",
+			want:  "run pipeline: exit status 1; stderr: Invalid config!",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := condenseError(errors.New(tc.input))
+			if got != tc.want {
+				t.Errorf("condenseError(%q)\n  got:  %q\n  want: %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
