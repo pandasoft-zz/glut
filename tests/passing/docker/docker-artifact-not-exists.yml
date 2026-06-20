@@ -1,0 +1,21 @@
+stages: [test]
+
+no-writer:
+  stage: test
+  image: alpine:latest
+  script:
+    - echo "not writing any file"
+---
+.glut:
+  name: "docker:true job that creates no artifact asserts exists: false"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    docker: true
+  assert:
+    job:
+      no-writer:
+        exit-status: 0
+    artifacts:
+      "should-not-exist.txt":
+        exists: false
