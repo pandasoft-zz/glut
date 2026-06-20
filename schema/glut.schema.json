@@ -585,7 +585,7 @@
         },
         "tests": {
           "$ref": "#/definitions/value_or_matcher",
-          "description": "Total number of test cases (junit, coverage)"
+          "description": "Total number of test cases (junit)"
         },
         "failures": {
           "$ref": "#/definitions/value_or_matcher",

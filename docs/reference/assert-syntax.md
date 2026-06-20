@@ -331,11 +331,16 @@ assert:
 
 Use `report:` to parse a structured report file and assert typed fields rather than
 matching raw text. Set `format` to the report type; all other fields are optional.
+Each field only applies to a specific format — setting a field that does not belong
+to the chosen `format` (e.g. `tests` under `format: coverage`) fails the assertion
+instead of being silently ignored.
 
 #### `format: junit`
 
 Parses JUnit XML produced by `artifacts.reports.junit`. Counts are aggregated across
-all test suites in the file.
+all test suites (including nested suites). Suite-level count attributes
+(`tests`, `failures`, …) are honoured when present; otherwise counts are derived
+from the `<testcase>` elements.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -371,6 +376,8 @@ Each key value can be:
 - A string — exact match.
 - A `/regex/` string — regex match against the value.
 - `{exists: true}` or `{exists: false}` — assert presence or absence of the key.
+  `exists` must be a boolean. It may be combined with a value matcher
+  (e.g. `{exists: true, match-regexp: "..."}`), which is also checked.
 - `null` (bare key with no value) — asserts the key is present.
 
 ```yaml

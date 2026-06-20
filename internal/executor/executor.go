@@ -34,20 +34,21 @@ var (
 )
 
 type ExecutorConfig struct {
-	WorkspacePath    string
-	PipelineYAML     string
-	EnvVars          map[string]string
-	UnsetVars        []string // variables to explicitly unset via --unset-variable
-	MockBinPath      string
-	Timeout          time.Duration
-	Debug            bool
-	Verbose          bool
-	UseDocker        bool
-	ForceShell       bool
-	Privileged       bool
-	DockerVolumes    []string
-	DockerExtraHosts []string
-	HostEnv          []string // nil falls back to os.Environ()
+	WorkspacePath       string
+	PipelineYAML        string
+	EnvVars             map[string]string
+	UnsetVars           []string // variables to explicitly unset via --unset-variable
+	MockBinPath         string
+	Timeout             time.Duration
+	Debug               bool
+	Verbose             bool
+	UseDocker           bool
+	ForceShell          bool
+	Privileged          bool
+	DockerVolumes       []string
+	DockerExtraHosts    []string
+	HostEnv             []string // nil falls back to os.Environ()
+	KeepDockerResources bool     // pass --cleanup=false; caller owns volume cleanup
 }
 
 type RunResult struct {
@@ -339,6 +340,9 @@ func baseArgs(cfg ExecutorConfig) []string {
 	}
 	if !cfg.UseDocker {
 		return append([]string{"--shell-executor-no-image"}, args...)
+	}
+	if cfg.KeepDockerResources {
+		args = append(args, "--cleanup=false")
 	}
 	return args
 }

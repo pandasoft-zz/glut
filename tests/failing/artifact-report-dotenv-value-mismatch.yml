@@ -1,0 +1,27 @@
+stages: [build]
+
+build:
+  stage: build
+  script:
+    - |
+      cat > deploy.env << 'EOF'
+      APP_VERSION=1.2.3
+      EOF
+  artifacts:
+    reports:
+      dotenv: deploy.env
+---
+.glut:
+  name: "artifact report dotenv: exists+matcher enforces the value (must fail)"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "deploy.env":
+        report:
+          format: dotenv
+          keys:
+            APP_VERSION:
+              exists: true
+              equal: "9.9.9"

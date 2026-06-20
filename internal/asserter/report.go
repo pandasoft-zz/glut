@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pandasoft-zz/glut/internal/config"
@@ -15,23 +16,91 @@ func assertReport(basePath, fullPath string, a *config.ReportAssert) []AssertRes
 	if a == nil {
 		return nil
 	}
+	// Surface fields that do not apply to the chosen format instead of silently
+	// ignoring them (which would let a misconfigured assertion pass vacuously).
+	fieldErrs := reportFieldErrors(basePath+".report", a)
+
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
-		return []AssertResult{failResult(basePath + ".report", "read file", err)}
+		return append(fieldErrs, failResult(basePath+".report", "read file", err))
 	}
+	var results []AssertResult
 	switch a.Format {
 	case "junit":
-		return assertJUnit(basePath+".report", data, a)
+		results = assertJUnit(basePath+".report", data, a)
 	case "dotenv":
-		return assertDotenv(basePath+".report", data, a)
+		results = assertDotenv(basePath+".report", data, a)
 	case "coverage":
-		return assertCoverage(basePath+".report", data, a)
+		results = assertCoverage(basePath+".report", data, a)
 	case "gitlab-security":
-		return assertGitLabSecurity(basePath+".report", data, a)
+		results = assertGitLabSecurity(basePath+".report", data, a)
 	default:
-		return []AssertResult{failResult(basePath+".report.format",
+		results = []AssertResult{failResult(basePath+".report.format",
 			"known format (junit|dotenv|coverage|gitlab-security)", a.Format)}
 	}
+	return append(fieldErrs, results...)
+}
+
+// reportFieldErrors returns a failing result for every assertion field that is
+// set but not applicable to a.Format. Unknown formats are skipped (the format
+// error itself is reported by assertReport).
+func reportFieldErrors(basePath string, a *config.ReportAssert) []AssertResult {
+	allowed, known := map[string]map[string]bool{
+		"junit":           {"tests": true, "failures": true, "errors": true, "skipped": true, "suites": true},
+		"coverage":        {"line-rate": true, "branch-rate": true},
+		"dotenv":          {"keys": true},
+		"gitlab-security": {"critical": true, "high": true, "medium": true, "low": true},
+	}[a.Format]
+	if !known {
+		return nil
+	}
+
+	set := map[string]bool{}
+	if a.Tests != nil {
+		set["tests"] = true
+	}
+	if a.Failures != nil {
+		set["failures"] = true
+	}
+	if a.Errors != nil {
+		set["errors"] = true
+	}
+	if a.Skipped != nil {
+		set["skipped"] = true
+	}
+	if len(a.Suites) > 0 {
+		set["suites"] = true
+	}
+	if a.LineRate != nil {
+		set["line-rate"] = true
+	}
+	if a.BranchRate != nil {
+		set["branch-rate"] = true
+	}
+	if a.Keys != nil {
+		set["keys"] = true
+	}
+	if a.Critical != nil {
+		set["critical"] = true
+	}
+	if a.High != nil {
+		set["high"] = true
+	}
+	if a.Medium != nil {
+		set["medium"] = true
+	}
+	if a.Low != nil {
+		set["low"] = true
+	}
+
+	var results []AssertResult
+	for _, name := range keysSorted(set) {
+		if !allowed[name] {
+			results = append(results, failResult(basePath+"."+name,
+				"field not valid for format "+a.Format, "field is set"))
+		}
+	}
+	return results
 }
 
 // ─── JUnit ───────────────────────────────────────────────────────────────────
@@ -42,9 +111,15 @@ type junitTestSuites struct {
 }
 
 type junitTestSuite struct {
-	XMLName   xml.Name        `xml:"testsuite"`
-	Name      string          `xml:"name,attr"`
-	TestCases []junitTestCase `xml:"testcase"`
+	XMLName  xml.Name `xml:"testsuite"`
+	Name     string   `xml:"name,attr"`
+	Tests    *int     `xml:"tests,attr"`
+	Failures *int     `xml:"failures,attr"`
+	Errors   *int     `xml:"errors,attr"`
+	Skipped  *int     `xml:"skipped,attr"`
+	// Suites captures nested <testsuite> elements (suite-of-suites layouts).
+	Suites    []junitTestSuite `xml:"testsuite"`
+	TestCases []junitTestCase  `xml:"testcase"`
 }
 
 type junitTestCase struct {
@@ -63,44 +138,71 @@ type suiteCounts struct {
 	skipped  int
 }
 
-func parseJUnit(data []byte) ([]suiteCounts, error) {
+// parseJUnit returns the aggregate counts (summed over the top-level suites) and
+// a flat list of every suite node (at any nesting depth) for per-suite lookups.
+func parseJUnit(data []byte) (suiteCounts, []suiteCounts, error) {
 	var doc junitTestSuites
 	_ = xml.Unmarshal(data, &doc)
-	suites := doc.Suites
-	if len(suites) == 0 {
+	roots := doc.Suites
+	if len(roots) == 0 {
 		var single junitTestSuite
 		if err := xml.Unmarshal(data, &single); err != nil {
-			return nil, fmt.Errorf("parse JUnit XML: %w", err)
+			return suiteCounts{}, nil, fmt.Errorf("parse JUnit XML: %w", err)
 		}
-		suites = []junitTestSuite{single}
+		roots = []junitTestSuite{single}
 	}
-	counts := make([]suiteCounts, 0, len(suites))
-	for _, s := range suites {
-		c := suiteCounts{name: s.Name}
-		for _, tc := range s.TestCases {
-			c.tests++
-			c.failures += len(tc.Failure)
-			c.errors += len(tc.Error)
-			c.skipped += len(tc.Skipped)
-		}
-		counts = append(counts, c)
+
+	var all []suiteCounts
+	var total suiteCounts
+	for i := range roots {
+		c := flattenSuite(roots[i], &all)
+		total.tests += c.tests
+		total.failures += c.failures
+		total.errors += c.errors
+		total.skipped += c.skipped
 	}
-	return counts, nil
+	return total, all, nil
+}
+
+// flattenSuite computes the effective counts for s and appends s plus all its
+// descendants to all. Counts are taken from the suite-level count attributes
+// when present (authoritative for real-world producers), otherwise derived by
+// counting child <testcase> elements and recursing into nested suites.
+func flattenSuite(s junitTestSuite, all *[]suiteCounts) suiteCounts {
+	c := suiteCounts{name: s.Name}
+	for _, tc := range s.TestCases {
+		c.tests++
+		c.failures += len(tc.Failure)
+		c.errors += len(tc.Error)
+		c.skipped += len(tc.Skipped)
+	}
+	for i := range s.Suites {
+		child := flattenSuite(s.Suites[i], all)
+		c.tests += child.tests
+		c.failures += child.failures
+		c.errors += child.errors
+		c.skipped += child.skipped
+	}
+	if s.Tests != nil {
+		c.tests = *s.Tests
+	}
+	if s.Failures != nil {
+		c.failures = *s.Failures
+	}
+	if s.Errors != nil {
+		c.errors = *s.Errors
+	}
+	if s.Skipped != nil {
+		c.skipped = *s.Skipped
+	}
+	*all = append(*all, c)
+	return c
 }
 
 func assertJUnit(basePath string, data []byte, a *config.ReportAssert) []AssertResult {
-	suites, err := parseJUnit(data)
+	total, suites, err := parseJUnit(data)
 	if err != nil {
 		return []AssertResult{failResult(basePath, "valid JUnit XML", err)}
-	}
-
-	// Aggregate totals across all suites.
-	var total suiteCounts
-	for _, s := range suites {
-		total.tests += s.tests
-		total.failures += s.failures
-		total.errors += s.errors
-		total.skipped += s.skipped
 	}
 
 	var results []AssertResult
@@ -186,8 +288,16 @@ func assertDotenv(basePath string, data []byte, a *config.ReportAssert) []Assert
 		}
 		if m, ok := toStringMap(expected); ok {
 			if existsVal, hasExists := m["exists"]; hasExists {
-				wantExists, _ := existsVal.(bool)
+				wantExists, isBool := existsVal.(bool)
+				if !isBool {
+					results = append(results, failResult(keyPath+".exists", "boolean", existsVal))
+					continue
+				}
 				results = append(results, resultFromBool(keyPath+".exists", exists == wantExists, wantExists, exists))
+				// Honour any sibling value matcher, e.g. {exists: true, equal: X}.
+				if rest := mapWithout(m, "exists"); len(rest) > 0 && wantExists && exists {
+					results = append(results, resultFromState(keyPath, matchValue(rest, parsed[key])))
+				}
 				continue
 			}
 		}
@@ -198,6 +308,17 @@ func assertDotenv(basePath string, data []byte, a *config.ReportAssert) []Assert
 		results = append(results, resultFromState(keyPath, matchValue(expected, parsed[key])))
 	}
 	return results
+}
+
+// mapWithout returns a copy of m with the given key removed.
+func mapWithout(m map[string]any, key string) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // ─── coverage (Cobertura) ────────────────────────────────────────────────────
@@ -214,9 +335,10 @@ func assertCoverage(basePath string, data []byte, a *config.ReportAssert) []Asse
 		return []AssertResult{failResult(basePath, "valid Cobertura XML", err)}
 	}
 
+	// Strict parse: reject trailing garbage and comma-decimals rather than
+	// silently truncating them (fmt.Sscanf("%f") would accept "0.85abc").
 	parseRate := func(s string) (float64, bool) {
-		var f float64
-		_, err := fmt.Sscanf(s, "%f", &f)
+		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 		return f, err == nil
 	}
 
@@ -243,7 +365,8 @@ func assertCoverage(basePath string, data []byte, a *config.ReportAssert) []Asse
 // All share the same top-level "vulnerabilities" array with a "severity" field.
 
 type gitlabSecurityReport struct {
-	Vulnerabilities []struct {
+	// Pointer so a missing array is distinguishable from an empty one ([]).
+	Vulnerabilities *[]struct {
 		Severity string `json:"severity"`
 	} `json:"vulnerabilities"`
 }
@@ -253,6 +376,11 @@ func assertGitLabSecurity(basePath string, data []byte, a *config.ReportAssert) 
 	if err := json.Unmarshal(data, &report); err != nil {
 		return []AssertResult{failResult(basePath, "valid GitLab security JSON", err)}
 	}
+	if report.Vulnerabilities == nil {
+		// A clean scan emits an empty array; a missing array means the file is
+		// not a security report (or was never produced), so do not false-pass.
+		return []AssertResult{failResult(basePath, "vulnerabilities array present", "missing from report")}
+	}
 
 	counts := map[string]int{
 		"critical": 0,
@@ -260,7 +388,7 @@ func assertGitLabSecurity(basePath string, data []byte, a *config.ReportAssert) 
 		"medium":   0,
 		"low":      0,
 	}
-	for _, v := range report.Vulnerabilities {
+	for _, v := range *report.Vulnerabilities {
 		sev := strings.ToLower(v.Severity)
 		if _, ok := counts[sev]; ok {
 			counts[sev]++

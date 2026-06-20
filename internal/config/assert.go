@@ -34,11 +34,11 @@ type ReportAssert struct {
 	Format string `yaml:"format"`
 
 	// junit / coverage
-	Tests    any              `yaml:"tests"`
-	Failures any              `yaml:"failures"`
-	Errors   any              `yaml:"errors"`
-	Skipped  any              `yaml:"skipped"`
-	Suites   []SuiteAssert    `yaml:"suites"`
+	Tests    any           `yaml:"tests"`
+	Failures any           `yaml:"failures"`
+	Errors   any           `yaml:"errors"`
+	Skipped  any           `yaml:"skipped"`
+	Suites   []SuiteAssert `yaml:"suites"`
 
 	// coverage (Cobertura)
 	LineRate   any `yaml:"line-rate"`

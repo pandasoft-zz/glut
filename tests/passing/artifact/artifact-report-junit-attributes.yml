@@ -1,0 +1,34 @@
+stages: [test]
+
+run-tests:
+  stage: test
+  script:
+    - mkdir -p reports
+    - |
+      cat > reports/junit.xml << 'EOF'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuite name="AttrSuite" tests="10" failures="0" errors="0" skipped="2">
+      </testsuite>
+      EOF
+  artifacts:
+    reports:
+      junit:
+        - reports/junit.xml
+---
+.glut:
+  name: "artifact report junit: counts taken from testsuite attributes"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      run-tests:
+        exit-status: 0
+    artifacts:
+      "reports/junit.xml":
+        exists: true
+        report:
+          format: junit
+          tests: 10
+          failures: 0
+          skipped: 2
