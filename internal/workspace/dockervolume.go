@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -268,30 +270,45 @@ func FetchArtifactsFromGCLVolumes(preRunVolumes, jobNames []string, workspaceDir
 	return firstErr
 }
 
+// gclBuildVolumeRE matches gitlab-ci-local's build-volume naming pattern,
+// gcl-<encodedJobName>-<jobId>-build, where jobId is a random number. This is
+// the single source of truth for parsing those names; the executor's log-capture
+// path reuses it by calling the exported GCLJobName below.
+var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
+
+// GCLJobName extracts the (URL-decoded) job name from a gcl-*-build volume name.
+// gitlab-ci-local URL-encodes characters outside [\w-] into the segment, so we
+// decode it to recover the original job name. Returns ok=false when the name
+// does not match the build-volume shape.
+func GCLJobName(vol string) (string, bool) {
+	m := gclBuildVolumeRE.FindStringSubmatch(vol)
+	if len(m) != 2 {
+		return "", false
+	}
+	if decoded, err := url.PathUnescape(m[1]); err == nil {
+		return decoded, true
+	}
+	return m[1], true
+}
+
 // selectGCLArtifactVolumes picks the gcl build volumes belonging to this run.
-// gitlab-ci-local names them gcl-<safeJobName>-<jobId>-build, where jobId is a
-// random number — so volume names cannot be predicted up front. We instead keep
-// volumes that are new since preRun, end in "-build", and whose <safeJobName>
-// segment matches one of jobNames. Results are sorted so multi-job extraction
-// order is deterministic.
+// Because the jobId in the name is random, volume names cannot be predicted up
+// front. We instead keep volumes that are new since preRun, end in "-build", and
+// whose decoded job-name segment matches one of jobNames — this prevents a
+// concurrent glut/gitlab-ci-local run on the same daemon from having its volumes
+// extracted and destroyed. When jobNames is empty (e.g. the pipeline failed
+// before producing any job output) the nominal filter is skipped (temporal-only
+// fallback). Results are sorted so multi-job extraction order is deterministic.
 func selectGCLArtifactVolumes(preRun, current, jobNames []string) []string {
 	preRunSet := make(map[string]struct{}, len(preRun))
 	for _, v := range preRun {
 		preRunSet[v] = struct{}{}
 	}
 
-	// Build the set of expected job-name segments. If any job name is not
-	// docker-safe we cannot reconstruct its segment, so disable the nominal
-	// filter rather than risk skipping one of this run's own volumes.
 	scoped := len(jobNames) > 0
 	want := make(map[string]struct{}, len(jobNames))
 	for _, name := range jobNames {
-		safe, ok := safeJobNameForVolume(name)
-		if !ok {
-			scoped = false
-			break
-		}
-		want[safe] = struct{}{}
+		want[name] = struct{}{}
 	}
 
 	var out []string
@@ -303,7 +320,7 @@ func selectGCLArtifactVolumes(preRun, current, jobNames []string) []string {
 			continue
 		}
 		if scoped {
-			seg, ok := gclJobSegment(vol)
+			seg, ok := GCLJobName(vol)
 			if !ok {
 				continue
 			}
@@ -315,52 +332,6 @@ func selectGCLArtifactVolumes(preRun, current, jobNames []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// gclJobSegment extracts <safeJobName> from a gcl-<safeJobName>-<jobId>-build
-// volume name. It returns false when the name does not match that shape.
-func gclJobSegment(vol string) (string, bool) {
-	s, ok := strings.CutPrefix(vol, "gcl-")
-	if !ok {
-		return "", false
-	}
-	s, ok = strings.CutSuffix(s, "-build")
-	if !ok {
-		return "", false
-	}
-	idx := strings.LastIndexByte(s, '-')
-	if idx <= 0 {
-		return "", false
-	}
-	id := s[idx+1:]
-	if id == "" {
-		return "", false
-	}
-	for _, r := range id {
-		if r < '0' || r > '9' {
-			return "", false
-		}
-	}
-	return s[:idx], true
-}
-
-// safeJobNameForVolume reports the gitlab-ci-local "safe" job-name segment for a
-// job name. gitlab-ci-local replaces every run of characters outside [\w-] with
-// an encoding; we can only reconstruct names that are already docker-safe (word
-// characters and dashes), which is the overwhelmingly common case. For anything
-// else it returns ok=false so the caller falls back to temporal-only matching.
-func safeJobNameForVolume(name string) (string, bool) {
-	if name == "" {
-		return "", false
-	}
-	for _, r := range name {
-		if r == '-' || r == '_' ||
-			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			continue
-		}
-		return "", false
-	}
-	return name, true
 }
 
 // extractGCLBuildVolume tars the contents of a gcl-*-build volume (excluding

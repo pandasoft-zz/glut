@@ -49,6 +49,15 @@ func TestSelectGCLArtifactVolumes(t *testing.T) {
 			want:     []string{"gcl-test-2-999-build"},
 		},
 		{
+			// gitlab-ci-local URL-encodes characters outside [\w-] into the
+			// volume segment; selection must decode it to match the raw job name.
+			name:     "url-encoded job name is decoded and matched",
+			preRun:   []string{},
+			current:  []string{"gcl-deploy%2Fweb-77-build", "gcl-other%20job-88-build"},
+			jobNames: []string{"deploy/web"},
+			want:     []string{"gcl-deploy%2Fweb-77-build"},
+		},
+		{
 			name:     "no job names falls back to all new build volumes",
 			preRun:   []string{},
 			current:  []string{"gcl-anything-1-build", "gcl-other-2-tmp"},
@@ -65,6 +74,31 @@ func TestSelectGCLArtifactVolumes(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("selectGCLArtifactVolumes() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGCLJobName(t *testing.T) {
+	tests := []struct {
+		vol    string
+		want   string
+		wantOK bool
+	}{
+		{"gcl-run-tests-12345-build", "run-tests", true},
+		{"gcl-deploy%2Fweb-77-build", "deploy/web", true}, // URL-decoded
+		{"gcl-build%20app-1-build", "build app", true},
+		{"gcl-run-tests-12345-tmp", "", false}, // not a build volume
+		{"gcl-build", "", false},               // no id segment
+		{"gcl--99-build", "", false},           // empty job name
+		{"gcl-x-build", "", false},             // no numeric id
+		{"other-prefix-12-build", "", false},   // wrong prefix
+	}
+	for _, tt := range tests {
+		t.Run(tt.vol, func(t *testing.T) {
+			got, ok := GCLJobName(tt.vol)
+			if ok != tt.wantOK || (ok && got != tt.want) {
+				t.Fatalf("GCLJobName(%q) = (%q, %v), want (%q, %v)", tt.vol, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}
