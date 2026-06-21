@@ -375,10 +375,16 @@ assert specific entries.
 Each key value can be:
 - A string — exact match.
 - A `/regex/` string — regex match against the value.
+- A bare number or boolean (e.g. `RETRIES: 5`, `DEPLOY_OK: true`) — compared
+  against the value's string form, since dotenv values are always strings.
 - `{exists: true}` or `{exists: false}` — assert presence or absence of the key.
   `exists` must be a boolean. It may be combined with a value matcher
   (e.g. `{exists: true, match-regexp: "..."}`), which is also checked.
 - `null` (bare key with no value) — asserts the key is present.
+
+> Dotenv values are always strings. A matcher operand inside `{...}` is compared
+> as written, so for value matchers use string operands (e.g. `{equal: "5"}`),
+> not bare numbers.
 
 ```yaml
 assert:

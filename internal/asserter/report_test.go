@@ -209,3 +209,54 @@ func TestAssertReportRejectsFieldsForWrongFormat(t *testing.T) {
 		t.Fatalf("setting coverage-only field on junit format must fail, got %+v", jresults)
 	}
 }
+
+// Regression: dotenv values are strings, but a bare scalar expectation decoded
+// by YAML as int/bool/float must still match (e.g. `KEY: true`, `KEY: 5`) rather
+// than failing on a type mismatch.
+func TestAssertDotenvScalarCoercion(t *testing.T) {
+	data := []byte("DEPLOY_OK=true\nRETRIES=5\nRATIO=0.5\n")
+
+	pass := assertDotenv("art.report", data, &config.ReportAssert{
+		Format: "dotenv",
+		Keys:   map[string]any{"DEPLOY_OK": true, "RETRIES": 5, "RATIO": 0.5},
+	})
+	if anyFailed(pass) {
+		t.Fatalf("unquoted scalar dotenv values should match their string form, got %+v", pass)
+	}
+
+	fail := assertDotenv("art.report", data, &config.ReportAssert{
+		Format: "dotenv",
+		Keys:   map[string]any{"RETRIES": 6},
+	})
+	if !anyFailed(fail) {
+		t.Fatalf("wrong scalar value must still fail, got %+v", fail)
+	}
+}
+
+// A dotenv assertion with no keys passes vacuously against any readable file
+// (parseDotenv never fails), so it must be rejected. The XML/JSON formats, by
+// contrast, validate structure during parsing, so a field-less assertion there
+// is a legitimate "is this a valid <format> report" check and must still pass.
+func TestAssertReportNoFieldsFails(t *testing.T) {
+	dotenvPath := mustWriteTemp(t, "x.env", "ANYTHING=1\n")
+	if !anyFailed(assertReport("art", dotenvPath, &config.ReportAssert{Format: "dotenv"})) {
+		t.Fatalf("dotenv report with no keys must fail")
+	}
+
+	// Valid JUnit / Cobertura with no specific field assertions is a structural
+	// validity check and must pass.
+	junitPath := mustWriteTemp(t, "j.xml", `<testsuite name="S"><testcase/></testsuite>`)
+	if anyFailed(assertReport("art", junitPath, &config.ReportAssert{Format: "junit"})) {
+		t.Fatalf("valid junit with no fields should pass as a validity check")
+	}
+	covPath := mustWriteTemp(t, "c.xml", `<coverage line-rate="0.9"/>`)
+	if anyFailed(assertReport("art", covPath, &config.ReportAssert{Format: "coverage"})) {
+		t.Fatalf("valid coverage with no fields should pass as a validity check")
+	}
+
+	// But an invalid document for the format must still fail to parse.
+	badCov := mustWriteTemp(t, "bad.xml", `<notcoverage/>`)
+	if !anyFailed(assertReport("art", badCov, &config.ReportAssert{Format: "coverage"})) {
+		t.Fatalf("non-Cobertura XML must fail coverage parsing")
+	}
+}

@@ -24,6 +24,18 @@ func assertReport(basePath, fullPath string, a *config.ReportAssert) []AssertRes
 	if err != nil {
 		return append(fieldErrs, failResult(basePath+".report", "read file", err))
 	}
+
+	// A dotenv assertion with no keys passes vacuously against ANY readable file
+	// (parseDotenv never fails), so require at least one key. The XML/JSON formats
+	// do not need this guard: parsing itself is a meaningful assertion (the file
+	// must be a valid JUnit/Cobertura document or a security report whose
+	// vulnerabilities array is present), so a field-less assertion there is a
+	// deliberate "is this a valid <format> report" check.
+	if a.Format == "dotenv" && len(a.Keys) == 0 {
+		fieldErrs = append(fieldErrs, failResult(basePath+".report",
+			"at least one key assertion for dotenv", "no keys set"))
+	}
+
 	var results []AssertResult
 	switch a.Format {
 	case "junit":
@@ -41,20 +53,17 @@ func assertReport(basePath, fullPath string, a *config.ReportAssert) []AssertRes
 	return append(fieldErrs, results...)
 }
 
-// reportFieldErrors returns a failing result for every assertion field that is
-// set but not applicable to a.Format. Unknown formats are skipped (the format
-// error itself is reported by assertReport).
-func reportFieldErrors(basePath string, a *config.ReportAssert) []AssertResult {
-	allowed, known := map[string]map[string]bool{
-		"junit":           {"tests": true, "failures": true, "errors": true, "skipped": true, "suites": true},
-		"coverage":        {"line-rate": true, "branch-rate": true},
-		"dotenv":          {"keys": true},
-		"gitlab-security": {"critical": true, "high": true, "medium": true, "low": true},
-	}[a.Format]
-	if !known {
-		return nil
-	}
+// reportAllowedFields maps each known report format to the assertion fields it
+// supports; reportFieldErrors uses it to reject fields set for the wrong format.
+var reportAllowedFields = map[string]map[string]bool{
+	"junit":           {"tests": true, "failures": true, "errors": true, "skipped": true, "suites": true},
+	"coverage":        {"line-rate": true, "branch-rate": true},
+	"dotenv":          {"keys": true},
+	"gitlab-security": {"critical": true, "high": true, "medium": true, "low": true},
+}
 
+// reportFieldsSet returns the set of assertion field names populated on a.
+func reportFieldsSet(a *config.ReportAssert) map[string]bool {
 	set := map[string]bool{}
 	if a.Tests != nil {
 		set["tests"] = true
@@ -92,9 +101,20 @@ func reportFieldErrors(basePath string, a *config.ReportAssert) []AssertResult {
 	if a.Low != nil {
 		set["low"] = true
 	}
+	return set
+}
+
+// reportFieldErrors returns a failing result for every assertion field that is
+// set but not applicable to a.Format. Unknown formats are skipped (the format
+// error itself is reported by assertReport).
+func reportFieldErrors(basePath string, a *config.ReportAssert) []AssertResult {
+	allowed, known := reportAllowedFields[a.Format]
+	if !known {
+		return nil
+	}
 
 	var results []AssertResult
-	for _, name := range keysSorted(set) {
+	for _, name := range keysSorted(reportFieldsSet(a)) {
 		if !allowed[name] {
 			results = append(results, failResult(basePath+"."+name,
 				"field not valid for format "+a.Format, "field is set"))
@@ -305,9 +325,23 @@ func assertDotenv(basePath string, data []byte, a *config.ReportAssert) []Assert
 			results = append(results, failResult(keyPath, expected, "key not found in dotenv"))
 			continue
 		}
-		results = append(results, resultFromState(keyPath, matchValue(expected, parsed[key])))
+		results = append(results, resultFromState(keyPath, matchValue(dotenvExpected(expected), parsed[key])))
 	}
 	return results
+}
+
+// dotenvExpected coerces a bare scalar expectation to its string form because
+// dotenv values are always strings. Without this, `KEY: 3` / `KEY: true`
+// (decoded by YAML as int/bool) would be compared against the string "3" /
+// "true" and fail on a type mismatch even though the value is correct. Matcher
+// maps and string expectations pass through unchanged.
+func dotenvExpected(expected any) any {
+	switch expected.(type) {
+	case bool, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprintf("%v", expected)
+	}
+	return expected
 }
 
 // mapWithout returns a copy of m with the given key removed.
