@@ -42,6 +42,10 @@ jobs:
       - name: Checkout
         if: steps.guard.outputs.skip != 'true'
         uses: actions/checkout@v6
+        with:
+          # Full history: the default shallow clone cannot be pushed to GitLab
+          # ("shallow update not allowed").
+          fetch-depth: 0
 
       - name: Mirror, trigger and wait for GitLab pipeline
         if: steps.guard.outputs.skip != 'true'
