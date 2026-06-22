@@ -68,9 +68,19 @@ jobs:
           git push -f "https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/${PROJECT}.git" "HEAD:refs/heads/${REF}"
 
           echo "Triggering pipeline on ${REF}…"
-          PIPELINE="$(gl --request POST --data "ref=${REF}" "${API}/projects/${PROJECT_ID}/pipeline")"
-          PIPELINE_ID="$(echo "${PIPELINE}" | jq -r '.id')"
-          PIPELINE_URL="$(echo "${PIPELINE}" | jq -r '.web_url')"
+          # Capture the body and status explicitly: a failed create (e.g. an
+          # unvalidated gitlab.com account, which returns 400) must surface the
+          # GitLab error message, not an opaque "curl: (22)".
+          HTTP="$(curl -sS -o /tmp/trigger.json -w '%{http_code}' \
+            --request POST --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            --data "ref=${REF}" "${API}/projects/${PROJECT_ID}/pipeline")"
+          if [ "${HTTP}" -ge 300 ]; then
+            echo "Pipeline create failed (HTTP ${HTTP}):"
+            cat /tmp/trigger.json; echo
+            exit 1
+          fi
+          PIPELINE_ID="$(jq -r '.id' /tmp/trigger.json)"
+          PIPELINE_URL="$(jq -r '.web_url' /tmp/trigger.json)"
           echo "Pipeline ${PIPELINE_ID}: ${PIPELINE_URL}"
           echo "GitLab pipeline: ${PIPELINE_URL}" >> "$GITHUB_STEP_SUMMARY"
 
