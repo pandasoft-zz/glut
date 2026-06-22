@@ -1,0 +1,11 @@
+spec:
+  inputs: {}
+---
+# Leaf component: writes an artifact. Exercises artifact assertions.
+"make-artifact":
+  stage: test
+  script:
+    - echo "artifact-ok" > out.txt
+  artifacts:
+    paths:
+      - out.txt

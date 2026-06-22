@@ -1,0 +1,38 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE/comp-suite/comp-suite@1
+    inputs:
+      greeting_name: glut
+stages: [test]
+---
+.glut:
+  name: "composite component resolves and runs nested real sub-components"
+  setup:
+    # Shell executor: the fixture jobs are pure shell, no image needed.
+    docker: false
+    # Integration mode: fetch include:component from the real GitLab (gitlab.com)
+    # using the real CI_JOB_TOKEN. Requires running inside GitLab CI in the
+    # glut-test group (see tests/integration/README.md). The composite and its
+    # leaf components live as real projects under glut-test.
+    components:
+      fetch: real
+  assert:
+    job:
+      # From comp-greet, via the composite, with the input threaded through.
+      greet:
+        present: true
+        exit-status: 0
+        stdout:
+          - "hello glut"
+      # From comp-artifact, via the composite.
+      make-artifact:
+        present: true
+        exit-status: 0
+      # The composite's own job.
+      suite-summary:
+        present: true
+        exit-status: 0
+    artifacts:
+      "out.txt":
+        exists: true
+        contents:
+          - "artifact-ok"

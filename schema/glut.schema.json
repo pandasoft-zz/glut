@@ -71,6 +71,9 @@
         "mocks": {
           "$ref": "#/definitions/mocks"
         },
+        "components": {
+          "$ref": "#/definitions/components"
+        },
         "docker": {
           "type": "boolean",
           "default": true,
@@ -91,6 +94,20 @@
           "branch",
           "tag"
         ]
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Controls how `include: component:` directives are resolved.",
+      "properties": {
+        "fetch": {
+          "type": "string",
+          "enum": [
+            "real"
+          ],
+          "description": "Set to \"real\" for an integration test: `include: component:` is fetched from a REAL GitLab over HTTPS using the real CI_JOB_TOKEN, so a composite component runs end-to-end with its real sub-components. Requires running inside GitLab CI (or GLUT_COMPONENTS_TOKEN). Real server/namespace come from the host environment (CI_SERVER_HOST / CI_PROJECT_NAMESPACE) or GLUT_COMPONENTS_SERVER / GLUT_COMPONENTS_NAMESPACE. Only the component fetch becomes real; the runtime GitLab API stays mocked. Omit for the default isolated behaviour."
+        }
       }
     },
     "merge_request": {

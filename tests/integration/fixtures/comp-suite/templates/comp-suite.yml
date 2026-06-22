@@ -1,0 +1,20 @@
+spec:
+  inputs:
+    greeting_name:
+      default: "world"
+---
+# Composite component: assembles the leaf components above and adds its own job.
+# Nested includes use the standard $CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE form, so
+# they resolve to the sibling projects in whatever namespace includes this
+# component (glut-test). gitlab-ci-local fetches them too, which is exactly the
+# nested-resolution path the integration test exercises.
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE/comp-greet/comp-greet@1
+    inputs:
+      name: $[[ inputs.greeting_name ]]
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE/comp-artifact/comp-artifact@1
+
+"suite-summary":
+  stage: test
+  script:
+    - echo "composite suite ran"

@@ -1,0 +1,44 @@
+# GitLab pipeline for the glut-test mirror project (gitlab.com/glut-test/glut).
+#
+# GitHub ignores this file; it only runs on GitLab, where a real CI_JOB_TOKEN and
+# a real GitLab API exist. It runs the composite-component integration tests
+# (tests/integration/) which use `setup.components.fetch: real` to fetch the
+# real fixture components from the glut-test group. See tests/integration/README.md.
+
+stages:
+  - build
+  - integration
+
+workflow:
+  rules:
+    # The GitHub workflow pushes the commit, then triggers via the API; gating on
+    # api/trigger/web (not push) keeps that to a single pipeline. Manual runs use
+    # the "Run pipeline" button (web).
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+build-glut:
+  stage: build
+  image: golang:1.26.2-bookworm
+  script:
+    - CGO_ENABLED=0 go build -o glut ./cmd/glut
+  artifacts:
+    paths:
+      - glut
+    expire_in: 1h
+
+integration:
+  stage: integration
+  image: node:22-slim
+  needs:
+    - build-glut
+  variables:
+    GCL_VERSION: "4.72.0"
+  before_script:
+    - apt-get update -qq && apt-get install -y --no-install-recommends bash git rsync ca-certificates >/dev/null
+    - npm install -g "gitlab-ci-local@${GCL_VERSION}" >/dev/null
+  script:
+    # Shell-executor integration tests; fetch:real pulls components from glut-test
+    # using the job's real CI_JOB_TOKEN.
+    - ./glut run --copy-strategy=auto --include tests ./tests/integration/

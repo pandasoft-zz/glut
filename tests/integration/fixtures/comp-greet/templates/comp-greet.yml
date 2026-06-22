@@ -1,0 +1,10 @@
+spec:
+  inputs:
+    name:
+      default: "world"
+---
+# Leaf component: prints a greeting. Exercises component inputs + execution.
+"greet":
+  stage: test
+  script:
+    - echo "hello $[[ inputs.name ]]"

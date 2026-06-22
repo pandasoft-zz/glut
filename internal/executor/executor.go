@@ -49,6 +49,12 @@ type ExecutorConfig struct {
 	DockerExtraHosts    []string
 	HostEnv             []string // nil falls back to os.Environ()
 	KeepDockerResources bool     // pass --cleanup=false; caller owns volume cleanup
+	// GitConfigEnv holds extra git configuration injected into the gitlab-ci-local
+	// process environment via GIT_CONFIG_COUNT/KEY_n/VALUE_n. Used by integration
+	// mode to redirect `include: component:` fetches at a real git remote with
+	// real credentials, without touching the workspace repo config. Passed through
+	// the environment (never as CLI args) so any embedded token is not logged.
+	GitConfigEnv map[string]string
 }
 
 type RunResult struct {
@@ -249,8 +255,11 @@ func runCommand(ctx context.Context, cfg ExecutorConfig, args ...string) (string
 }
 
 func buildCommandEnv(cfg ExecutorConfig) []string {
-	env := make(map[string]string, len(cfg.EnvVars)+8)
+	env := make(map[string]string, len(cfg.EnvVars)+len(cfg.GitConfigEnv)+8)
 	for key, value := range cfg.EnvVars {
+		env[key] = value
+	}
+	for key, value := range cfg.GitConfigEnv {
 		env[key] = value
 	}
 

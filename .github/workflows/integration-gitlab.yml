@@ -1,0 +1,95 @@
+name: Integration (GitLab)
+
+# Composite-component integration tests can only run against a real GitLab.
+# This workflow mirrors the current commit to gitlab.com/glut-test/glut, triggers
+# the GitLab pipeline (.gitlab-ci.yml) on it, and waits for the result.
+#
+# Requires repository secret GITLAB_TOKEN: a glut-test group/project access token
+# (or PAT) with `api` + `write_repository` scopes. Forked-PR runs do not receive
+# secrets and are skipped.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: integration-gitlab-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GITLAB_HOST: gitlab.com
+  GLUT_TEST_GROUP: glut-test
+  GLUT_TEST_RUNNER: glut
+
+jobs:
+  gitlab-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check GitLab token is available
+        id: guard
+        run: |
+          if [ -z "${{ secrets.GITLAB_TOKEN }}" ]; then
+            echo "GITLAB_TOKEN secret not set (e.g. forked PR) — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/checkout@v6
+
+      - name: Mirror, trigger and wait for GitLab pipeline
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          set -euo pipefail
+          API="https://${GITLAB_HOST}/api/v4"
+          PROJECT="${GLUT_TEST_GROUP}/${GLUT_TEST_RUNNER}"
+          PROJECT_ENC="${GLUT_TEST_GROUP}%2F${GLUT_TEST_RUNNER}"
+          REF="ci/${GITHUB_SHA}"
+
+          gl() { curl -fsS --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" "$@"; }
+
+          echo "Resolving project ${PROJECT}…"
+          PROJECT_ID="$(gl "${API}/projects/${PROJECT_ENC}" | jq -r '.id')"
+          test -n "${PROJECT_ID}" && test "${PROJECT_ID}" != "null"
+
+          echo "Pushing ${GITHUB_SHA} to ${PROJECT} as ${REF}…"
+          git push -f "https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/${PROJECT}.git" "HEAD:refs/heads/${REF}"
+
+          echo "Triggering pipeline on ${REF}…"
+          PIPELINE="$(gl --request POST --data "ref=${REF}" "${API}/projects/${PROJECT_ID}/pipeline")"
+          PIPELINE_ID="$(echo "${PIPELINE}" | jq -r '.id')"
+          PIPELINE_URL="$(echo "${PIPELINE}" | jq -r '.web_url')"
+          echo "Pipeline ${PIPELINE_ID}: ${PIPELINE_URL}"
+          echo "GitLab pipeline: ${PIPELINE_URL}" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Waiting for completion…"
+          for _ in $(seq 1 120); do  # up to ~20 min
+            STATUS="$(gl "${API}/projects/${PROJECT_ID}/pipelines/${PIPELINE_ID}" | jq -r '.status')"
+            echo "  status: ${STATUS}"
+            case "${STATUS}" in
+              success) echo "GitLab pipeline succeeded."; exit 0 ;;
+              failed|canceled|skipped) echo "GitLab pipeline ended: ${STATUS} (${PIPELINE_URL})"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Timed out waiting for GitLab pipeline (${PIPELINE_URL})."
+          exit 1
+
+      - name: Clean up the GitLab CI branch
+        if: always() && steps.guard.outputs.skip != 'true'
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          REF="ci/${GITHUB_SHA}"
+          curl -fsS --request DELETE \
+            --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+            "https://${GITLAB_HOST}/api/v4/projects/${GLUT_TEST_GROUP}%2F${GLUT_TEST_RUNNER}/repository/branches/$(printf '%s' "${REF}" | sed 's:/:%2F:g')" \
+            || echo "branch cleanup skipped"
