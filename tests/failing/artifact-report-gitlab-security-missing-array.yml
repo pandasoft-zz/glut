@@ -1,0 +1,24 @@
+stages: [test]
+
+sast:
+  stage: test
+  script:
+    - |
+      cat > gl-sast-report.json << 'EOF'
+      {"version": "15.0.0"}
+      EOF
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+---
+.glut:
+  name: "artifact report gitlab-security: missing vulnerabilities array must not pass critical:0"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "gl-sast-report.json":
+        report:
+          format: gitlab-security
+          critical: 0

@@ -101,3 +101,38 @@ func TestRunArtifactAssertsFileTypesAndChecksumFailures(t *testing.T) {
 		t.Fatalf("expected checksum failure for directory, got %+v", checksumResults)
 	}
 }
+
+// A content-dependent assertion (report/contents/checksum) on an artifact the
+// job never produced must fail rather than pass vacuously by returning early on
+// the missing file.
+func TestRunArtifactAssertMissingFileFailsContentAsserts(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "never-produced.xml")
+
+	cases := []struct {
+		name   string
+		assert config.ArtifactAssert
+		path   string
+	}{
+		{"report", config.ArtifactAssert{Report: &config.ReportAssert{Format: "junit", Failures: 0}}, "art.report"},
+		{"contents", config.ArtifactAssert{Contents: "hello"}, "art.contents"},
+		{"mode", config.ArtifactAssert{Mode: "0644"}, "art.mode"},
+		{"size", config.ArtifactAssert{Size: map[string]any{"ge": 5}}, "art.size"},
+		{"filetype", config.ArtifactAssert{Filetype: "file"}, "art.filetype"},
+		{"md5", config.ArtifactAssert{MD5: "abc"}, "art.md5"},
+		{"sha256", config.ArtifactAssert{SHA256: "abc"}, "art.sha256"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			results := runArtifactAssert("art", missing, tc.assert)
+			if !anyFailed(results) {
+				t.Fatalf("expected %s assertion on a missing file to fail, got %+v", tc.name, results)
+			}
+		})
+	}
+
+	// exists:false on a genuinely absent file must still pass cleanly.
+	ok := runArtifactAssert("art", missing, config.ArtifactAssert{Exists: boolPtr(false)})
+	if anyFailed(ok) {
+		t.Fatalf("exists:false on a missing file should pass, got %+v", ok)
+	}
+}

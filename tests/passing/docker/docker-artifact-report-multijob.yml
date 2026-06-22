@@ -1,0 +1,56 @@
+stages: [build, test]
+
+build:
+  stage: build
+  image: alpine:latest
+  script:
+    - |
+      cat > deploy.env << 'EOF'
+      APP_VERSION=4.5.6
+      EOF
+  artifacts:
+    reports:
+      dotenv: deploy.env
+
+run-tests:
+  stage: test
+  image: alpine:latest
+  script:
+    - mkdir -p reports
+    - |
+      cat > reports/junit.xml << 'EOF'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuite name="Suite">
+        <testcase name="test_ok"/>
+      </testsuite>
+      EOF
+  artifacts:
+    reports:
+      junit:
+        - reports/junit.xml
+---
+.glut:
+  name: "docker:true multi-job: artifacts harvested from every gcl build volume"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    docker: true
+  assert:
+    job:
+      build:
+        exit-status: 0
+      run-tests:
+        exit-status: 0
+    artifacts:
+      "deploy.env":
+        exists: true
+        report:
+          format: dotenv
+          keys:
+            APP_VERSION: "4.5.6"
+      "reports/junit.xml":
+        exists: true
+        report:
+          format: junit
+          tests: 1
+          failures: 0

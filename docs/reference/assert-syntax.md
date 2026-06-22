@@ -262,6 +262,8 @@ assert:
 ## Artifact Asserts
 
 `assert.artifacts` checks files in the workspace. The key is the relative path.
+It works for both `artifacts.paths` files and `artifacts.reports.*` report files — GLUT
+reads whatever the job wrote to the workspace.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -272,6 +274,7 @@ assert:
 | `md5` | string | Expected MD5 hash. |
 | `sha256` | string | Expected SHA-256 hash. |
 | `filetype` | string | `file`, `directory`, `symlink`, or `socket`. |
+| `report` | object | Parse and assert structured report content (see below). |
 
 Text file:
 
@@ -322,6 +325,123 @@ assert:
   artifacts:
     "dist/debug.log":
       exists: false
+```
+
+### Structured Report Assertions
+
+Use `report:` to parse a structured report file and assert typed fields rather than
+matching raw text. Set `format` to the report type; all other fields are optional.
+Each field only applies to a specific format — setting a field that does not belong
+to the chosen `format` (e.g. `tests` under `format: coverage`) fails the assertion
+instead of being silently ignored.
+
+#### `format: junit`
+
+Parses JUnit XML produced by `artifacts.reports.junit`. Counts are aggregated across
+all test suites (including nested suites). Suite-level count attributes
+(`tests`, `failures`, …) are honoured when present; otherwise counts are derived
+from the `<testcase>` elements.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `tests` | value or matcher | Total number of test cases. |
+| `failures` | value or matcher | Number of failed test cases. |
+| `errors` | value or matcher | Number of errored test cases. |
+| `skipped` | value or matcher | Number of skipped test cases. |
+| `suites` | list | Per-suite assertions (see below). |
+
+Each item in `suites` must have a `name` field matching the suite name in the XML,
+plus optional `tests`, `failures`, `errors`, `skipped`.
+
+```yaml
+assert:
+  artifacts:
+    "reports/junit.xml":
+      report:
+        format: junit
+        tests: {ge: 1}
+        failures: 0
+        skipped: {le: 5}
+        suites:
+          - name: "UnitSuite"
+            failures: 0
+```
+
+#### `format: dotenv`
+
+Parses a `KEY=VALUE` file produced by `artifacts.reports.dotenv`. Use `keys:` to
+assert specific entries.
+
+Each key value can be:
+- A string — exact match.
+- A `/regex/` string — regex match against the value.
+- A bare number or boolean (e.g. `RETRIES: 5`, `DEPLOY_OK: true`) — compared
+  against the value's string form, since dotenv values are always strings.
+- `{exists: true}` or `{exists: false}` — assert presence or absence of the key.
+  `exists` must be a boolean. It may be combined with a value matcher
+  (e.g. `{exists: true, match-regexp: "..."}`), which is also checked.
+- `null` (bare key with no value) — asserts the key is present.
+
+> Dotenv values are always strings. A matcher operand inside `{...}` is compared
+> as written, so for value matchers use string operands (e.g. `{equal: "5"}`),
+> not bare numbers.
+
+```yaml
+assert:
+  artifacts:
+    "deploy.env":
+      report:
+        format: dotenv
+        keys:
+          APP_VERSION: "/^\\d+\\.\\d+\\.\\d+$/"
+          DEPLOY_OK: "true"
+          IMAGE_TAG:
+            exists: true
+          DEBUG:
+            exists: false
+```
+
+#### `format: coverage`
+
+Parses a Cobertura XML file produced by `artifacts.reports.coverage_report`.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `line-rate` | value or matcher | Line coverage as a fraction 0.0–1.0. |
+| `branch-rate` | value or matcher | Branch coverage as a fraction 0.0–1.0. |
+
+```yaml
+assert:
+  artifacts:
+    "coverage/cobertura.xml":
+      report:
+        format: coverage
+        line-rate: {ge: 0.80}
+        branch-rate: {ge: 0.70}
+```
+
+#### `format: gitlab-security`
+
+Parses a GitLab security report JSON file. Covers `sast`, `dast`,
+`dependency_scanning`, `container_scanning`, and `secret_detection` — all share the
+same `vulnerabilities` array format.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `critical` | value or matcher | Count of Critical-severity vulnerabilities. |
+| `high` | value or matcher | Count of High-severity vulnerabilities. |
+| `medium` | value or matcher | Count of Medium-severity vulnerabilities. |
+| `low` | value or matcher | Count of Low-severity vulnerabilities. |
+
+```yaml
+assert:
+  artifacts:
+    "gl-sast-report.json":
+      report:
+        format: gitlab-security
+        critical: 0
+        high: 0
+        medium: {le: 5}
 ```
 
 ## Git Asserts

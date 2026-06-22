@@ -36,6 +36,32 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 		if err != nil && !os.IsNotExist(err) {
 			results = append(results, failResult(basePath, "read artifact", err))
 		}
+		// Every other assertion needs the file's contents or stat info, which a
+		// missing file cannot provide. Surface each one that is set as a failure
+		// instead of returning silently, otherwise an assertion on an artifact the
+		// job never produced would pass vacuously. Skip this when the caller
+		// explicitly expects the file to be absent (`exists: false`) — there the
+		// absence is the asserted outcome and any further assertion is moot.
+		expectedAbsent := assert.Exists != nil && !*assert.Exists
+		if !expectedAbsent {
+			missing := []struct {
+				set    bool
+				suffix string
+			}{
+				{assert.Report != nil, ".report"},
+				{assert.Contents != nil, ".contents"},
+				{assert.Mode != "", ".mode"},
+				{assert.Size != nil, ".size"},
+				{assert.Filetype != "", ".filetype"},
+				{assert.MD5 != "", ".md5"},
+				{assert.SHA256 != "", ".sha256"},
+			}
+			for _, check := range missing {
+				if check.set {
+					results = append(results, failResult(basePath+check.suffix, "artifact to exist", "file not found"))
+				}
+			}
+		}
 		return
 	}
 
@@ -56,6 +82,9 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 		} else {
 			results = append(results, resultFromState(basePath+".contents", matchTextPatterns(assert.Contents, string(content))))
 		}
+	}
+	if assert.Report != nil {
+		results = append(results, assertReport(basePath, fullPath, assert.Report)...)
 	}
 	if assert.MD5 != "" || assert.SHA256 != "" {
 		file, openErr := os.Open(fullPath)

@@ -1,0 +1,30 @@
+stages: [test]
+
+coverage:
+  stage: test
+  script:
+    - mkdir -p coverage
+    - |
+      cat > coverage/cobertura.xml << 'EOF'
+      <?xml version="1.0" ?>
+      <coverage line-rate="0.90" branch-rate="0.90" version="1.0" timestamp="0">
+      </coverage>
+      EOF
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura.xml
+---
+.glut:
+  name: "artifact report: junit-only field under coverage format must fail"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    artifacts:
+      "coverage/cobertura.xml":
+        report:
+          format: coverage
+          line-rate: {ge: 0.80}
+          tests: 5

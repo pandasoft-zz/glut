@@ -493,6 +493,16 @@ func runSingleTest(
 	phaseStart = time.Now()
 	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
 	usePrivileged := testFile.Glut.Setup.Privileged != nil && *testFile.Glut.Setup.Privileged
+	// Snapshot gcl volumes before the pipeline so FetchArtifactsFromGCLVolumes
+	// can identify which ones belong to this run (volume strategy only, where
+	// bind mounts do not work and gitlab-ci-local uses its own named volumes).
+	needsGCLArtifacts := useDocker &&
+		volumeStrategy == docker.VolumeStrategyVolume &&
+		len(testFile.Glut.Assert.Artifacts) > 0
+	var preRunGCLVolumes []string
+	if needsGCLArtifacts {
+		preRunGCLVolumes = workspace.ListGCLVolumes()
+	}
 	if useDocker && volumeStrategy == docker.VolumeStrategyVolume {
 		// Named volume: populate from host and collect for deferred cleanup.
 		var mocks *parser.MocksConfig
@@ -546,20 +556,21 @@ func runSingleTest(
 		workspace.ApplyServerBaseURL(envVars, mockHostIP, server.Port())
 	}
 	execCfg := executor.ExecutorConfig{
-		WorkspacePath:    work.WorkspaceDir,
-		PipelineYAML:     testFile.PipelineYAML,
-		EnvVars:          envVars,
-		UnsetVars:        work.UnsetVars(testFile.Glut.Setup),
-		MockBinPath:      workspace.MockBinaryBinDir(work.Dir),
-		Timeout:          opts.Timeout,
-		Debug:            opts.Debug,
-		Verbose:          opts.Verbose,
-		UseDocker:        useDocker,
-		ForceShell:       forceShell,
-		Privileged:       usePrivileged,
-		DockerVolumes:    dockerVolumes(useDocker, work.Dir, dockerVolumeName, volumeStrategy),
-		DockerExtraHosts: dockerExtraHosts(useDocker, mockHostIP),
-		HostEnv:          opts.HostEnv,
+		WorkspacePath:       work.WorkspaceDir,
+		PipelineYAML:        testFile.PipelineYAML,
+		EnvVars:             envVars,
+		UnsetVars:           work.UnsetVars(testFile.Glut.Setup),
+		MockBinPath:         workspace.MockBinaryBinDir(work.Dir),
+		Timeout:             opts.Timeout,
+		Debug:               opts.Debug,
+		Verbose:             opts.Verbose,
+		UseDocker:           useDocker,
+		ForceShell:          forceShell,
+		Privileged:          usePrivileged,
+		DockerVolumes:       dockerVolumes(useDocker, work.Dir, dockerVolumeName, volumeStrategy),
+		DockerExtraHosts:    dockerExtraHosts(useDocker, mockHostIP),
+		HostEnv:             opts.HostEnv,
+		KeepDockerResources: needsGCLArtifacts,
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
@@ -627,6 +638,21 @@ func runSingleTest(
 	phaseTimings["mock-logs"] = time.Since(phaseStart)
 	if err != nil && primaryErr == nil {
 		primaryErr = fmt.Errorf("read mock logs: %w", err)
+	}
+
+	// In volume strategy, gitlab-ci-local uses its own named volumes (gcl-*-build)
+	// for job workspaces. Bind mounts of host paths do not reach Docker Desktop
+	// from inside a devcontainer, so artifact files never land on the host
+	// filesystem. Instead, we ran with --cleanup=false to keep those volumes
+	// alive, extract all job-produced files into the workspace, then remove them.
+	if needsGCLArtifacts {
+		jobNames := make([]string, 0, len(result.JobOutputs))
+		for name := range result.JobOutputs {
+			jobNames = append(jobNames, name)
+		}
+		if fetchErr := workspace.FetchArtifactsFromGCLVolumes(preRunGCLVolumes, jobNames, work.WorkspaceDir); fetchErr != nil && primaryErr == nil {
+			primaryErr = fmt.Errorf("sync workspace artifacts from gcl volumes: %w", fetchErr)
+		}
 	}
 
 	// Build an origin source for assertions. Named volume: fetch from inside

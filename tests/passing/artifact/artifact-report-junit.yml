@@ -1,0 +1,52 @@
+stages: [test]
+
+run-tests:
+  stage: test
+  script:
+    - mkdir -p reports
+    - |
+      cat > reports/junit.xml << 'EOF'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuites>
+        <testsuite name="UnitSuite">
+          <testcase name="test_ok_1"/>
+          <testcase name="test_ok_2"/>
+          <testcase name="test_skip">
+            <skipped/>
+          </testcase>
+        </testsuite>
+        <testsuite name="IntegrationSuite">
+          <testcase name="test_integration_ok"/>
+        </testsuite>
+      </testsuites>
+      EOF
+  artifacts:
+    reports:
+      junit:
+        - reports/junit.xml
+---
+.glut:
+  name: "artifact report junit: aggregate and per-suite counts"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      run-tests:
+        exit-status: 0
+    artifacts:
+      "reports/junit.xml":
+        exists: true
+        report:
+          format: junit
+          tests: 4
+          failures: 0
+          errors: 0
+          skipped: 1
+          suites:
+            - name: "UnitSuite"
+              tests: 3
+              failures: 0
+            - name: "IntegrationSuite"
+              tests: 1
+              failures: 0

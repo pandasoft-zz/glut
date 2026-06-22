@@ -3,12 +3,12 @@ package executor
 import (
 	"bufio"
 	"context"
-	"net/url"
 	"os/exec"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pandasoft-zz/glut/internal/workspace"
 )
 
 const (
@@ -18,10 +18,6 @@ const (
 	// collectLogsTimeout is the per-container deadline inside collectLogs.
 	collectLogsTimeout = 15 * time.Second
 )
-
-// gclBuildVolumeRE matches the gcl build volume naming pattern:
-// gcl-{safeJobName}-{rand}-build
-var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
 
 type containerCapture struct {
 	id      string
@@ -191,13 +187,8 @@ func containerInfo(ctx context.Context, containerID, glutVolumeName string) (job
 		if name == glutVolumeName {
 			hasGlutVol = true
 		}
-		if m := gclBuildVolumeRE.FindStringSubmatch(name); len(m) == 2 {
-			decoded, err := url.PathUnescape(m[1])
-			if err == nil {
-				jobName = decoded
-			} else {
-				jobName = m[1]
-			}
+		if decoded, ok := workspace.GCLJobName(name); ok {
+			jobName = decoded
 		}
 	}
 	if !hasGlutVol {

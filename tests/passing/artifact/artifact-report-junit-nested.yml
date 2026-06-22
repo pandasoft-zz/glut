@@ -1,0 +1,45 @@
+stages: [test]
+
+run-tests:
+  stage: test
+  script:
+    - mkdir -p reports
+    - |
+      cat > reports/junit.xml << 'EOF'
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuites>
+        <testsuite name="Outer">
+          <testsuite name="Inner">
+            <testcase name="t1"/>
+            <testcase name="t2">
+              <failure message="boom">stack</failure>
+            </testcase>
+          </testsuite>
+        </testsuite>
+      </testsuites>
+      EOF
+  artifacts:
+    reports:
+      junit:
+        - reports/junit.xml
+---
+.glut:
+  name: "artifact report junit: nested suite-of-suites are traversed"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      run-tests:
+        exit-status: 0
+    artifacts:
+      "reports/junit.xml":
+        exists: true
+        report:
+          format: junit
+          tests: 2
+          failures: 1
+          suites:
+            - name: "Inner"
+              tests: 2
+              failures: 1

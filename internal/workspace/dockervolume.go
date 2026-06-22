@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -222,6 +225,149 @@ func FetchGitOriginTar(volName, workDir string) ([]byte, error) {
 		return nil, fmt.Errorf("tar git origin from docker volume: %w", err)
 	}
 	return tarData.Bytes(), nil
+}
+
+// ListGCLVolumes returns the names of all Docker volumes whose names begin
+// with "gcl-". Call this before running a pipeline to snapshot the pre-run
+// state; pass the result to FetchArtifactsFromGCLVolumes afterward.
+func ListGCLVolumes() []string {
+	out, err := exec.Command("docker", "volume", "ls", "-q", "--filter", "name=gcl-").Output()
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(out))
+}
+
+// FetchArtifactsFromGCLVolumes copies job-produced files from the gcl-*-build
+// volumes this run created and then removes them. It is the counterpart to
+// running gitlab-ci-local with --cleanup=false: the caller keeps those volumes
+// alive so they survive past executor.Run(), then calls this function.
+//
+// preRunVolumes is the snapshot taken before the pipeline ran; jobNames are the
+// jobs in this pipeline. A volume is harvested only when it is new since the
+// snapshot AND its job-name segment matches one of jobNames — this prevents a
+// concurrent glut/gitlab-ci-local run on the same daemon from having its
+// volumes extracted and destroyed. When jobNames is empty the nominal filter is
+// skipped (temporal-only fallback).
+//
+// The extraction excludes .git and .gitlab-ci-local trees to avoid overwriting
+// the workspace's own git state.
+func FetchArtifactsFromGCLVolumes(preRunVolumes, jobNames []string, workspaceDir string) error {
+	volumes := selectGCLArtifactVolumes(preRunVolumes, ListGCLVolumes(), jobNames)
+
+	var firstErr error
+	for _, vol := range volumes {
+		if extractErr := extractGCLBuildVolume(vol, workspaceDir); extractErr != nil && firstErr == nil {
+			firstErr = extractErr
+		}
+		removeVolumeContainers(vol)
+		_ = exec.Command("docker", "volume", "rm", vol).Run()
+
+		tmpVol := strings.TrimSuffix(vol, "-build") + "-tmp"
+		removeVolumeContainers(tmpVol)
+		_ = exec.Command("docker", "volume", "rm", tmpVol).Run()
+	}
+	return firstErr
+}
+
+// gclBuildVolumeRE matches gitlab-ci-local's build-volume naming pattern,
+// gcl-<encodedJobName>-<jobId>-build, where jobId is a random number. This is
+// the single source of truth for parsing those names; the executor's log-capture
+// path reuses it by calling the exported GCLJobName below.
+var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
+
+// GCLJobName extracts the (URL-decoded) job name from a gcl-*-build volume name.
+// gitlab-ci-local URL-encodes characters outside [\w-] into the segment, so we
+// decode it to recover the original job name. Returns ok=false when the name
+// does not match the build-volume shape.
+func GCLJobName(vol string) (string, bool) {
+	m := gclBuildVolumeRE.FindStringSubmatch(vol)
+	if len(m) != 2 {
+		return "", false
+	}
+	if decoded, err := url.PathUnescape(m[1]); err == nil {
+		return decoded, true
+	}
+	return m[1], true
+}
+
+// selectGCLArtifactVolumes picks the gcl build volumes belonging to this run.
+// Because the jobId in the name is random, volume names cannot be predicted up
+// front. We instead keep volumes that are new since preRun, end in "-build", and
+// whose decoded job-name segment matches one of jobNames — this prevents a
+// concurrent glut/gitlab-ci-local run on the same daemon from having its volumes
+// extracted and destroyed. When jobNames is empty (e.g. the pipeline failed
+// before producing any job output) the nominal filter is skipped (temporal-only
+// fallback). Results are sorted so multi-job extraction order is deterministic.
+func selectGCLArtifactVolumes(preRun, current, jobNames []string) []string {
+	preRunSet := make(map[string]struct{}, len(preRun))
+	for _, v := range preRun {
+		preRunSet[v] = struct{}{}
+	}
+
+	scoped := len(jobNames) > 0
+	want := make(map[string]struct{}, len(jobNames))
+	for _, name := range jobNames {
+		want[name] = struct{}{}
+	}
+
+	var out []string
+	for _, vol := range current {
+		if _, existed := preRunSet[vol]; existed {
+			continue
+		}
+		if !strings.HasSuffix(vol, "-build") {
+			continue
+		}
+		if scoped {
+			seg, ok := GCLJobName(vol)
+			if !ok {
+				continue
+			}
+			if _, ok := want[seg]; !ok {
+				continue
+			}
+		}
+		out = append(out, vol)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// extractGCLBuildVolume tars the contents of a gcl-*-build volume (excluding
+// .git and .gitlab-ci-local) and extracts them into workspaceDir.
+func extractGCLBuildVolume(volName, workspaceDir string) error {
+	ctrName := "glut-gcl-" + volName
+	tarCmd := exec.Command("docker", "run", "--name", ctrName,
+		"--volume", volName+":/vol",
+		"alpine", "tar", "-cC", "/vol",
+		"--exclude=./.git",
+		"--exclude=./.gitlab-ci-local",
+		".")
+	var stdout, stderr bytes.Buffer
+	tarCmd.Stdout = &stdout
+	tarCmd.Stderr = &stderr
+	runErr := tarCmd.Run()
+	_ = exec.Command("docker", "rm", ctrName).Run()
+	if runErr != nil {
+		// tar of an existing volume always succeeds (an empty volume yields an
+		// empty archive), so a non-zero exit is a real failure — surface it
+		// rather than silently leaving the artifacts un-extracted.
+		if se := bytes.TrimSpace(stderr.Bytes()); len(se) > 0 {
+			return fmt.Errorf("read gcl volume artifacts: %w (%s)", runErr, se)
+		}
+		return fmt.Errorf("read gcl volume artifacts: %w", runErr)
+	}
+
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		return fmt.Errorf("create workspace dir: %w", err)
+	}
+	extractCmd := exec.Command("tar", "-xC", workspaceDir)
+	extractCmd.Stdin = &stdout
+	if out, err := extractCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("extract gcl volume artifacts: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // DestroyDockerVolume removes the named Docker volume created by CreateDockerVolume.

@@ -567,6 +567,96 @@
             "symlink",
             "socket"
           ]
+        },
+        "report": {
+          "$ref": "#/definitions/report_assert"
+        }
+      }
+    },
+    "report_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format"],
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Report format: junit, dotenv, coverage (Cobertura), gitlab-security",
+          "enum": ["junit", "dotenv", "coverage", "gitlab-security"]
+        },
+        "tests": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Total number of test cases (junit)"
+        },
+        "failures": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Number of failed test cases (junit)"
+        },
+        "errors": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Number of errored test cases (junit)"
+        },
+        "skipped": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Number of skipped test cases (junit)"
+        },
+        "suites": {
+          "type": "array",
+          "description": "Per-suite assertions (junit)",
+          "items": {
+            "$ref": "#/definitions/suite_assert"
+          }
+        },
+        "line-rate": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Line coverage rate 0.0–1.0 (coverage/Cobertura)"
+        },
+        "branch-rate": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Branch coverage rate 0.0–1.0 (coverage/Cobertura)"
+        },
+        "keys": {
+          "type": "object",
+          "description": "Key assertions for dotenv format; value is a string/pattern or {exists: bool}",
+          "additionalProperties": true
+        },
+        "critical": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Number of critical-severity vulnerabilities (gitlab-security)"
+        },
+        "high": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Number of high-severity vulnerabilities (gitlab-security)"
+        },
+        "medium": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Number of medium-severity vulnerabilities (gitlab-security)"
+        },
+        "low": {
+          "$ref": "#/definitions/value_or_matcher",
+          "description": "Number of low-severity vulnerabilities (gitlab-security)"
+        }
+      }
+    },
+    "suite_assert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Test suite name as it appears in the JUnit XML"
+        },
+        "tests": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "failures": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "errors": {
+          "$ref": "#/definitions/value_or_matcher"
+        },
+        "skipped": {
+          "$ref": "#/definitions/value_or_matcher"
         }
       }
     },

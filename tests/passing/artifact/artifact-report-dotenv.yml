@@ -1,0 +1,36 @@
+stages: [build]
+
+build:
+  stage: build
+  script:
+    - |
+      cat > deploy.env << 'EOF'
+      APP_VERSION=1.2.3
+      DEPLOY_OK=true
+      IMAGE_TAG=registry.example.com/app:1.2.3
+      EOF
+  artifacts:
+    reports:
+      dotenv: deploy.env
+---
+.glut:
+  name: "artifact report dotenv: key presence and value assertions"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+  assert:
+    job:
+      build:
+        exit-status: 0
+    artifacts:
+      "deploy.env":
+        exists: true
+        report:
+          format: dotenv
+          keys:
+            APP_VERSION: "/^\\d+\\.\\d+\\.\\d+$/"
+            DEPLOY_OK: "true"
+            IMAGE_TAG:
+              exists: true
+            MISSING_KEY:
+              exists: false
