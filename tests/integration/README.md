@@ -12,12 +12,18 @@ GitLab instead.
 
 ## How it runs
 
-1. `.github/workflows/integration-gitlab.yml` mirrors the current commit to
-   `gitlab.com/glut-test/glut`, triggers its pipeline, and waits for the result.
-2. `.gitlab-ci.yml` builds glut and runs `glut run ./tests/integration/` on
-   GitLab. There `CI_SERVER_HOST=gitlab.com`, `CI_PROJECT_NAMESPACE=glut-test`
-   and a real `CI_JOB_TOKEN` are present, so `fetch: real` resolves the fixture
-   components from the `glut-test` group.
+1. `.github/workflows/ci.yml` builds the per-commit glut image (Dockerfile `dev`
+   target) once and pushes it to `ghcr.io/pandasoft-zz/glut:ci-<sha>`. The same
+   image is used by the GitHub Docker tests and the GitLab pipeline.
+2. The `gitlab-integration` job mirrors the commit to `gitlab.com/glut-test/glut`,
+   triggers its pipeline, and waits for the result.
+3. `.gitlab-ci.yml` pulls `ghcr.io/pandasoft-zz/glut:ci-<sha>` (no build) and runs
+   the full suite inside it. There `CI_SERVER_HOST=gitlab.com`,
+   `CI_PROJECT_NAMESPACE=glut-test` and a real `CI_JOB_TOKEN` are present, so
+   `fetch: real` resolves the fixture components from the `glut-test` group.
+
+The `ghcr.io/pandasoft-zz/glut` package must be **public** so the GitLab runner
+can pull it without credentials.
 
 ## Fixtures
 

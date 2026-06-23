@@ -1,117 +1,62 @@
 # GitLab pipeline for the glut-test mirror project (gitlab.com/glut-test/glut).
 #
-# GitHub ignores this file; it only runs on GitLab, where a real CI_JOB_TOKEN and
-# a real GitLab API exist. It runs the FULL glut test suite:
-#   - tests/integration/ — composite components via setup.components.fetch: real
-#     (needs the real GitLab; shell executor, no Docker).
-#   - tests/passing/ + tests/failing/ — the standard suite (mock GitLab); most
-#     use Docker, so they run under Docker-in-Docker.
-# See tests/integration/README.md.
+# The per-commit glut image (glut + gitlab-ci-local + git + curl + docker CLI) is
+# built and pushed to ghcr.io by the GitHub workflow BEFORE this pipeline is
+# triggered, so here we only pull and run — no build. The image tag is the commit
+# SHA, which matches because GitHub mirrors that exact commit
+# (CI_COMMIT_SHA == the SHA GitHub built and pushed).
 #
-# glut is compiled once (build-glut) and reused via the artifact. The Go build
-# and the gitlab-ci-local install are cached so repeat runs skip the slow steps.
+# It runs the FULL glut suite:
+#   - tests/integration/ — composite components via setup.components.fetch: real
+#     (needs the real GitLab; one component runs in a real alpine container).
+#   - tests/passing/ + tests/failing/ — the standard suite (mock GitLab).
+# Docker-based tests run under Docker-in-Docker; glut detects the container and
+# uses the named-volume strategy. See tests/integration/README.md.
+#
+# The ghcr.io/pandasoft-zz/glut package must be public so GitLab can pull it
+# without credentials.
 
 stages:
-  - build
   - test
 
 workflow:
   rules:
-    # The GitHub workflow pushes the commit, then triggers via the API; gating on
+    # GitHub pushes the commit, then triggers via the API; gating on
     # api/trigger/web (not push) keeps that to a single pipeline. Manual runs use
     # the "Run pipeline" button (web).
     - if: '$CI_PIPELINE_SOURCE == "trigger"'
     - if: '$CI_PIPELINE_SOURCE == "api"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
 
-build-glut:
-  stage: build
-  image: golang:1.26.2-bookworm
+.dind:
+  image:
+    name: ghcr.io/pandasoft-zz/glut:ci-$CI_COMMIT_SHA
+    entrypoint: [""]
+  services:
+    - docker:27-dind
   variables:
-    GOMODCACHE: $CI_PROJECT_DIR/.gocache/mod
-    GOCACHE: $CI_PROJECT_DIR/.gocache/build
-  cache:
-    # Module cache keyed by go.sum (shared across branches, invalidated on dep
-    # changes); build cache keyed per branch.
-    - key:
-        files:
-          - go.sum
-      paths:
-        - .gocache/mod
-    - key: go-build-$CI_COMMIT_REF_SLUG
-      paths:
-        - .gocache/build
-  script:
-    - CGO_ENABLED=0 go build -o glut ./cmd/glut
-  artifacts:
-    paths:
-      - glut
-    expire_in: 1h
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: "1"
 
 # Composite-component integration test: fetches real components from glut-test
-# (setup.components.fetch: real). Runs under Docker-in-Docker because one of the
-# fixture components (comp-greet) runs in a real alpine container.
+# (setup.components.fetch: real); one component runs in a real alpine container.
 integration:
+  extends: .dind
   stage: test
-  image: docker:27
-  services:
-    - docker:27-dind
-  needs:
-    - build-glut
-  variables:
-    DOCKER_HOST: tcp://docker:2376
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_CERT_PATH: "/certs/client"
-    DOCKER_TLS_VERIFY: "1"
-    GCL_VERSION: "4.72.0"
-    GCL_PREFIX: $CI_PROJECT_DIR/.npm-global-alpine
-  cache:
-    key: gcl-alpine-$GCL_VERSION
-    paths:
-      - .npm-global-alpine
-  before_script:
-    # curl is needed by shell-executor tests (docker:false) whose scripts call it,
-    # matching the curl present in the glut runtime image used by GitHub CI.
-    - apk add --no-cache nodejs npm git rsync bash ca-certificates curl
-    - export PATH="$GCL_PREFIX/bin:$PATH"
-    - command -v gitlab-ci-local >/dev/null || npm install -g --prefix "$GCL_PREFIX" "gitlab-ci-local@${GCL_VERSION}" >/dev/null
   script:
-    - export PATH="$GCL_PREFIX/bin:$PATH"
-    - ./glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/integration/
+    - glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/integration/
 
-# Standard suite (mock GitLab). Most tests use Docker images, so this runs under
-# Docker-in-Docker. glut auto-detects it is inside a container and uses the named
-# "volume" strategy (host bind mounts are invisible to the dind daemon).
+# Standard suite (mock GitLab). Most tests use Docker images.
 test-suite:
+  extends: .dind
   stage: test
-  image: docker:27
-  services:
-    - docker:27-dind
-  needs:
-    - build-glut
-  variables:
-    DOCKER_HOST: tcp://docker:2376
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_CERT_PATH: "/certs/client"
-    DOCKER_TLS_VERIFY: "1"
-    GCL_VERSION: "4.72.0"
-    GCL_PREFIX: $CI_PROJECT_DIR/.npm-global-alpine
-  cache:
-    key: gcl-alpine-$GCL_VERSION
-    paths:
-      - .npm-global-alpine
-  before_script:
-    # curl is needed by shell-executor tests (docker:false) whose scripts call it,
-    # matching the curl present in the glut runtime image used by GitHub CI.
-    - apk add --no-cache nodejs npm git rsync bash ca-certificates curl
-    - export PATH="$GCL_PREFIX/bin:$PATH"
-    - command -v gitlab-ci-local >/dev/null || npm install -g --prefix "$GCL_PREFIX" "gitlab-ci-local@${GCL_VERSION}" >/dev/null
   script:
-    - export PATH="$GCL_PREFIX/bin:$PATH"
     # Passing tests must pass.
-    - ./glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/passing/
+    - glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/passing/
     # Failing tests must fail (the suite is a negative fixture).
     - |
-      if ./glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/failing/; then
+      if glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/failing/; then
         echo "tests/failing/ unexpectedly passed"; exit 1
       fi
