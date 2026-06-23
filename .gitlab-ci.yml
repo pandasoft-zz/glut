@@ -70,7 +70,9 @@ integration:
     paths:
       - .npm-global-alpine
   before_script:
-    - apk add --no-cache nodejs npm git rsync bash ca-certificates
+    # curl is needed by shell-executor tests (docker:false) whose scripts call it,
+    # matching the curl present in the glut runtime image used by GitHub CI.
+    - apk add --no-cache nodejs npm git rsync bash ca-certificates curl
     - export PATH="$GCL_PREFIX/bin:$PATH"
     - command -v gitlab-ci-local >/dev/null || npm install -g --prefix "$GCL_PREFIX" "gitlab-ci-local@${GCL_VERSION}" >/dev/null
   script:
@@ -99,7 +101,9 @@ test-suite:
     paths:
       - .npm-global-alpine
   before_script:
-    - apk add --no-cache nodejs npm git rsync bash ca-certificates
+    # curl is needed by shell-executor tests (docker:false) whose scripts call it,
+    # matching the curl present in the glut runtime image used by GitHub CI.
+    - apk add --no-cache nodejs npm git rsync bash ca-certificates curl
     - export PATH="$GCL_PREFIX/bin:$PATH"
     - command -v gitlab-ci-local >/dev/null || npm install -g --prefix "$GCL_PREFIX" "gitlab-ci-local@${GCL_VERSION}" >/dev/null
   script:
