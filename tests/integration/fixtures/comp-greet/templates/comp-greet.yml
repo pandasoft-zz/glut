@@ -3,8 +3,11 @@ spec:
     name:
       default: "world"
 ---
-# Leaf component: prints a greeting. Exercises component inputs + execution.
+# Leaf component: runs in a real Docker container (alpine) so the composite
+# exercises a Docker job under DinD. Exercises component inputs + Docker execution.
 "greet":
   stage: test
+  image: alpine:3
   script:
     - echo "hello $[[ inputs.name ]]"
+    - echo "done"

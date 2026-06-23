@@ -49,26 +49,33 @@ build-glut:
     expire_in: 1h
 
 # Composite-component integration test: fetches real components from glut-test
-# (setup.components.fetch: real). Shell executor only, so no Docker needed.
+# (setup.components.fetch: real). Runs under Docker-in-Docker because one of the
+# fixture components (comp-greet) runs in a real alpine container.
 integration:
   stage: test
-  image: node:22-slim
+  image: docker:27
+  services:
+    - docker:27-dind
   needs:
     - build-glut
   variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: "1"
     GCL_VERSION: "4.72.0"
-    GCL_PREFIX: $CI_PROJECT_DIR/.npm-global
+    GCL_PREFIX: $CI_PROJECT_DIR/.npm-global-alpine
   cache:
-    key: gcl-deb-$GCL_VERSION
+    key: gcl-alpine-$GCL_VERSION
     paths:
-      - .npm-global
+      - .npm-global-alpine
   before_script:
-    - apt-get update -qq && apt-get install -y --no-install-recommends bash git rsync ca-certificates >/dev/null
+    - apk add --no-cache nodejs npm git rsync bash ca-certificates
     - export PATH="$GCL_PREFIX/bin:$PATH"
     - command -v gitlab-ci-local >/dev/null || npm install -g --prefix "$GCL_PREFIX" "gitlab-ci-local@${GCL_VERSION}" >/dev/null
   script:
     - export PATH="$GCL_PREFIX/bin:$PATH"
-    - ./glut run --copy-strategy=auto --include tests ./tests/integration/
+    - ./glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/integration/
 
 # Standard suite (mock GitLab). Most tests use Docker images, so this runs under
 # Docker-in-Docker. glut auto-detects it is inside a container and uses the named

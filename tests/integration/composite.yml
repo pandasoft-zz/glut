@@ -7,8 +7,10 @@ stages: [test]
 .glut:
   name: "composite component resolves and runs nested real sub-components"
   setup:
-    # Shell executor: the fixture jobs are pure shell, no image needed.
-    docker: false
+    # docker: true (default) — the greet component runs in a real Docker
+    # container (alpine); the artifact/summary jobs have no image and run in the
+    # shell. The GitLab pipeline runs this under Docker-in-Docker.
+    docker: true
     # Integration mode: fetch include:component from the real GitLab (gitlab.com)
     # using the real CI_JOB_TOKEN. Requires running inside GitLab CI in the
     # glut-test group (see tests/integration/README.md). The composite and its
@@ -17,12 +19,13 @@ stages: [test]
       fetch: real
   assert:
     job:
-      # From comp-greet, via the composite, with the input threaded through.
+      # From comp-greet (runs in alpine via Docker), with the input threaded through.
       greet:
         present: true
         exit-status: 0
         stdout:
           - "hello glut"
+          - "done"
       # From comp-artifact, via the composite.
       make-artifact:
         present: true
