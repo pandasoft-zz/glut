@@ -1,0 +1,40 @@
+stages: [test]
+
+# The mock binary is named "glut" — the same name as the glut CLI itself. The
+# wrapper used in shell mode IS the glut binary, so its argv[0]-based dispatch
+# must still route to the mock wrapper (not the real CLI) when invoked under the
+# "glut" name with the mock environment active. Regression for the mock-glut
+# dispatch bug: previously the real CLI ran and failed with "unknown command".
+mock-glut-shell:
+  stage: test
+  script:
+    - glut run --report ./tests
+---
+.glut:
+  name: "docker:false GLUT mock binary named glut routes to the mock, not the real CLI"
+  setup:
+    branch: main
+    docker: false
+    mocks:
+      binaries:
+        glut:
+          executable: |
+            #!/bin/sh
+            echo "MOCK_GLUT called: $*"
+            exit 0
+  assert:
+    job:
+      mock-glut-shell:
+        exit-status: 0
+        stdout:
+          - "MOCK_GLUT called"
+    binary:
+      glut:
+        called: true
+        times: 1
+        calls:
+          - args:
+              contain-elements:
+                - "run"
+                - "--report"
+                - "./tests"

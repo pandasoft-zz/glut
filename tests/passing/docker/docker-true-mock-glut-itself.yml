@@ -1,0 +1,41 @@
+stages: [test]
+
+# Same as docker-false-mock-glut-itself, but the job runs inside a Docker
+# container. The "glut" mock must be reachable from inside the container (the
+# wrapper lives in the workspace mount, not at a host-only path) AND must route
+# to the mock wrapper rather than the real glut CLI. Regression for both the
+# bind-mount wrapper-path bug and the mock-glut dispatch bug.
+mock-glut-docker:
+  image: alpine:latest
+  stage: test
+  script:
+    - glut run --report ./tests
+---
+.glut:
+  name: "docker:true GLUT mock binary named glut is callable in-container and routes to the mock"
+  setup:
+    branch: main
+    docker: true
+    mocks:
+      binaries:
+        glut:
+          executable: |
+            #!/bin/sh
+            echo "MOCK_GLUT called: $*"
+            exit 0
+  assert:
+    job:
+      mock-glut-docker:
+        exit-status: 0
+        stdout:
+          - "MOCK_GLUT called"
+    binary:
+      glut:
+        called: true
+        times: 1
+        calls:
+          - args:
+              contain-elements:
+                - "run"
+                - "--report"
+                - "./tests"

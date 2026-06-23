@@ -46,6 +46,35 @@ func Run() {
 	}))
 }
 
+// ShouldRunAsMock reports whether this process was invoked as a mocked binary
+// rather than the real glut CLI.
+//
+// A non-"glut" argv[0] is always a mock: SetupMockBinaries symlinks each mock
+// under its own name, so the binary can only be reached under that name when it
+// is standing in for a mocked tool.
+//
+// When argv[0] IS "glut" — i.e. a test mocks the `glut` binary itself — the
+// basename alone cannot distinguish the mock from the genuine CLI, so we
+// additionally require that the mock environment is active (GLUT_MOCK_BIN_REAL
+// set) and that a real script for "glut" exists in it. The real glut CLI never
+// has GLUT_MOCK_BIN_REAL in its own process environment (it only sets it for the
+// job it spawns), so the genuine CLI is never misrouted into the mock wrapper.
+func ShouldRunAsMock(args, environ []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	base := filepath.Base(args[0])
+	if base != "glut" && base != "glut.exe" {
+		return true
+	}
+	realDir := envMap(environ)[config.EnvMockBinReal]
+	if realDir == "" {
+		return false
+	}
+	_, err := os.Stat(realBinaryPath(realDir, base))
+	return err == nil
+}
+
 func RunWithOptions(opts RunOptions) int {
 	opts = opts.withDefaults()
 	if len(opts.Args) == 0 {

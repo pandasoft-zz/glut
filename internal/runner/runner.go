@@ -517,8 +517,12 @@ func runSingleTest(
 	// Always inject mock binaries into shell PATH so jobs without image: can find
 	// them regardless of docker mode. For docker:true this runs alongside the volume;
 	// for docker:false this is the only setup path.
+	//
+	// Pass useDocker so that in Docker mode the wrapper binary is copied inside the
+	// workspace directory (which is the mount root inside the container) instead of
+	// being symlinked to a host path that is invisible to the job container.
 	if primaryErr == nil && hasMockBinaries(testFile) {
-		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), false)
+		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), useDocker)
 	}
 	phaseTimings["mock-binaries"] = time.Since(phaseStart)
 	if primaryErr != nil {
