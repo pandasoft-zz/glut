@@ -1,0 +1,41 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE/comp-suite/comp-suite@1
+    inputs:
+      greeting_name: glut
+stages: [test]
+---
+.glut:
+  name: "composite component resolves and runs nested real sub-components"
+  setup:
+    # docker: true (default) — the greet component runs in a real Docker
+    # container (alpine); the artifact/summary jobs have no image and run in the
+    # shell. The GitLab pipeline runs this under Docker-in-Docker.
+    docker: true
+    # Integration mode: fetch include:component from the real GitLab (gitlab.com)
+    # using the real CI_JOB_TOKEN. Requires running inside GitLab CI in the
+    # glut-test group (see tests/integration/README.md). The composite and its
+    # leaf components live as real projects under glut-test.
+    components:
+      fetch: real
+  assert:
+    job:
+      # From comp-greet (runs in alpine via Docker), with the input threaded through.
+      greet:
+        present: true
+        exit-status: 0
+        stdout:
+          - "hello glut"
+          - "done"
+      # From comp-artifact, via the composite.
+      make-artifact:
+        present: true
+        exit-status: 0
+      # The composite's own job.
+      suite-summary:
+        present: true
+        exit-status: 0
+    artifacts:
+      "out.txt":
+        exists: true
+        contents:
+          - "artifact-ok"

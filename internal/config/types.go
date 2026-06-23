@@ -34,23 +34,42 @@ func (s *StringSlice) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type SetupConfig struct {
-	Branch         string          `yaml:"branch"`
-	DefaultBranch  string          `yaml:"default_branch"`
-	Tag            string          `yaml:"tag"`
-	TagMessage     string          `yaml:"tag_message"`
-	PipelineSource string          `yaml:"pipeline_source"`
-	Docker         *bool           `yaml:"docker"`
-	Privileged     *bool           `yaml:"privileged"`
-	RefProtected   *bool           `yaml:"ref_protected"`
-	MergeRequest   *MRConfig       `yaml:"merge_request"`
-	Upstream       *UpstreamConfig `yaml:"upstream"`
-	Schedule       *ScheduleConfig `yaml:"schedule"`
-	Chat           *ChatConfig     `yaml:"chat"`
-	Git            *GitSetupConfig `yaml:"git"`
-	Pipeline       *PipelineConfig `yaml:"pipeline"`
-	API            *APISetupConfig `yaml:"api"`
-	Mocks          *MocksConfig    `yaml:"mocks"`
+	Branch         string            `yaml:"branch"`
+	DefaultBranch  string            `yaml:"default_branch"`
+	Tag            string            `yaml:"tag"`
+	TagMessage     string            `yaml:"tag_message"`
+	PipelineSource string            `yaml:"pipeline_source"`
+	Docker         *bool             `yaml:"docker"`
+	Privileged     *bool             `yaml:"privileged"`
+	RefProtected   *bool             `yaml:"ref_protected"`
+	MergeRequest   *MRConfig         `yaml:"merge_request"`
+	Upstream       *UpstreamConfig   `yaml:"upstream"`
+	Schedule       *ScheduleConfig   `yaml:"schedule"`
+	Chat           *ChatConfig       `yaml:"chat"`
+	Git            *GitSetupConfig   `yaml:"git"`
+	Pipeline       *PipelineConfig   `yaml:"pipeline"`
+	API            *APISetupConfig   `yaml:"api"`
+	Mocks          *MocksConfig      `yaml:"mocks"`
+	Components     *ComponentsConfig `yaml:"components"`
 }
+
+// ComponentsConfig controls how `include: component:` directives are resolved.
+//
+// Fetch == "" (default): isolated behaviour — components are not fetched from a
+// real git; only locally resolvable includes work.
+//
+// Fetch == "real": integration mode — `include: component:` is resolved against
+// a REAL GitLab over HTTPS using the real CI_JOB_TOKEN, so a composite component
+// is exercised end-to-end with its real sub-components. The real server, project
+// namespace and token are taken from the host environment (see runner). Only the
+// component fetch becomes real; the runtime GitLab API stays mocked.
+type ComponentsConfig struct {
+	Fetch string `yaml:"fetch"`
+}
+
+// ComponentsFetchReal is the opt-in value enabling integration-mode component
+// resolution against a real git remote.
+const ComponentsFetchReal = "real"
 
 type PipelineConfig struct {
 	User *PipelineUserConfig `yaml:"user"`

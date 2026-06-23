@@ -26,6 +26,7 @@ type ChatConfig = config.ChatConfig
 type GitSetupConfig = config.GitSetupConfig
 type GitUserConfig = config.GitUserConfig
 type GitOriginConfig = config.GitOriginConfig
+type ComponentsConfig = config.ComponentsConfig
 type APISetupConfig = config.APISetupConfig
 type UserConfig = config.UserConfig
 type GroupConfig = config.GroupConfig

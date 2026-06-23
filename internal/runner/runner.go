@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pandasoft-zz/glut/internal/asserter"
+	"github.com/pandasoft-zz/glut/internal/config"
 	"github.com/pandasoft-zz/glut/internal/docker"
 	"github.com/pandasoft-zz/glut/internal/executor"
 	"github.com/pandasoft-zz/glut/internal/mockserver"
@@ -555,6 +556,36 @@ func runSingleTest(
 		// (same host or container). glut-mock remains an alias via --extra-host.
 		workspace.ApplyServerBaseURL(envVars, mockHostIP, server.Port())
 	}
+
+	// Integration mode: resolve `include: component:` against a real GitLab using
+	// the real CI_JOB_TOKEN, so a composite component runs with its real
+	// sub-components. Only the component fetch becomes real (via a gcl-origin
+	// remote + an insteadOf credential rewrite injected into gitlab-ci-local's
+	// environment); the runtime GitLab API stays mocked, and origin/sandbox are
+	// untouched.
+	var gitConfigEnv map[string]string
+	if componentsRealFetch(testFile.Glut.Setup) {
+		fetch, err := workspace.RealComponentFetch(opts.HostEnv)
+		if err != nil {
+			primaryErr = fmt.Errorf("components.fetch real: %w", err)
+			result.Passed = false
+			return
+		}
+		if err := work.SetGCLOriginRemote(fetch.GCLOriginURL); err != nil {
+			primaryErr = fmt.Errorf("components.fetch real: %w", err)
+			result.Passed = false
+			return
+		}
+		// CI_PROJECT_NAMESPACE: the component address path segment.
+		// CI_SERVER_FQDN: the address domain — also used by GCL's `git ls-remote
+		// --tags` step that resolves numeric/~latest refs (e.g. @1), so it must
+		// point at the real server, not the mock. Set after ApplyServerBaseURL so
+		// it is not overwritten by the Docker bridge-IP value.
+		envVars["CI_PROJECT_NAMESPACE"] = fetch.Namespace
+		envVars["CI_SERVER_FQDN"] = fetch.ServerFQDN
+		gitConfigEnv = fetch.GitConfigEnv
+	}
+
 	execCfg := executor.ExecutorConfig{
 		WorkspacePath:       work.WorkspaceDir,
 		PipelineYAML:        testFile.PipelineYAML,
@@ -571,6 +602,7 @@ func runSingleTest(
 		DockerExtraHosts:    dockerExtraHosts(useDocker, mockHostIP),
 		HostEnv:             opts.HostEnv,
 		KeepDockerResources: needsGCLArtifacts,
+		GitConfigEnv:        gitConfigEnv,
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
@@ -818,6 +850,12 @@ func apiConfig(testFile parser.TestFile) parser.APISetupConfig {
 
 func hasMockBinaries(testFile parser.TestFile) bool {
 	return testFile.Glut.Setup.Mocks != nil && len(testFile.Glut.Setup.Mocks.Binaries) > 0
+}
+
+// componentsRealFetch reports whether the test opted into integration-mode
+// component resolution (setup.components.fetch: real).
+func componentsRealFetch(setup parser.SetupConfig) bool {
+	return setup.Components != nil && setup.Components.Fetch == config.ComponentsFetchReal
 }
 
 func resolveGlutBinPath(path string) string {

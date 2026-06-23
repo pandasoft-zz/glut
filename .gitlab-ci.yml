@@ -1,0 +1,62 @@
+# GitLab pipeline for the glut-test mirror project (gitlab.com/glut-test/glut).
+#
+# The per-commit glut image (glut + gitlab-ci-local + git + curl + docker CLI) is
+# built and pushed to ghcr.io by the GitHub workflow BEFORE this pipeline is
+# triggered, so here we only pull and run — no build. The image tag is the commit
+# SHA, which matches because GitHub mirrors that exact commit
+# (CI_COMMIT_SHA == the SHA GitHub built and pushed).
+#
+# It runs the FULL glut suite:
+#   - tests/integration/ — composite components via setup.components.fetch: real
+#     (needs the real GitLab; one component runs in a real alpine container).
+#   - tests/passing/ + tests/failing/ — the standard suite (mock GitLab).
+# Docker-based tests run under Docker-in-Docker; glut detects the container and
+# uses the named-volume strategy. See tests/integration/README.md.
+#
+# The ghcr.io/pandasoft-zz/glut package must be public so GitLab can pull it
+# without credentials.
+
+stages:
+  - test
+
+workflow:
+  rules:
+    # GitHub pushes the commit, then triggers via the API; gating on
+    # api/trigger/web (not push) keeps that to a single pipeline. Manual runs use
+    # the "Run pipeline" button (web).
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+.dind:
+  image:
+    name: ghcr.io/pandasoft-zz/glut:ci-$CI_COMMIT_SHA
+    entrypoint: [""]
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: "1"
+
+# Composite-component integration test: fetches real components from glut-test
+# (setup.components.fetch: real); one component runs in a real alpine container.
+integration:
+  extends: .dind
+  stage: test
+  script:
+    - glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/integration/
+
+# Standard suite (mock GitLab). Most tests use Docker images.
+test-suite:
+  extends: .dind
+  stage: test
+  script:
+    # Passing tests must pass.
+    - glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/passing/
+    # Failing tests must fail (the suite is a negative fixture).
+    - |
+      if glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/failing/; then
+        echo "tests/failing/ unexpectedly passed"; exit 1
+      fi

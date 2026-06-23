@@ -407,6 +407,62 @@ setup:
           echo "release-cli $*"
 ```
 
+### Composite Components (Integration Mode)
+
+By default GLUT runs in isolation and does not fetch `include: component:`
+directives from a real GitLab. To test a **composite component** — one that
+assembles other components — as a real integration test, set
+`setup.components.fetch: real`:
+
+```yaml
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE/build/build@1
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE/test/test@1
+---
+.glut:
+  name: "composite component assembles and runs its sub-components"
+  setup:
+    components:
+      fetch: real
+  assert:
+    job:
+      build:
+        present: true
+      test:
+        present: true
+```
+
+In this mode GLUT resolves `include: component:` against a **real** GitLab over
+HTTPS using the real `CI_JOB_TOKEN`, so the composite runs end-to-end with its
+real sub-components. Only the component fetch becomes real — the runtime GitLab
+API stays mocked, and the workspace's `origin`/sandbox is untouched (GLUT adds a
+separate `gcl-origin` remote and an `insteadOf` credential rewrite that live only
+in the gitlab-ci-local subprocess).
+
+**Requirements and coordinates** (read from the host environment, so nothing
+secret or private appears in the test file or a commit):
+
+- Run inside a GitLab CI job so the real `CI_JOB_TOKEN` is present (or set
+  `GLUT_COMPONENTS_TOKEN`). The token must be allowed to read the component
+  projects.
+- Real server host: real `CI_SERVER_HOST` (or `GLUT_COMPONENTS_SERVER`,
+  accepts `host` or `host:port`; defaults to port 443).
+- Real namespace: real `CI_PROJECT_NAMESPACE` (or `GLUT_COMPONENTS_NAMESPACE`) —
+  this is the path segment in `$CI_SERVER_FQDN/$CI_PROJECT_NAMESPACE/<name>`.
+
+Notes:
+
+- The `$CI_SERVER_FQDN` / `$CI_PROJECT_NAMESPACE` form is recommended; GLUT points
+  both at the real server in this mode (including the `git ls-remote --tags` step
+  that resolves numeric/`~latest` refs such as `@1`).
+- Components must follow the standard layout: `templates/<name>.yml` (or
+  `templates/<name>/template.yml`) at the component project root, with the ref
+  (`@1`, `@1.2.3`, `@~latest`, a branch, or a SHA) published as on real GitLab.
+
+A complete working example (fixtures, the runner pipeline, and the GitHub
+workflow that mirrors, triggers and waits for the GitLab pipeline) lives in
+[`tests/integration/`](../../tests/integration/README.md).
+
 ### Docker Executor
 
 By default GLUT uses full Docker mode: jobs with `image:` run in Docker
