@@ -17,6 +17,64 @@ import (
 	"github.com/pandasoft-zz/glut/internal/config"
 )
 
+func TestShouldRunAsMock(t *testing.T) {
+	t.Parallel()
+
+	realDir := t.TempDir()
+	// A mock real-script for "glut" exists in this dir; the genuine CLI never has
+	// one because GLUT_MOCK_BIN_REAL only points at a mock's bin-real directory.
+	if err := os.WriteFile(filepath.Join(realDir, "glut"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	mockEnv := []string{config.EnvMockBinReal + "=" + realDir}
+
+	tests := []struct {
+		name    string
+		args    []string
+		environ []string
+		want    bool
+	}{
+		{
+			name:    "non-glut name is always a mock",
+			args:    []string{"/some/bin/release-cli", "create"},
+			environ: nil,
+			want:    true,
+		},
+		{
+			name:    "glut name without mock env is the real CLI",
+			args:    []string{"/usr/local/bin/glut", "run", "./tests"},
+			environ: nil,
+			want:    false,
+		},
+		{
+			name:    "glut name with mock env and matching real script is a mock",
+			args:    []string{"/work/bin/glut", "run", "--report", "./tests"},
+			environ: mockEnv,
+			want:    true,
+		},
+		{
+			name:    "glut name with mock env but no matching real script is the real CLI",
+			args:    []string{"/usr/local/bin/glut", "run"},
+			environ: []string{config.EnvMockBinReal + "=" + t.TempDir()},
+			want:    false,
+		},
+		{
+			name:    "empty args is not a mock",
+			args:    nil,
+			environ: mockEnv,
+			want:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ShouldRunAsMock(tc.args, tc.environ); got != tc.want {
+				t.Errorf("ShouldRunAsMock(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
 	t.Parallel()
 	logDir := t.TempDir()
@@ -436,11 +494,11 @@ func TestBarrierBinaryName(t *testing.T) {
 	}{
 		{".curl.jsonl.1234", "curl", true},
 		{".release-cli.jsonl.99", "release-cli", true},
-		{"curl.jsonl.1234", "", false},   // no leading dot
-		{".curl.jsonl.", "", false},      // empty pid
-		{".curl.jsonl.abc", "", false},   // non-numeric pid
-		{".curl.txt.1234", "", false},    // wrong extension
-		{".curl.jsonl", "", false},       // missing pid
+		{"curl.jsonl.1234", "", false}, // no leading dot
+		{".curl.jsonl.", "", false},    // empty pid
+		{".curl.jsonl.abc", "", false}, // non-numeric pid
+		{".curl.txt.1234", "", false},  // wrong extension
+		{".curl.jsonl", "", false},     // missing pid
 		{"", "", false},
 	}
 	for _, tc := range cases {
