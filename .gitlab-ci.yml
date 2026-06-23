@@ -1,17 +1,19 @@
 # GitLab pipeline for the glut-test mirror project (gitlab.com/glut-test/glut).
 #
 # GitHub ignores this file; it only runs on GitLab, where a real CI_JOB_TOKEN and
-# a real GitLab API exist. It runs the composite-component integration tests
-# (tests/integration/) which use `setup.components.fetch: real` to fetch the
-# real fixture components from the glut-test group. See tests/integration/README.md.
+# a real GitLab API exist. It runs the FULL glut test suite:
+#   - tests/integration/ — composite components via setup.components.fetch: real
+#     (needs the real GitLab; shell executor, no Docker).
+#   - tests/passing/ + tests/failing/ — the standard suite (mock GitLab); most
+#     use Docker, so they run under Docker-in-Docker.
+# See tests/integration/README.md.
 #
-# glut is compiled once (build-glut); the integration job reuses the binary via
-# the artifact. Both the Go build and the gitlab-ci-local install are cached, so
-# repeat runs only recompile what changed.
+# glut is compiled once (build-glut) and reused via the artifact. The Go build
+# and the gitlab-ci-local install are cached so repeat runs skip the slow steps.
 
 stages:
   - build
-  - integration
+  - test
 
 workflow:
   rules:
@@ -46,8 +48,10 @@ build-glut:
       - glut
     expire_in: 1h
 
+# Composite-component integration test: fetches real components from glut-test
+# (setup.components.fetch: real). Shell executor only, so no Docker needed.
 integration:
-  stage: integration
+  stage: test
   image: node:22-slim
   needs:
     - build-glut
@@ -55,8 +59,7 @@ integration:
     GCL_VERSION: "4.72.0"
     GCL_PREFIX: $CI_PROJECT_DIR/.npm-global
   cache:
-    # gitlab-ci-local install, keyed by version — reused until GCL_VERSION bumps.
-    key: gcl-$GCL_VERSION
+    key: gcl-deb-$GCL_VERSION
     paths:
       - .npm-global
   before_script:
@@ -64,7 +67,40 @@ integration:
     - export PATH="$GCL_PREFIX/bin:$PATH"
     - command -v gitlab-ci-local >/dev/null || npm install -g --prefix "$GCL_PREFIX" "gitlab-ci-local@${GCL_VERSION}" >/dev/null
   script:
-    # Shell-executor integration tests; fetch:real pulls components from glut-test
-    # using the job's real CI_JOB_TOKEN.
     - export PATH="$GCL_PREFIX/bin:$PATH"
     - ./glut run --copy-strategy=auto --include tests ./tests/integration/
+
+# Standard suite (mock GitLab). Most tests use Docker images, so this runs under
+# Docker-in-Docker. glut auto-detects it is inside a container and uses the named
+# "volume" strategy (host bind mounts are invisible to the dind daemon).
+test-suite:
+  stage: test
+  image: docker:27
+  services:
+    - docker:27-dind
+  needs:
+    - build-glut
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: "1"
+    GCL_VERSION: "4.72.0"
+    GCL_PREFIX: $CI_PROJECT_DIR/.npm-global-alpine
+  cache:
+    key: gcl-alpine-$GCL_VERSION
+    paths:
+      - .npm-global-alpine
+  before_script:
+    - apk add --no-cache nodejs npm git rsync bash ca-certificates
+    - export PATH="$GCL_PREFIX/bin:$PATH"
+    - command -v gitlab-ci-local >/dev/null || npm install -g --prefix "$GCL_PREFIX" "gitlab-ci-local@${GCL_VERSION}" >/dev/null
+  script:
+    - export PATH="$GCL_PREFIX/bin:$PATH"
+    # Passing tests must pass.
+    - ./glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/passing/
+    # Failing tests must fail (the suite is a negative fixture).
+    - |
+      if ./glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/failing/; then
+        echo "tests/failing/ unexpectedly passed"; exit 1
+      fi
