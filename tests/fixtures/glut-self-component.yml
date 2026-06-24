@@ -1,0 +1,19 @@
+spec:
+  inputs:
+    test_path:
+      type: string
+      default: "./tests"
+---
+
+# A GitLab CI component whose job invokes `glut run` — the real-world pattern
+# that GLUT itself is used to test. Running it under GLUT would recurse, so the
+# GLUT test that includes this component mocks the `glut` binary to break the
+# cycle (and overrides the image to alpine, so this image is never actually
+# pulled). The tag matches the per-commit CI image built for the commit under
+# test (see .gitlab-ci.yml) rather than a floating :latest, so that if the
+# override ever regressed the job would use exactly the code under test.
+test:glut:components:
+  image: ghcr.io/pandasoft-zz/glut:ci-$CI_COMMIT_SHA
+  stage: test
+  script:
+    - glut run --report junit:reports/junit.xml "$[[ inputs.test_path ]]"
