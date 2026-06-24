@@ -60,3 +60,16 @@ test-suite:
       if glut run --copy-strategy=auto --docker-volume-strategy volume --include tests ./tests/failing/; then
         echo "tests/failing/ unexpectedly passed"; exit 1
       fi
+
+# Verifies the DinD volume-strategy auto-detection end to end. Unlike the jobs
+# above, this one does NOT force --docker-volume-strategy: it relies on "auto",
+# which must pick the named-volume strategy here because DOCKER_HOST is a remote
+# (tcp://) dind daemon. The fixture mocks a binary named `glut` in a component
+# self-test — exactly the real-world scenario that broke under DinD when auto
+# misdetected the environment as a native host and fell back to a (broken) bind
+# mount. If auto regresses to bind, the mock is not found and this job fails.
+dind-autodetect:
+  extends: .dind
+  stage: test
+  script:
+    - glut run --copy-strategy=auto --include tests ./tests/passing/docker/docker-true-component-self-test.yml

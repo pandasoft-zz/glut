@@ -1,0 +1,47 @@
+stages: [test]
+
+include:
+  - local: 'tests/fixtures/glut-self-component.yml'
+
+# Override only the image: the component declares the per-commit glut image,
+# which isn't pullable outside the GitLab pipeline and carries a `glut`
+# entrypoint. Running in plain alpine keeps the only `glut` on PATH the mock
+# injected for docker:true. (Recursion is already broken by the mock itself —
+# `glut run` resolves to the mock first on PATH — so this is the pragmatic
+# real-world pattern, not what fixes the cycle.) This is the end-to-end
+# regression for mock injection under DinD (named-volume strategy) and for
+# routing a mock named `glut` to the wrapper rather than the real CLI.
+test:glut:components:
+  image: alpine
+---
+.glut:
+  name: "docker:true component self-test: mocked glut runs in-container and breaks recursion"
+  setup:
+    docker: true
+    branch: "feature/x"
+    pipeline_source: "merge_request_event"
+    merge_request:
+      target_branch: "main"
+      iid: 1
+    mocks:
+      binaries:
+        glut:
+          executable: |
+            #!/bin/sh
+            echo "mock glut $*"
+            exit 0
+  assert:
+    job:
+      "test:glut:components":
+        exit-status: 0
+        stdout:
+          - "mock glut"
+    binary:
+      glut:
+        called: true
+        calls:
+          - args:
+              contain-elements:
+                - "run"
+                - "--report"
+                - "./tests"

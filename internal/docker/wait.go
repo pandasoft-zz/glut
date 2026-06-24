@@ -132,24 +132,50 @@ const (
 )
 
 // ResolveVolumeStrategy returns the effective volume strategy.
-// When strategy is VolumeStrategyAuto (or empty) it checks whether GLUT is
-// running inside a Docker container by looking for /.dockerenv, which Docker
-// creates in every container it starts.
+// When strategy is VolumeStrategyAuto (or empty) it detects whether bind mounts
+// can possibly work in the current environment from two signals:
 //
-// Inside a container (devcontainer on Docker Desktop OR Docker-in-Docker in CI):
-// the Docker daemon resolves bind-mount paths against the host or outer-daemon
-// filesystem, not the inner container's filesystem. Named volumes are required.
+//  1. A remote Docker daemon (DOCKER_HOST=tcp://… or ssh://…, the standard
+//     Docker-in-Docker setup) cannot resolve bind-mount paths on GLUT's local
+//     filesystem at all — the daemon runs elsewhere. Named volumes, populated
+//     over the Docker API, are the only option. This signal is checked first
+//     because Kubernetes-based CI runners do not create /.dockerenv, so DinD on
+//     such runners would otherwise be misdetected as a native host.
+//  2. /.dockerenv, which Docker creates in every container it starts. Inside a
+//     container (devcontainer on Docker Desktop OR DinD in CI) the daemon
+//     resolves bind-mount paths against the host/outer-daemon filesystem, not
+//     the inner container's, so named volumes are required.
 //
-// Outside a container (native Linux host): the daemon and GLUT share the same
-// filesystem, so a plain bind mount works and avoids all volume overhead.
+// Outside a container with a local daemon (native Linux host): the daemon and
+// GLUT share the same filesystem, so a plain bind mount works and avoids all
+// volume overhead.
 func ResolveVolumeStrategy(strategy string) string {
 	if strategy != VolumeStrategyAuto && strategy != "" {
 		return strategy
 	}
-	if _, err := os.Stat("/.dockerenv"); err == nil {
+	_, dockerenvErr := os.Stat("/.dockerenv")
+	return resolveAutoVolumeStrategy(os.Getenv("DOCKER_HOST"), dockerenvErr == nil)
+}
+
+// resolveAutoVolumeStrategy is the pure decision logic behind the "auto"
+// strategy, split out so it can be unit-tested without faking /.dockerenv.
+func resolveAutoVolumeStrategy(dockerHost string, inContainer bool) string {
+	if isRemoteDockerHost(dockerHost) {
+		return VolumeStrategyVolume // remote daemon — bind mounts cannot resolve local paths
+	}
+	if inContainer {
 		return VolumeStrategyVolume // inside a container — named volumes required
 	}
 	return VolumeStrategyBind
+}
+
+// isRemoteDockerHost reports whether DOCKER_HOST points at a daemon that does
+// not share GLUT's filesystem. tcp:// and ssh:// daemons (Docker-in-Docker,
+// remote hosts) cannot resolve local bind-mount paths; an empty value or a
+// unix:// socket is treated as local.
+func isRemoteDockerHost(dockerHost string) bool {
+	dockerHost = strings.TrimSpace(dockerHost)
+	return strings.HasPrefix(dockerHost, "tcp://") || strings.HasPrefix(dockerHost, "ssh://")
 }
 
 // PruneOrphanedVolumes removes dangling Docker volumes whose names match
