@@ -704,6 +704,14 @@ assert:
             contain-substring: "apiVersion:"
 ```
 
+The recorded `stdin` is captured as the wrapper streams it to the mock binary.
+Typical inputs are captured in full whether or not the mock reads them, since
+the input is buffered into the OS pipe. Only a payload larger than the OS pipe
+buffer (about 64 KiB) that the mock never reads could be captured only in part;
+if you assert on a large `stdin` payload, make the mock consume it — for
+example, prefix the mock `executable` with `cat >/dev/null`. In Docker mode the
+full piped input is always captured.
+
 ## Full Example
 
 This example combines job, artifact, git, API, and binary asserts.

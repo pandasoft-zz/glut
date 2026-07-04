@@ -489,10 +489,11 @@ deferred refactoring tasks are correctly annotated and unchecked. Verification
 was static (code + diff review); the full test suite runs in CI.
 
 The follow-up issues found during verification are listed below as new tasks.
-All of them have since been fixed and re-tested (`go build`, `go vet`, and the
-affected package tests pass), except two left open on purpose: the gosec
-exclude-ID check needs a `golangci-lint` run, and the mock stdin-capture
-semantics change needs a dedicated stub test before it can be closed.
+All of them have since been fixed and re-tested: `go build`, `go vet`, the
+affected package tests, and `golangci-lint v2.11.4` (`config verify` + full run,
+0 issues) all pass. The gosec exclude IDs were confirmed load-bearing, and the
+mock stdin-capture semantics turned out narrower than first reported (see the
+individual items below for details).
 
 ### Medium
 
@@ -521,13 +522,21 @@ semantics change needs a dedicated stub test before it can be closed.
   silent, the wrapper hangs after the child exited.
   Fix: set `cmd.WaitDelay` (e.g. 1s) in `RunWithOptions`.
 
-- [ ] **[mock] Stdin capture semantics changed silently; call record lost on kill** (`internal/mockwrapper/wrapper.go:96-113`)
+- [x] **[mock] Stdin capture semantics changed silently; call record lost on kill** (`internal/mockwrapper/wrapper.go:96-113`)
   Captured stdin now reflects only what the real binary actually read — a stub that
   ignores stdin logs `""` where the old code logged the full piped input, which can
   silently change `assert.binary` stdin assertions. The JSONL record is also written
   after the child runs, so a wrapper killed mid-run (job timeout) loses the record.
   Fix: verify generated stubs in `internal/workspace/mockbinaries.go` against a stdin
   assertion test; document the semantics in assert-syntax.md.
+  Done: added `TestRunWithOptionsStdinCaptureReflectsWhatMockReads`, which revealed
+  the concern was narrower than stated — os/exec buffers stdin into the OS pipe, so a
+  typical (small) input is captured in full even when the mock never reads it; only a
+  payload larger than the pipe buffer (~64 KiB) that the mock never drains can be
+  captured in part. Documented this in `docs/reference/assert-syntax.md` under Binary
+  Asserts (recommend `cat >/dev/null` in the mock when asserting on large stdin). The
+  "record lost on kill" note is already covered by the barrier-file mechanism in
+  `appendBinaryCall` (`CheckMockLogBarriers` detects interrupted writes).
 
 - [x] **[assert] Scan-error matchStates omit IsError, so `not` inverts them into a pass** (`internal/asserter/matcher.go:62`, `internal/asserter/patterns.go:25`)
   The new scanner-error path returns a failed state without `IsError: true`; `not:`
@@ -589,10 +598,15 @@ semantics change needs a dedicated stub test before it can be closed.
   dangling between its populate container exiting and its job container starting.
   Fix: correct the comment; optionally embed the PID in volume names and skip live-PID volumes.
 
-- [ ] **[build] Verify the gosec exclude IDs exist** (`.golangci.yml:47-51`)
+- [x] **[build] Verify the gosec exclude IDs exist** (`.golangci.yml:47-51`)
   Excludes G702/G703/G705/G122 could not be confirmed against the pinned gosec version;
   if they are typos, the corresponding findings resurface as CI lint failures (loud, not silent).
   Fix: run `golangci-lint` once locally/CI and confirm each ID suppresses a real finding.
+  Done: ran `golangci-lint v2.11.4` (`config verify` passes, full run reports 0
+  issues). Removing the four IDs surfaces exactly the findings they suppress —
+  G702 (`internal/mockserver/githttp.go:74,113`), G705 (`githttp.go:93`), G703
+  (`internal/mockwrapper/wrapper_test.go:892`), G122 (`internal/workspace/dockervolume.go:518`,
+  `workspace.go:548`) — so all four are real, load-bearing rules, not typos.
 
 - [x] **[mock] Trivia: stale comment, over-broad git bypass, unwrapped serveErr** (`internal/mockwrapper/wrapper.go:214`, `internal/mockserver/server.go:207,113`)
   (a) Comment still says stdin is captured "with no size cap" (now 10 MiB). (b) `isGitHTTPPath`

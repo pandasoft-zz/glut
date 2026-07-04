@@ -163,6 +163,62 @@ func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
 	}
 }
 
+// TestRunWithOptionsStdinCaptureReflectsWhatMockReads pins the stdin-capture
+// semantics documented in docs/reference/assert-syntax.md: the wrapper tees
+// stdin as it is streamed to the real binary (never draining before exec, which
+// would hang on a never-closing producer). A mock that consumes stdin has it
+// captured in full, and — because os/exec buffers the stream into the OS pipe —
+// a typical (small) input is captured in full even when the mock never reads
+// it. Only a payload larger than the OS pipe buffer that the mock never drains
+// could be captured only in part.
+func TestRunWithOptionsStdinCaptureReflectsWhatMockReads(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, subcommand string) BinaryCall {
+		t.Helper()
+		logDir := t.TempDir()
+		realDir := t.TempDir()
+		linkHelperBinary(t, filepath.Join(realDir, helperBinaryName("tool")))
+
+		var stdout, stderr bytes.Buffer
+		code := RunWithOptions(RunOptions{
+			Args:   []string{"tool", "-test.run=TestHelperProcess", "--", subcommand},
+			Stdin:  strings.NewReader("piped-input"),
+			Stdout: &stdout,
+			Stderr: &stderr,
+			Environ: append(os.Environ(),
+				"GO_WANT_HELPER_PROCESS=1",
+				config.EnvMockLogDir+"="+logDir,
+				config.EnvMockBinReal+"="+realDir,
+			),
+			Now: fixedNow,
+		})
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+		}
+		logs, err := ReadBinaryLogs(logDir, nil)
+		if err != nil {
+			t.Fatalf("read logs: %v", err)
+		}
+		if len(logs["tool"]) != 1 {
+			t.Fatalf("call count = %d, want 1", len(logs["tool"]))
+		}
+		return logs["tool"][0]
+	}
+
+	t.Run("mock that reads stdin captures the full input", func(t *testing.T) {
+		if got := run(t, "echo").Stdin; got != "piped-input" {
+			t.Fatalf("stdin = %q, want %q", got, "piped-input")
+		}
+	})
+
+	t.Run("typical input is captured even when the mock ignores stdin", func(t *testing.T) {
+		if got := run(t, "ignore-stdin").Stdin; got != "piped-input" {
+			t.Fatalf("stdin = %q, want %q (small input is buffered into the pipe and captured)", got, "piped-input")
+		}
+	})
+}
+
 func TestRunWithOptionsPropagatesExitCode(t *testing.T) {
 	t.Parallel()
 	logDir := t.TempDir()
@@ -793,6 +849,10 @@ func TestHelperProcess(t *testing.T) {
 			os.Exit(7)
 		}
 		os.Exit(1)
+	case "ignore-stdin":
+		// Exit 0 without reading stdin at all, to model a mock stub that does
+		// not consume its input.
+		os.Exit(0)
 	default:
 		os.Exit(2)
 	}
