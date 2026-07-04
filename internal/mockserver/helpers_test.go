@@ -277,6 +277,49 @@ func TestStoreIdentifierBranches(t *testing.T) {
 	}
 }
 
+// TestStoreCopyObjectIsDeep guards against copyObject only shallow-copying
+// the top-level map: nested maps/slices (e.g. assets.links, commit,
+// author) used to be shared by reference between the store and every copy
+// handed out by List/Get/Create/Update, so mutating a nested value on one
+// caller's copy silently corrupted the store's own data and any other
+// caller's copy.
+func TestStoreCopyObjectIsDeep(t *testing.T) {
+	store := NewInMemoryStore()
+
+	created := store.Create("releases", map[string]any{
+		"tag_name": "v1.0.0",
+		"assets": map[string]any{
+			"links": []any{
+				map[string]any{"name": "linux-amd64", "url": "https://example.test/a"},
+			},
+		},
+	})
+
+	// Mutate the nested map and slice on the copy Create() returned.
+	assets := created["assets"].(map[string]any)
+	links := assets["links"].([]any)
+	links[0].(map[string]any)["url"] = "corrupted"
+	assets["links"] = append(links, map[string]any{"name": "injected"})
+	assets["extra"] = "corrupted"
+
+	fetched, ok := store.Get("releases", created["tag_name"])
+	if !ok {
+		t.Fatal("expected the release to still be found")
+	}
+	fetchedAssets := fetched["assets"].(map[string]any)
+	fetchedLinks := fetchedAssets["links"].([]any)
+
+	if len(fetchedLinks) != 1 {
+		t.Fatalf("store's links = %#v, want the original single entry (unaffected by the copy's append)", fetchedLinks)
+	}
+	if url := fetchedLinks[0].(map[string]any)["url"]; url != "https://example.test/a" {
+		t.Fatalf("store's link url = %v, want unmodified original (a copy's mutation must not reach the store)", url)
+	}
+	if _, hasExtra := fetchedAssets["extra"]; hasExtra {
+		t.Fatalf("store's assets = %#v, must not see the copy's added key", fetchedAssets)
+	}
+}
+
 func TestWriteJSONWithFailingWriter(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeJSON(failingResponseWriter{ResponseWriter: rec}, http.StatusOK, map[string]any{

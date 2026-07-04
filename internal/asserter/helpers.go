@@ -1,6 +1,7 @@
 package asserter
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -188,17 +189,79 @@ func joinWorkspacePath(root string, relativePath string) (string, error) {
 	if relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path escapes workspace: %s", relativePath)
 	}
+
+	// The checks above are purely lexical; a symlink created by the pipeline
+	// (or one of its ancestor directories) can still point outside root, which
+	// would let contents/md5/sha256 read a file the "path escapes workspace"
+	// error implies is impossible. Resolve symlinks and re-check containment.
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		// root should always exist; if it doesn't, let the caller's own
+		// stat/open report a clearer error than one raised here.
+		return fullPath, nil //nolint:nilerr
+	}
+	resolvedPath, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		// fullPath (or a component of it) does not exist — nothing to
+		// resolve; let the caller's own stat/open report the real error.
+		return fullPath, nil //nolint:nilerr
+	}
+	resolvedRel, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve symlinked path %s: %w", relativePath, err)
+	}
+	if resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path escapes workspace: %s", relativePath)
+	}
+
 	return fullPath, nil
 }
 
 func runGit(repoPath string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repoPath
+	cmd.Env = sanitizedGitEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("run git %s in %s: %w; output: %s", strings.Join(args, " "), repoPath, err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimRight(string(out), "\r\n"), nil
+}
+
+// runGitBytes returns raw, untrimmed stdout — unlike runGit, which merges
+// stderr into the result and trims trailing newlines (safe for text output
+// such as commit metadata, but corrupt for binary blob content or exact
+// size/checksum measurement).
+func runGitBytes(repoPath string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoPath
+	cmd.Env = sanitizedGitEnv()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("run git %s in %s: %w; output: %s", strings.Join(args, " "), repoPath, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+// sanitizedGitEnv returns the process environment with GIT_DIR/GIT_WORK_TREE/
+// GIT_INDEX_FILE removed. If any of these are set in the host environment
+// (e.g. inherited from a parent process that itself runs git commands), git
+// ignores cmd.Dir entirely and operates on whatever repo they point at
+// instead of the one being asserted on.
+func sanitizedGitEnv() []string {
+	env := os.Environ()
+	filtered := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		switch key {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE":
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return filtered
 }
 
 func pathForIndex(base string, index int, field string) string {

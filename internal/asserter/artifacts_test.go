@@ -1,9 +1,13 @@
 package asserter
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/pandasoft-zz/glut/internal/config"
@@ -99,6 +103,30 @@ func TestRunArtifactAssertsFileTypesAndChecksumFailures(t *testing.T) {
 	}
 	if !foundFailure {
 		t.Fatalf("expected checksum failure for directory, got %+v", checksumResults)
+	}
+}
+
+// TestRunArtifactAssertChecksumsAreCaseInsensitive guards against an
+// uppercase MD5/SHA256 digest pasted from another tool never matching
+// checksumFile's lowercase %x output, with no hint why the assert failed.
+func TestRunArtifactAssertChecksumsAreCaseInsensitive(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "file.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	md5Sum := fmt.Sprintf("%x", md5.Sum([]byte("hello")))
+	sha256Sum := fmt.Sprintf("%x", sha256.Sum256([]byte("hello")))
+
+	results := runArtifactAssert("assert.artifacts.\"file.txt\"", path, config.ArtifactAssert{
+		MD5:    strings.ToUpper(md5Sum),
+		SHA256: strings.ToUpper(sha256Sum),
+	})
+	for _, result := range results {
+		if !result.Passed {
+			t.Fatalf("uppercase digest should match: %+v", result)
+		}
 	}
 }
 

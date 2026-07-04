@@ -3,6 +3,7 @@ package asserter
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pandasoft-zz/glut/internal/config"
@@ -137,6 +138,55 @@ func TestAssertDotenvNonBoolExists(t *testing.T) {
 	})
 	if !anyFailed(results) {
 		t.Fatalf("non-bool exists value must not silently pass for an absent key, got %+v", results)
+	}
+}
+
+// A dotenv file with a line longer than bufio.Scanner's default 64 KiB limit
+// must still have its later keys parsed, instead of the scan silently
+// stopping and every subsequent KEY=value pair vanishing.
+func TestAssertDotenvSurvivesLineLongerThanDefaultScannerLimit(t *testing.T) {
+	longLine := "LONG_VALUE=" + strings.Repeat("x", 128*1024)
+	data := []byte(longLine + "\nAPP_VERSION=1.2.3\n")
+
+	results := assertDotenv("art.report", data, &config.ReportAssert{
+		Format: "dotenv",
+		Keys:   map[string]any{"APP_VERSION": "1.2.3"},
+	})
+	if anyFailed(results) {
+		t.Fatalf("expected the key after the oversized line to still be parsed, got %+v", results)
+	}
+}
+
+// TestAssertJUnitTruncatedXMLFails guards against parseJUnit discarding the
+// error from the outer <testsuites> unmarshal: a truncated document could
+// leave doc.Suites partially populated, and counts computed from that
+// partial document could satisfy a tests:/failures: assertion vacuously.
+func TestAssertJUnitTruncatedXMLFails(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<testsuites>
+  <testsuite name="UnitSuite">
+    <testcase name="t1"/>
+  </testsuite>
+  <testsuite name="Truncated">
+    <testcase name="t2"`) // cut off mid-element
+	a := &config.ReportAssert{Format: "junit", Tests: 1}
+	results := assertJUnit("art.report", data, a)
+	if !anyFailed(results) {
+		t.Fatalf("expected truncated JUnit XML to fail, got %+v", results)
+	}
+}
+
+// TestAssertJUnitSingleSuiteRootStillWorks guards against the wrong-root
+// xml.UnmarshalError fix over-triggering: a document whose root is
+// <testsuite> (not <testsuites>) is a valid, common JUnit shape and must
+// still parse correctly.
+func TestAssertJUnitSingleSuiteRootStillWorks(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<testsuite name="Solo" tests="2" failures="0"></testsuite>`)
+	a := &config.ReportAssert{Format: "junit", Tests: 2, Failures: 0}
+	results := assertJUnit("art.report", data, a)
+	if anyFailed(results) {
+		t.Fatalf("expected single-suite root to parse and pass, got %+v", results)
 	}
 }
 

@@ -14,7 +14,7 @@ import (
 )
 
 func selectAndRun(ctx context.Context, opts RunOptions) (runner.RunResult, runner.ExitCode) {
-	if !isatty.IsTerminal(os.Stdin.Fd()) {
+	if !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
 		fmt.Fprintln(os.Stderr, "error: --interactive requires an interactive terminal")
 		return runner.RunResult{}, runner.ExitRunnerError
 	}
@@ -38,29 +38,22 @@ func selectAndRun(ctx context.Context, opts RunOptions) (runner.RunResult, runne
 		return runner.RunResult{}, runner.ExitOK
 	}
 
+	return runSelectedTests(ctx, opts, selected)
+}
+
+// runSelectedTests runs the chosen test files and writes any configured file
+// reports, matching the non-interactive path's error handling: a file-report
+// write failure is printed and set on the result rather than silently
+// producing a non-zero exit with no message.
+func runSelectedTests(ctx context.Context, opts RunOptions, selected []string) (runner.RunResult, runner.ExitCode) {
 	sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
 	if err != nil {
 		return runner.RunResult{Error: err}, runner.ExitRunnerError
 	}
-	result, code := runner.Run(ctx, selected, runner.RunOptions{
-		RunPattern:           opts.Pattern,
-		FailFast:             opts.FailFast,
-		MaxFail:              opts.MaxFail,
-		Verbose:              opts.Verbose,
-		Quiet:                opts.Quiet,
-		Timeout:              opts.Timeout,
-		WaitTimeout:          opts.WaitTimeout,
-		Debug:                opts.Debug,
-		KeepWorkspace:        opts.KeepWorkspace,
-		DebugPause:           opts.DebugPause,
-		KeepLastFailed:       opts.KeepLastFailed,
-		CopyStrategy:         opts.CopyStrategy,
-		DockerVolumeStrategy: opts.DockerVolumeStrategy,
-		Include:              opts.Include,
-		Progress:             sinks,
-		DockerWaitOutput:     os.Stderr,
-	})
+	result, code := runner.Run(ctx, selected, toRunnerOptions(opts, sinks, os.Stderr))
 	if werr := writeFileReports(fileReports); werr != nil {
+		writeError(werr)
+		result.Error = werr
 		return result, runner.ExitRunnerError
 	}
 	return result, code

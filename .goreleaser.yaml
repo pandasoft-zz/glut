@@ -4,7 +4,11 @@ project_name: glut
 
 before:
   hooks:
-    - go mod tidy
+    # `go mod tidy` alone can rewrite go.mod/go.sum after goreleaser's own
+    # dirty-worktree check has already passed, silently releasing binaries
+    # built from a source tree that no longer matches the tagged commit.
+    # Fail instead if tidy finds anything to change.
+    - sh -c 'go mod tidy && git diff --exit-code -- go.mod go.sum'
 
 builds:
   - id: glut

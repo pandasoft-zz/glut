@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -99,6 +100,47 @@ func TestHelperFunctions(t *testing.T) {
 		}
 	})
 
+	// TestJoinWorkspacePathRejectsSymlinkEscape guards against a pipeline-created
+	// symlink pointing outside the workspace being followed by
+	// contents/md5/sha256 asserts — the lexical-only checks above pass for a
+	// symlink named e.g. "link" that itself points at ../../etc/passwd, since
+	// "link" alone has no ".." component.
+	t.Run("joinWorkspacePath rejects a symlink escaping the workspace", func(t *testing.T) {
+		root := t.TempDir()
+		outsideDir := t.TempDir()
+		outsideFile := filepath.Join(outsideDir, "secret.txt")
+		if err := os.WriteFile(outsideFile, []byte("secret"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		linkPath := filepath.Join(root, "link")
+		if err := os.Symlink(outsideFile, linkPath); err != nil {
+			t.Skipf("symlinks not supported: %v", err)
+		}
+
+		if _, err := joinWorkspacePath(root, "link"); err == nil {
+			t.Fatal("expected joinWorkspacePath to reject a symlink escaping the workspace")
+		}
+	})
+
+	t.Run("joinWorkspacePath allows a symlink that stays inside the workspace", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "real.txt"), []byte("data"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		linkPath := filepath.Join(root, "link")
+		if err := os.Symlink(filepath.Join(root, "real.txt"), linkPath); err != nil {
+			t.Skipf("symlinks not supported: %v", err)
+		}
+
+		got, err := joinWorkspacePath(root, "link")
+		if err != nil {
+			t.Fatalf("expected an in-workspace symlink to be allowed, got error: %v", err)
+		}
+		if got != linkPath {
+			t.Fatalf("joinWorkspacePath() = %q, want %q", got, linkPath)
+		}
+	})
+
 	t.Run("pathForIndex", func(t *testing.T) {
 		if got := pathForIndex("base", 2, "field"); got != "base[2].field" {
 			t.Fatalf("pathForIndex with field = %q", got)
@@ -114,6 +156,11 @@ func TestHelperFunctions(t *testing.T) {
 		}
 		if _, ok := lengthOf(10); ok {
 			t.Fatal("number should not have length")
+		}
+		// A JSON null field decodes to a nil any; have-len: 0 must match it
+		// the same way it matches an empty string/slice/map.
+		if length, ok := lengthOf(nil); !ok || length != 0 {
+			t.Fatalf("nil length = %d, %v; want 0, true (so have-len: 0 matches a null field)", length, ok)
 		}
 	})
 
@@ -181,6 +228,52 @@ func TestRunGitReturnsErrorForMissingRepo(t *testing.T) {
 	if _, err := runGit("", "definitely-not-a-git-command"); err == nil {
 		t.Fatal("expected runGit to fail")
 	}
+}
+
+// TestRunGitIgnoresInheritedGitDirEnv guards against runGit inheriting
+// GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE from the host process environment: git
+// honors those over cmd.Dir, so a parent process that itself runs git
+// commands (setting these for its own purposes) would make every assertion
+// silently operate on the wrong repository.
+func TestRunGitIgnoresInheritedGitDirEnv(t *testing.T) {
+	target := initGitRepoWithFile(t, "marker.txt", "target-repo-content")
+	decoy := initGitRepoWithFile(t, "marker.txt", "decoy-repo-content")
+
+	t.Setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+	t.Setenv("GIT_WORK_TREE", decoy)
+
+	out, err := runGit(target, "show", "HEAD:marker.txt")
+	if err != nil {
+		t.Fatalf("runGit() error = %v", err)
+	}
+	if out != "target-repo-content" {
+		t.Fatalf("runGit() = %q, want the target repo's content (inherited GIT_DIR/GIT_WORK_TREE must not redirect it to the decoy repo)", out)
+	}
+}
+
+func initGitRepoWithFile(t *testing.T, name string, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	run("config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", name)
+	run("commit", "-m", "add "+name)
+	return dir
 }
 
 func TestFileTypeHelpers(t *testing.T) {

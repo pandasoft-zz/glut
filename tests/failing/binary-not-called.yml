@@ -1,0 +1,26 @@
+stages: [test]
+
+no-mock-call:
+  stage: test
+  script:
+    - echo "never invokes the mocked binary"
+---
+.glut:
+  name: "assert fails when a mocked binary is configured but never called"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    mocks:
+      binaries:
+        my-tool:
+          executable: |
+            #!/bin/sh
+            echo "my-tool mock $*"
+            exit 0
+  assert:
+    job:
+      no-mock-call:
+        exit-status: 0
+    binary:
+      my-tool:
+        called: true

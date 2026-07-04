@@ -1,0 +1,12 @@
+.git
+.github
+.glut-tmp*
+.artifacts
+coverage
+coverage.out
+glut
+*.test
+docs
+site
+.claude
+.codex

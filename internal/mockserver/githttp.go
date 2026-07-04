@@ -1,9 +1,12 @@
 package mockserver
 
 import (
+	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -71,7 +74,12 @@ func (s *Server) serveGitInfoRefs(w http.ResponseWriter, r *http.Request, repoPa
 	cmd := exec.CommandContext(r.Context(), "git", gitSubCmd, "--stateless-rpc", "--advertise-refs", repoPath)
 	output, err := cmd.Output()
 	if err != nil {
-		http.Error(w, "git command failed", http.StatusInternalServerError)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			http.Error(w, fmt.Sprintf("git %s failed: %s", gitSubCmd, strings.TrimSpace(string(exitErr.Stderr))), http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, fmt.Sprintf("git %s failed: %v", gitSubCmd, err), http.StatusInternalServerError)
 		return
 	}
 
@@ -104,9 +112,16 @@ func (s *Server) serveGitPack(w http.ResponseWriter, r *http.Request, repoPath, 
 
 	cmd := exec.CommandContext(r.Context(), "git", subCmd, "--stateless-rpc", repoPath)
 	cmd.Stdin = body
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-cache")
 	cmd.Stdout = w
-	_ = cmd.Run()
+	// The response status and any streamed pack bytes are already sent by the
+	// time git exits, so a failure here cannot be surfaced over HTTP; log it
+	// so a mutating push/fetch failure is not silently swallowed.
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "mock git %s failed: %v: %s\n", subCmd, err, strings.TrimSpace(stderr.String()))
+	}
 }

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"io"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,6 +102,27 @@ func TestListAndLintOptionsUseDefaultPaths(t *testing.T) {
 	}
 }
 
+func TestCheckDefaultTestsDirExists(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	missing := dir + "/does-not-exist/"
+
+	if err := checkDefaultTestsDirExists([]string{missing}, true); err == nil {
+		t.Fatal("expected an error when the default test directory is missing")
+	} else if !strings.Contains(err.Error(), missing) {
+		t.Fatalf("error should name the missing directory, got: %v", err)
+	}
+
+	if err := checkDefaultTestsDirExists([]string{missing}, false); err != nil {
+		t.Fatalf("an explicit (non-default) path should never be checked, got: %v", err)
+	}
+
+	if err := checkDefaultTestsDirExists([]string{dir}, true); err != nil {
+		t.Fatalf("an existing default directory should not error, got: %v", err)
+	}
+}
+
 func TestEnvHelpers(t *testing.T) {
 	t.Parallel()
 	mkEnv := func(val string) func(string) string {
@@ -136,5 +160,36 @@ func TestEnvHelpers(t *testing.T) {
 	}
 	if got := envList(mkEnv(""), "ANY"); got != nil {
 		t.Fatalf("empty envList = %#v", got)
+	}
+}
+
+// TestEnvDurationWarnsOnInvalidValue is intentionally not parallel: it
+// temporarily swaps the process-wide os.Stderr to capture the warning.
+func TestEnvDurationWarnsOnInvalidValue(t *testing.T) {
+	mkEnv := func(val string) func(string) string {
+		return func(string) string { return val }
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = w
+	got := envDuration(mkEnv("10minutes"), "GLUT_TIMEOUT", time.Minute)
+	os.Stderr = oldStderr
+	if err := w.Close(); err != nil {
+		t.Fatalf("failed to close pipe writer: %v", err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("failed to read captured stderr: %v", err)
+	}
+
+	if got != time.Minute {
+		t.Fatalf("envDuration() = %v, want fallback %v", got, time.Minute)
+	}
+	if !strings.Contains(string(out), "GLUT_TIMEOUT") || !strings.Contains(string(out), "10minutes") {
+		t.Fatalf("expected a warning naming the env var and invalid value, got: %q", out)
 	}
 }

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -110,6 +111,82 @@ func TestRunTimeoutReturnsClearError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "test timeout after 50ms") {
 		t.Fatalf("timeout error = %q", err)
+	}
+}
+
+func TestRunTimeoutKillsGrandchildHoldingPipe(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("process-group semantics differ on windows")
+	}
+	hostPath := os.Getenv("PATH")
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := writeExecutable(binDir, "gitlab-ci-local", grandchildPipeHolderScript()); err != nil {
+		t.Fatalf("write timeout script: %v", err)
+	}
+
+	start := time.Now()
+	_, err := Run(context.Background(), ExecutorConfig{
+		WorkspacePath: tempDir,
+		PipelineYAML:  "job:\n  script: sleep 30\n",
+		Timeout:       50 * time.Millisecond,
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
+	})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "test timeout after 50ms") {
+		t.Fatalf("timeout error = %q", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("Run took %s, want it bounded well under the grandchild's sleep — timeout is not killing the process tree", elapsed)
+	}
+}
+
+func TestRunTreatsCancellationAsInterruptedEvenWithJobOutput(t *testing.T) {
+	t.Parallel()
+	hostPath := os.Getenv("PATH")
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := writeExecutable(binDir, "gitlab-ci-local", jobThenSleepScript()); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	result, err := Run(ctx, ExecutorConfig{
+		WorkspacePath: tempDir,
+		PipelineYAML:  "job:\n  script: echo hi\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error on cancellation, even though job output was captured")
+	}
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("err = %v, want ErrInterrupted", err)
+	}
+	if len(result.Jobs) == 0 {
+		t.Fatal("expected the test setup to have captured job output before cancellation")
 	}
 }
 
@@ -313,6 +390,75 @@ func TestGitLabCILocalDockerModeAddsVolumeAndExtraHost(t *testing.T) {
 	}
 }
 
+// TestRunMonitorsDockerOutputOnlyWhenVolumeStrategyConfigured verifies the
+// output monitor is gated on cfg.MonitorVolume, not on cfg.DockerVolumes.
+// Before the fix, a non-empty DockerVolumes (e.g. a bind-mount host-path
+// pair, which can never match a real Docker volume) started a `docker
+// events` watcher that ran for the whole pipeline capturing nothing.
+func TestRunMonitorsDockerOutputOnlyWhenVolumeStrategyConfigured(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("docker events monitor is not exercised on windows")
+	}
+
+	hostPath := os.Getenv("PATH")
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+	// Sleep briefly before exiting so the monitor's goroutine has time to
+	// actually start "docker events" before Run() reaches monitor.stop() —
+	// otherwise the two race and the process can be killed before it runs.
+	if err := writeExecutable(binDir, "gitlab-ci-local", "#!/bin/sh\nsleep 0.3\necho \"$@\"\n"); err != nil {
+		t.Fatalf("write echo-args script: %v", err)
+	}
+
+	callLog := filepath.Join(tempDir, "docker-calls.log")
+	dockerScript := "#!/bin/sh\n" +
+		"echo \"$@\" >> '" + callLog + "'\n" +
+		"if [ \"$1\" = \"events\" ]; then sleep 5; fi\n"
+	if err := writeExecutable(binDir, "docker", dockerScript); err != nil {
+		t.Fatalf("write mock docker: %v", err)
+	}
+
+	t.Setenv("PATH", joinPath(binDir, hostPath))
+	t.Setenv("HOME", tempDir)
+	t.Setenv("TMP", tempDir)
+
+	runOnce := func(monitorVolume string) string {
+		if err := os.RemoveAll(callLog); err != nil {
+			t.Fatalf("reset call log: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := Run(ctx, ExecutorConfig{
+			WorkspacePath: tempDir,
+			PipelineYAML:  "job:\n  image: alpine\n  script: echo hi\n",
+			UseDocker:     true,
+			DockerVolumes: []string{tempDir + ":" + tempDir}, // bind-mount shape
+			MonitorVolume: monitorVolume,
+		}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		data, err := os.ReadFile(callLog)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ""
+			}
+			t.Fatalf("read call log: %v", err)
+		}
+		return string(data)
+	}
+
+	if calls := runOnce(""); strings.Contains(calls, "events") {
+		t.Fatalf("bind-mount workspace (empty MonitorVolume) should not start `docker events`; calls = %q", calls)
+	}
+
+	if calls := runOnce("glut-test-volume"); !strings.Contains(calls, "events") {
+		t.Fatalf("named-volume workspace (MonitorVolume set) should start `docker events`; calls = %q", calls)
+	}
+}
+
 func TestGitLabCILocalArgumentsMatchVendoredVersion(t *testing.T) {
 	t.Parallel()
 	args := append(baseArgs(ExecutorConfig{}), envArgs(map[string]string{"CI": "true"})...)
@@ -444,6 +590,22 @@ func TestParseJobListJSON(t *testing.T) {
 	t.Run("skips diagnostics before the JSON array", func(t *testing.T) {
 		t.Parallel()
 		jobs, err := parseJobListJSON("parsing finished in 43 ms.\n[{\"name\": \"build\", \"when\": \"always\"}]", "")
+		if err != nil {
+			t.Fatalf("parseJobListJSON() error = %v", err)
+		}
+		want := []JobListEntry{{Name: "build", When: "always"}}
+		if !reflect.DeepEqual(jobs, want) {
+			t.Fatalf("jobs = %#v, want %#v", jobs, want)
+		}
+	})
+
+	t.Run("tolerates a diagnostic line after the JSON array", func(t *testing.T) {
+		t.Parallel()
+		// json.Unmarshal rejects trailing bytes after the array; a Decoder
+		// must still parse it, since gitlab-ci-local can print a diagnostic
+		// line right after the job list.
+		stdout := `[{"name": "build", "when": "always"}]` + "\nparsing finished in 43 ms.\n"
+		jobs, err := parseJobListJSON(stdout, "")
 		if err != nil {
 			t.Fatalf("parseJobListJSON() error = %v", err)
 		}
@@ -659,6 +821,23 @@ func sleepScript() string {
 		return "@echo off\r\nping 127.0.0.1 -n 3 >nul\r\n"
 	}
 	return "#!/bin/sh\nsleep 1\n"
+}
+
+// jobThenSleepScript emits a passing job marker before sleeping, so a run
+// cancelled mid-sleep has non-empty result.Jobs by the time it is killed.
+func jobThenSleepScript() string {
+	return "#!/bin/sh\n" +
+		"echo 'GLUT_JOB|name=job|exit=0|stdout=ok|stderr='\n" +
+		"sleep 5\n"
+}
+
+// grandchildPipeHolderScript backgrounds a long-lived process that inherits
+// the stdout/stderr pipe before the parent sleeps past the test timeout.
+// Killing only the direct child (the historical behavior) leaves the
+// backgrounded process holding the pipe open, so cmd.Wait would block for
+// the full 30s instead of returning once the timeout fires.
+func grandchildPipeHolderScript() string {
+	return "#!/bin/sh\nsleep 30 &\nsleep 30\n"
 }
 
 func listScript() string {

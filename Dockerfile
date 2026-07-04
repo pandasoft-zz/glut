@@ -1,21 +1,40 @@
 # Versions — single source of truth for all stages
 ARG GO_VERSION=1.26.2
-ARG NODE_VERSION=22
+ARG NODE_VERSION=22.23
 ARG GCL_VERSION=4.72.0
+ARG DOCKER_CLI_VERSION=29.6.1
 
 # ── Go builder ────────────────────────────────────────────────────
 FROM golang:${GO_VERSION}-bookworm AS builder
 ARG VERSION=v0.0.0-dev
 ARG COMMIT=unknown
 WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /glut ./cmd/glut
 
 # ── Runtime base (node + GCL + system deps) ───────────────────────
+# Runs as root: GLUT talks to the Docker daemon over a bind-mounted
+# /var/run/docker.sock (see docs/getting-started/installation.md), and the
+# socket's host-side group ownership varies by environment, so a fixed
+# non-root UID/GID cannot reliably be granted access without extra
+# host-specific setup at container run time.
 FROM node:${NODE_VERSION}-slim AS runtime
 ARG GCL_VERSION
+ARG DOCKER_CLI_VERSION
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl docker.io git rsync \
+    bash ca-certificates curl git rsync \
+    && set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) DOCKER_ARCH=x86_64 ;; \
+      arm64) DOCKER_ARCH=aarch64 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" -o /tmp/docker-cli.tgz \
+    && tar -xzC /usr/local/bin --strip-components=1 -f /tmp/docker-cli.tgz docker/docker \
+    && rm /tmp/docker-cli.tgz \
     && npm install -g gitlab-ci-local@${GCL_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 

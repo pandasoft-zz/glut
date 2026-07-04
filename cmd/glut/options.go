@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -80,6 +82,21 @@ func lintOptionsFromCommand(args []string) LintOptions {
 		paths = []string{"./tests/"}
 	}
 	return LintOptions{Paths: paths, Format: lintFormat}
+}
+
+// checkDefaultTestsDirExists returns a clear, actionable error when lint/doctor
+// fell back to the default "./tests/" path (unlike run/list, which default to
+// ".") and that directory does not exist. Without this, a missing default
+// surfaces only as a raw "lstat ./tests/: no such file or directory" parse
+// issue from the file-discovery walk.
+func checkDefaultTestsDirExists(paths []string, usedDefault bool) error {
+	if !usedDefault || len(paths) == 0 {
+		return nil
+	}
+	if _, err := os.Stat(paths[0]); os.IsNotExist(err) {
+		return fmt.Errorf("default test directory %q does not exist; pass a path (e.g. `glut lint ./tests`) or create it", paths[0])
+	}
+	return nil
 }
 
 func envList(env func(string) string, name string) []string {

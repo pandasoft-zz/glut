@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,8 +64,8 @@ func ShouldRunAsMock(args, environ []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	base := filepath.Base(args[0])
-	if base != "glut" && base != "glut.exe" {
+	base := normalizeMockName(runtime.GOOS, filepath.Base(args[0]))
+	if base != "glut" {
 		return true
 	}
 	realDir := envMap(environ)[config.EnvMockBinReal]
@@ -82,12 +83,30 @@ func RunWithOptions(opts RunOptions) int {
 		return 127
 	}
 
-	name := filepath.Base(opts.Args[0])
-	stdinContent, stdin, err := readStdin(opts.Stdin)
-	if err != nil {
-		writeError(opts.Stderr, "mock wrapper failed to read stdin: %v\n", err)
+	name := normalizeMockName(runtime.GOOS, filepath.Base(opts.Args[0]))
+	env := envMap(opts.Environ)
+
+	realDir := env[config.EnvMockBinReal]
+	if realDir == "" {
+		writeError(opts.Stderr, "mock wrapper failed: %s is not set\n", config.EnvMockBinReal)
 		return 127
 	}
+
+	stdin, capture := teeStdin(opts.Stdin)
+
+	realPath := realBinaryPath(realDir, name)
+	cmd := exec.Command(realPath, opts.Args[1:]...)
+	cmd.Stdin = stdin
+	cmd.Stdout = opts.Stdout
+	cmd.Stderr = opts.Stderr
+	cmd.Env = opts.Environ
+	// stdin is a non-*os.File reader, so os/exec runs a copy goroutine and
+	// Wait blocks until it returns. If the real binary exits without draining
+	// stdin while the producer keeps the pipe open, that goroutine would hang
+	// forever; WaitDelay bounds the wait and closes the pipe to unblock it.
+	cmd.WaitDelay = time.Second
+
+	runErr := cmd.Run()
 
 	call := BinaryCall{
 		Timestamp: opts.Now().UTC().Format(time.RFC3339Nano),
@@ -96,34 +115,20 @@ func RunWithOptions(opts RunOptions) int {
 		CWD:       currentDir(),
 		Name:      name,
 		Args:      append([]string(nil), opts.Args[1:]...),
-		Stdin:     stdinContent,
+		Stdin:     capture.buf.String(),
 	}
-
-	env := envMap(opts.Environ)
 	if logDir := env[config.EnvMockLogDir]; logDir != "" {
 		if err := appendBinaryCall(logDir, call); err != nil {
 			writeError(opts.Stderr, "mock wrapper log failed: %v\n", err)
 		}
 	}
 
-	realDir := env[config.EnvMockBinReal]
-	if realDir == "" {
-		writeError(opts.Stderr, "mock wrapper failed: %s is not set\n", config.EnvMockBinReal)
-		return 127
-	}
-
-	realPath := realBinaryPath(realDir, name)
-	cmd := exec.Command(realPath, opts.Args[1:]...)
-	cmd.Stdin = stdin
-	cmd.Stdout = opts.Stdout
-	cmd.Stderr = opts.Stderr
-	cmd.Env = opts.Environ
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
 			return exitErr.ExitCode()
 		}
-		writeError(opts.Stderr, "mock wrapper failed to run %s: %v\n", realPath, err)
+		writeError(opts.Stderr, "mock wrapper failed to run %s: %v\n", realPath, runErr)
 		return 127
 	}
 	return cmd.ProcessState.ExitCode()
@@ -211,13 +216,19 @@ func ReadBinaryLogs(logDir string, only map[string]struct{}) (map[string][]Binar
 		}
 
 		scanner := bufio.NewScanner(file)
+		// appendBinaryCall writes JSONL lines containing captured stdin (capped
+		// at maxCapturedStdinBytes); the default 64 KiB scanner limit would
+		// still make ReadBinaryLogs fail on any mocked binary that received
+		// more than 64 KiB on stdin, so the read buffer matches the cap with
+		// headroom for JSON escaping.
+		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 		line := 0
 		for scanner.Scan() {
 			line++
 			var call BinaryCall
 			if err := json.Unmarshal(scanner.Bytes(), &call); err != nil {
 				if closeErr := file.Close(); closeErr != nil {
-					return nil, fmt.Errorf("parse mock log %s line %d: %w; close mock log: %v", path, line, err, closeErr)
+					return nil, fmt.Errorf("parse mock log %s line %d: %w; close mock log: %w", path, line, err, closeErr)
 				}
 				return nil, fmt.Errorf("parse mock log %s line %d: %w", path, line, err)
 			}
@@ -225,7 +236,7 @@ func ReadBinaryLogs(logDir string, only map[string]struct{}) (map[string][]Binar
 		}
 		if err := scanner.Err(); err != nil {
 			if closeErr := file.Close(); closeErr != nil {
-				return nil, fmt.Errorf("scan mock log %s: %w; close mock log: %v", path, err, closeErr)
+				return nil, fmt.Errorf("scan mock log %s: %w; close mock log: %w", path, err, closeErr)
 			}
 			return nil, fmt.Errorf("scan mock log %s: %w", path, err)
 		}
@@ -263,22 +274,42 @@ func writeError(stderr io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(stderr, format, args...) // best-effort: nothing useful to do if stderr write fails
 }
 
-func readStdin(stdin io.Reader) (string, io.Reader, error) {
-	if file, ok := stdin.(*os.File); ok {
-		info, err := file.Stat()
-		if err != nil {
-			return "", stdin, err
-		}
-		if info.Mode()&os.ModeCharDevice != 0 {
-			return "", stdin, nil
-		}
-	}
+// maxCapturedStdinBytes bounds how much of a mocked binary's stdin the
+// wrapper retains for logging/assertions. The real binary still sees the
+// full, unbounded stream via io.TeeReader — only the captured copy is capped.
+const maxCapturedStdinBytes = 10 << 20 // 10 MiB
 
-	data, err := io.ReadAll(stdin)
-	if err != nil {
-		return "", stdin, err
+// cappedWriter accumulates up to limit bytes and silently discards the rest,
+// always reporting a full write so it never breaks the TeeReader it backs.
+type cappedWriter struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if remaining := c.limit - c.buf.Len(); remaining > 0 {
+		if len(p) < remaining {
+			remaining = len(p)
+		}
+		c.buf.Write(p[:remaining])
 	}
-	return string(data), bytes.NewReader(data), nil
+	return len(p), nil
+}
+
+// teeStdin lets the real binary read stdin directly — driving consumption at
+// its own pace, which matters for a producer that keeps the pipe open (e.g.
+// `tail -f x | tool`) — while capturing a capped copy for logging. Draining
+// stdin fully before exec (the previous approach) would hang on such a
+// producer even though the unmocked binary would run fine. An interactive
+// terminal is passed through unwrapped so it is never read here.
+func teeStdin(stdin io.Reader) (io.Reader, *cappedWriter) {
+	capture := &cappedWriter{limit: maxCapturedStdinBytes}
+	if file, ok := stdin.(*os.File); ok {
+		if info, err := file.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			return stdin, capture
+		}
+	}
+	return io.TeeReader(stdin, capture), capture
 }
 
 func appendBinaryCall(logDir string, call BinaryCall) (err error) {
@@ -305,6 +336,9 @@ func appendBinaryCall(logDir string, call BinaryCall) (err error) {
 		}
 	}()
 
+	// lockFile always errors on Windows (unimplemented — see flock_windows.go);
+	// this falls back to relying on NTFS's own append-write atomicity for
+	// small writes instead of failing every mock invocation on that platform.
 	locked := false
 	if err := lockFile(file); err == nil {
 		locked = true
@@ -362,4 +396,21 @@ func realBinaryPath(realDir string, name string) string {
 		}
 	}
 	return path
+}
+
+// normalizeMockName normalizes an argv[0] basename for cross-platform mock
+// name comparisons and logging. Windows filesystems are case-insensitive and
+// executables commonly carry a ".exe" suffix that a validated mock binary
+// name (e.g. "release-cli") never has, so without normalization "Release-cli.exe"
+// would be misrouted (case mismatch against "glut") and, once routed, would
+// log to "release-cli.exe.jsonl" instead of "release-cli.jsonl" — a name the
+// "only" filter in ReadBinaryLogs never matches, so assert.binary sees zero
+// calls. goos is a parameter (rather than reading runtime.GOOS directly) so
+// this logic can be exercised in tests regardless of the host OS.
+func normalizeMockName(goos, name string) string {
+	if goos != "windows" {
+		return name
+	}
+	name = strings.ToLower(name)
+	return strings.TrimSuffix(name, ".exe")
 }

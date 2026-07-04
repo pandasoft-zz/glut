@@ -118,7 +118,7 @@ of `stdout` for Docker jobs with slow setup commands. If stdout capture is
 essential, use a Docker image that already has all required tools installed so
 no slow install step is needed.
 
-## Docker Jobs: Host Bind-Mounts Are Unreliable
+## Docker Jobs: Host Bind-Mounts Are Unreliable Inside Containers
 
 The Docker daemon always resolves `--volume host-path:container-path` using the
 **host filesystem**, not the filesystem of the process that launches
@@ -130,11 +130,16 @@ The Docker daemon always resolves `--volume host-path:container-path` using the
 - **Docker-in-Docker CI**: GLUT runs inside a container whose filesystem is not
   mounted into the outer Docker daemon's view.
 
-GLUT therefore never uses bind-mounts for Docker jobs. It creates a named Docker
-volume (`glut-<id>`), populates it by piping a tar archive through
-`docker run -i … tar -x` (which works in all environments), and passes the
-volume name as `--volume vol-name:path` to GCL. Named volumes are managed
-entirely by the Docker daemon and are always accessible to job containers.
+In both cases GLUT falls back to a named Docker volume (`glut-<id>`), populated
+by piping a tar archive through `docker run -i … tar -x` (which works in all
+environments), and passes the volume name as `--volume vol-name:path` to GCL.
+Named volumes are managed entirely by the Docker daemon and are always
+accessible to job containers.
+
+On a native Linux host running GLUT directly (not inside a container), the
+daemon and GLUT share the same filesystem, so GLUT uses a plain bind mount
+instead — see [Volume Strategy Auto-Detection](#docker-jobs-volume-strategy-auto-detection)
+below for the detection logic and the `--docker-volume-strategy` override.
 
 ## Docker Jobs: Parallel Job Limit in Docker Desktop
 

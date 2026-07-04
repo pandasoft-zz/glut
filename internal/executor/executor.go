@@ -27,6 +27,12 @@ const (
 	dependencyOptional = "optional"
 )
 
+// ErrInterrupted indicates the run context was cancelled (e.g. SIGINT)
+// before gitlab-ci-local finished, as opposed to a timeout or a normal
+// command failure. Callers should treat this as an aborted run, never as
+// a passed or normally-failed test.
+var ErrInterrupted = errors.New("run interrupted")
+
 var (
 	gitlabOutputLineRE   = regexp.MustCompile(`^(.+?) > (.*)$`)
 	gitlabFinishedLineRE = regexp.MustCompile(`^(.+?) finished in .*\s+(PASS|FAIL|WARN)(?:\s+([0-9]+))?\s*$`)
@@ -49,6 +55,12 @@ type ExecutorConfig struct {
 	DockerExtraHosts    []string
 	HostEnv             []string // nil falls back to os.Environ()
 	KeepDockerResources bool     // pass --cleanup=false; caller owns volume cleanup
+	// MonitorVolume is the named Docker volume to watch for container output via
+	// `docker events`/`docker logs`. Left empty when the workspace uses a bind
+	// mount instead of a named volume, since a host path can never match a real
+	// volume name and the monitor would run for the whole pipeline capturing
+	// nothing.
+	MonitorVolume string
 	// GitConfigEnv holds extra git configuration injected into the gitlab-ci-local
 	// process environment via GIT_CONFIG_COUNT/KEY_n/VALUE_n. Used by integration
 	// mode to redirect `include: component:` fetches at a real git remote with
@@ -95,9 +107,8 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	args = append(args, envArgs(cfg.EnvVars)...)
 	args = append(args, unsetArgs(cfg.UnsetVars)...)
 	var monitor *dockerOutputMonitor
-	if cfg.UseDocker && len(cfg.DockerVolumes) > 0 {
-		volName := strings.SplitN(cfg.DockerVolumes[0], ":", 2)[0]
-		monitor = startDockerOutputMonitor(runCtx, volName)
+	if cfg.UseDocker && cfg.MonitorVolume != "" {
+		monitor = startDockerOutputMonitor(runCtx, cfg.MonitorVolume, cfg.HostEnv)
 	}
 
 	stdout, stderr, err := runCommand(runCtx, cfg, args...)
@@ -118,6 +129,9 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 	if err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return result, fmt.Errorf("run gitlab-ci-local: test timeout after %s", cfg.Timeout)
+		}
+		if runCtx.Err() != nil {
+			return result, fmt.Errorf("run gitlab-ci-local: %w", ErrInterrupted)
 		}
 		if len(result.Jobs) > 0 {
 			return result, nil
@@ -232,6 +246,8 @@ func runCommand(ctx context.Context, cfg ExecutorConfig, args ...string) (string
 		cmd := exec.CommandContext(ctx, binaryPath, args...)
 		cmd.Dir = cfg.WorkspacePath
 		cmd.Env = buildCommandEnv(cfg)
+		cmd.WaitDelay = 5 * time.Second
+		setProcessGroup(cmd)
 
 		var stdout bytes.Buffer
 		var stderr bytes.Buffer
@@ -576,7 +592,12 @@ func parseJobListJSON(stdout string, stderr string) ([]JobListEntry, error) {
 		}
 		start := offset + idx
 		entries = nil
-		if err := json.Unmarshal([]byte(raw[start:]), &entries); err != nil {
+		// A Decoder (not json.Unmarshal) only consumes one JSON value and
+		// tolerates trailing bytes — gitlab-ci-local can print a diagnostic
+		// line after the job array, which json.Unmarshal would otherwise
+		// reject as invalid, making the entire call fail even though the
+		// array itself parsed fine.
+		if err := json.NewDecoder(strings.NewReader(raw[start:])).Decode(&entries); err != nil {
 			if parseErr == nil {
 				parseErr = err
 			}

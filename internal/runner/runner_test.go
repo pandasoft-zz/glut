@@ -135,6 +135,63 @@ func TestListSupportsPatternAndRecursiveDiscovery(t *testing.T) {
 	}
 }
 
+// TestFinalizeCleanupError guards against a test being reported Passed=true
+// with a non-nil Error: result.Passed is computed in runSingleTest before
+// deferred cleanup (mock server stop, workspace policy) can turn up an
+// error, so finalizeCleanupError must recheck it rather than trust the
+// caller's value.
+// TestGitOutputIgnoresStderrChatter guards against gitOutput using
+// CombinedOutput, which merges stderr into the parsed value. Warnings from a
+// user's gitconfig (e.g. hint: ... lines) would otherwise corrupt values
+// like CI_COMMIT_SHA or the commit message.
+func TestGitOutputIgnoresStderrChatter(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, dir, "git", "#!/bin/sh\necho 'hint: some advice from user gitconfig' >&2\necho abc123\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := gitOutput(dir, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("gitOutput() error = %v", err)
+	}
+	if got != "abc123" {
+		t.Fatalf("gitOutput() = %q, want %q — stderr chatter must not corrupt the parsed value", got, "abc123")
+	}
+}
+
+func TestFinalizeCleanupError(t *testing.T) {
+	primary := errors.New("assert failed")
+	cleanup := errors.New("stop mock server: boom")
+
+	tests := []struct {
+		name          string
+		passed        bool
+		primaryErr    error
+		cleanupErrors []error
+		wantPassed    bool
+		wantErr       error
+	}{
+		{name: "passed with no errors stays passed", passed: true, wantPassed: true, wantErr: nil},
+		{name: "cleanup error demotes an already-passed result", passed: true, cleanupErrors: []error{cleanup}, wantPassed: false, wantErr: cleanup},
+		{name: "primary error stays failing", passed: false, primaryErr: primary, wantPassed: false, wantErr: primary},
+		{name: "primary error takes precedence over cleanup error", passed: false, primaryErr: primary, cleanupErrors: []error{cleanup}, wantPassed: false, wantErr: primary},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPassed, gotErr := finalizeCleanupError(tt.passed, tt.primaryErr, tt.cleanupErrors)
+			if gotPassed != tt.wantPassed {
+				t.Errorf("passed = %v, want %v", gotPassed, tt.wantPassed)
+			}
+			if !errors.Is(gotErr, tt.wantErr) {
+				t.Errorf("err = %v, want %v", gotErr, tt.wantErr)
+			}
+			if gotErr != nil && gotPassed {
+				t.Errorf("invariant violated: Passed=true with non-nil Error %v", gotErr)
+			}
+		})
+	}
+}
+
 func TestRunPreservesOnlyLastFailedWorkspaces(t *testing.T) {
 	t.Parallel()
 	env := newRunnerTestEnv(t)
@@ -225,6 +282,280 @@ func TestRunDebugKeepsFailureDiagnostics(t *testing.T) {
 		t.Fatalf("expected pipeline timing: %#v", debug.PhaseTimings)
 	}
 	_ = os.RemoveAll(result.Tests[0].WorkspacePath)
+}
+
+// TestRunDebugSurvivesWorkspaceCreationFailure guards against a panic in the
+// debug defer: workspace.New returns a nil *Workspace on error, and the
+// debug-data block used to dereference work.WorkspaceDir unconditionally.
+func TestRunDebugSurvivesWorkspaceCreationFailure(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnv(t)
+	env.writeRawFile(t, "tests/bad-origin.yml", strings.TrimSpace(`
+stages: [test]
+
+test-job:
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: workspace creation fails
+  setup:
+    git:
+      origin:
+        files:
+          "../escape.txt": "nope"
+  assert:
+    job:
+      test-job:
+        present: true
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{Debug: true}))
+	if exitCode != ExitTestFailed {
+		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
+	}
+	if len(result.Tests) != 1 {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+	tr := result.Tests[0]
+	if tr.Error == nil || !strings.Contains(tr.Error.Error(), "create workspace") {
+		t.Fatalf("Run() test error = %v, want workspace creation failure", tr.Error)
+	}
+	if tr.Debug == nil {
+		t.Fatal("expected debug data even when workspace creation fails")
+	}
+	if tr.Debug.WorkspaceGitLog != "" || tr.Debug.OriginGitLog != "" {
+		t.Fatalf("expected empty git logs when no workspace was created: %#v", tr.Debug)
+	}
+}
+
+// TestRunAbortsRemainingTestsOnContextCancellation guards against the loop
+// silently continuing to spin up workspaces/mock servers for every
+// remaining test after the run context has been cancelled (e.g. SIGINT).
+func TestRunAbortsRemainingTestsOnContextCancellation(t *testing.T) {
+	counterDir := t.TempDir()
+	counterFile := filepath.Join(counterDir, "counter")
+
+	env := newRunnerTestEnvWithScript(t, counterScript(counterFile))
+	for i := 1; i <= 3; i++ {
+		env.writeRawFile(t, fmt.Sprintf("tests/t%d.yml", i), strings.TrimSpace(fmt.Sprintf(`
+stages: [test]
+
+job:
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: test %d
+  assert:
+    job:
+      job:
+        exit-status: 0
+`, i))+"\n")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			data, _ := os.ReadFile(counterFile)
+			if strings.TrimSpace(string(data)) == "1" {
+				cancel()
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	result, _ := Run(ctx, []string{"tests"}, env.opts())
+	if len(result.Tests) != 1 {
+		t.Fatalf("expected the loop to stop after the in-flight test, got %d results: %#v", len(result.Tests), result.Tests)
+	}
+	if result.Tests[0].Passed {
+		t.Fatalf("expected the interrupted test to be reported as failed, got %#v", result.Tests[0])
+	}
+}
+
+// counterScript increments a file-backed counter on each invocation and
+// sleeps on the first call only, giving a test a deterministic window to
+// cancel the run context mid-execution without relying on wall-clock races.
+func counterScript(counterFile string) string {
+	return fmt.Sprintf(`#!/bin/sh
+n=$(($(cat %q 2>/dev/null || echo 0) + 1))
+echo "$n" > %q
+if [ "$n" = "1" ]; then
+  sleep 5
+fi
+job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
+printf 'GLUT_JOB|name=%%s|exit=0|stdout=ok|stderr=\n' "$job_name"
+`, counterFile, counterFile)
+}
+
+// TestRunRetriesDaemonFailureEvenWithPresentAssertion guards against the
+// infra-retry heuristic never firing for tests with present:/when:
+// assertions. Those pre-populate JobOutputs from executor.ListJobs before
+// the pipeline runs, so len(JobOutputs) == 0 is never true even when the
+// actual run fails at the daemon level before any job executes — exactly
+// the class of DinD flake the retry exists to smooth over.
+func TestRunRetriesDaemonFailureEvenWithPresentAssertion(t *testing.T) {
+	orig := dockerTestRetryPause
+	dockerTestRetryPause = time.Millisecond
+	defer func() { dockerTestRetryPause = orig }()
+
+	env := newRunnerTestEnvWithScript(t, `#!/bin/sh
+if [ "$1" = "--list-json" ]; then
+  echo '[{"name":"job","when":"on_success"}]'
+  exit 0
+fi
+echo "daemon unreachable" >&2
+exit 1
+`)
+	env.writeRawFile(t, "tests/present.yml", strings.TrimSpace(`
+stages: [test]
+
+job:
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: present assertion daemon failure
+  assert:
+    job:
+      job:
+        present: true
+`)+"\n")
+
+	sink := &recordingSink{}
+	_, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{
+		Progress: []ProgressSink{sink},
+	}))
+	if exitCode != ExitTestFailed {
+		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitTestFailed)
+	}
+
+	retried := false
+	for _, event := range sink.events {
+		if strings.HasPrefix(event, "retry:") {
+			retried = true
+		}
+	}
+	if !retried {
+		t.Fatalf("expected the daemon-level failure to trigger a retry, got events %#v", sink.events)
+	}
+}
+
+// TestRunDockerWaitFailurePreservesCompletedResults guards against a
+// mid-suite docker.Wait failure discarding results of tests that already
+// ran: Run used to return a fresh RunResult{Error: ...} in that case,
+// dropping every completed test and skipping sink.Summary entirely.
+func TestRunDockerWaitFailurePreservesCompletedResults(t *testing.T) {
+	env := newRunnerTestEnv(t)
+	// Nothing listens here, so docker.dial fails fast instead of reaching a
+	// real daemon. Set via opts.HostEnv (not the process env) to guard
+	// against docker.Wait/Endpoint reading DOCKER_HOST from the process env
+	// directly instead of the resolved host environment.
+	env.hostEnv = append(env.hostEnv, "DOCKER_HOST=tcp://127.0.0.1:1")
+	env.writeRawFile(t, "tests/a-no-docker.yml", strings.TrimSpace(`
+stages: [test]
+
+job:
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: a no docker test
+  setup:
+    docker: false
+  assert:
+    job:
+      job:
+        exit-status: 0
+`)+"\n")
+	env.writeRawFile(t, "tests/b-needs-docker.yml", strings.TrimSpace(`
+stages: [test]
+
+job:
+  stage: test
+  script:
+    - echo ok
+---
+.glut:
+  name: b needs docker test
+  assert:
+    job:
+      job:
+        exit-status: 0
+`)+"\n")
+
+	sink := &recordingSink{}
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{
+		WaitTimeout: 10 * time.Millisecond,
+		Progress:    []ProgressSink{sink},
+	}))
+	if exitCode != ExitRunnerError {
+		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitRunnerError)
+	}
+	if result.Error == nil {
+		t.Fatal("expected result.Error to be set")
+	}
+	if len(result.Tests) != 1 || result.Tests[0].TestName != "a no docker test" {
+		t.Fatalf("expected the already-completed test result to be preserved, got %#v", result.Tests)
+	}
+
+	summaryCalled := false
+	for _, event := range sink.events {
+		if strings.HasPrefix(event, "summary:") {
+			summaryCalled = true
+		}
+	}
+	if !summaryCalled {
+		t.Fatal("expected sink.Summary to still be called")
+	}
+}
+
+// TestRunExercisesRealGitLabOutputFormatEndToEnd guards against a gap where
+// every runner-level test used the synthetic GLUT_JOB| marker protocol, so
+// the real parseGitLabOutput path (regex-parsed "job > line" / "job finished
+// in ... PASS" gcl output) was never exercised end-to-end through the full
+// runner → executor → asserter stack.
+func TestRunExercisesRealGitLabOutputFormatEndToEnd(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnvWithScript(t, "#!/bin/sh\n"+
+		"echo 'build-job > Compiling project...'\n"+
+		"echo 'build-job > Build complete'\n"+
+		"echo 'build-job finished in 120 ms  PASS'\n")
+
+	env.writeRawFile(t, "tests/realistic.yml", strings.TrimSpace(`
+stages: [test]
+
+build-job:
+  stage: test
+  script:
+    - echo Compiling project...
+    - echo Build complete
+---
+.glut:
+  name: realistic gcl output format
+  assert:
+    job:
+      build-job:
+        exit-status: 0
+        stdout:
+          - "Compiling project..."
+          - "Build complete"
+`)+"\n")
+
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts())
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
+	}
+	if len(result.Tests) != 1 || !result.Tests[0].Passed {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
 }
 
 func TestRunRecordsMockBinaryCalls(t *testing.T) {
@@ -433,6 +764,36 @@ func TestRunKeepWorkspacePreservesPassingWorkspace(t *testing.T) {
 	_ = os.RemoveAll(result.Tests[0].WorkspacePath)
 }
 
+// TestRunWorkspaceTempDirControlsWorkspaceLocation guards against
+// opts.WorkspaceTempDir (wired from GLUT_WORK_DIR) being dead plumbing: when
+// GLUT itself runs inside a container that only bind-mounts part of its
+// filesystem, temp workspaces must land under a directory the host can see
+// instead of the container's own ephemeral /tmp.
+func TestRunWorkspaceTempDirControlsWorkspaceLocation(t *testing.T) {
+	t.Parallel()
+	env := newRunnerTestEnv(t)
+	env.writeTestFile(t, "tests/pass.yml", testFileYAML("pass test", "pass-job", "ok"))
+
+	tempRoot := t.TempDir()
+	result, exitCode := Run(context.Background(), []string{"tests"}, env.opts(RunOptions{
+		KeepWorkspace:    true,
+		WorkspaceTempDir: tempRoot,
+	}))
+	if exitCode != ExitOK {
+		t.Fatalf("Run() exit = %d, want %d", exitCode, ExitOK)
+	}
+	if len(result.Tests) != 1 {
+		t.Fatalf("Run() tests = %#v", result.Tests)
+	}
+	defer func() { _ = os.RemoveAll(result.Tests[0].WorkspacePath) }()
+
+	workspacePath := result.Tests[0].WorkspacePath
+	rel, err := filepath.Rel(tempRoot, workspacePath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		t.Fatalf("workspace path %q is not under WorkspaceTempDir %q", workspacePath, tempRoot)
+	}
+}
+
 func TestRunnerHelperBranches(t *testing.T) {
 	if got := normalizePaths(nil); len(got) != 1 || got[0] != "." {
 		t.Fatalf("normalizePaths(nil) = %#v", got)
@@ -507,6 +868,49 @@ func TestRunnerHelperBranches(t *testing.T) {
 	}
 }
 
+func TestSharedExecutorDeadline(t *testing.T) {
+	t.Run("timeout <= 0 means unlimited", func(t *testing.T) {
+		parent := context.Background()
+		ctx, cancel := sharedExecutorDeadline(parent, 0)
+		defer cancel()
+		if _, ok := ctx.Deadline(); ok {
+			t.Fatal("expected no deadline when timeout <= 0")
+		}
+
+		ctxNeg, cancelNeg := sharedExecutorDeadline(parent, -time.Second)
+		defer cancelNeg()
+		if _, ok := ctxNeg.Deadline(); ok {
+			t.Fatal("expected no deadline when timeout is negative")
+		}
+	})
+
+	t.Run("positive timeout sets one shared deadline", func(t *testing.T) {
+		start := time.Now()
+		ctx, cancel := sharedExecutorDeadline(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("expected a deadline")
+		}
+
+		// Simulate a first executor call ("list-jobs") consuming most of the
+		// budget, then confirm a second call sees the SAME deadline rather
+		// than a fresh 100ms window — this is the fix for ListJobs and Run
+		// each getting a full, independent --timeout budget.
+		time.Sleep(60 * time.Millisecond)
+		remaining := time.Until(deadline)
+		if remaining <= 0 || remaining > 40*time.Millisecond {
+			t.Fatalf("remaining budget = %v, want a shrinking window bounded by the original 100ms deadline", remaining)
+		}
+
+		<-ctx.Done()
+		elapsed := time.Since(start)
+		if elapsed < 90*time.Millisecond || elapsed > 500*time.Millisecond {
+			t.Fatalf("context expired after %v, want ~100ms from the original deadline", elapsed)
+		}
+	})
+}
+
 func TestDiscoverAndLoadErrorBranches(t *testing.T) {
 	t.Parallel()
 	env := newRunnerTestEnv(t)
@@ -536,6 +940,24 @@ job:
 	}
 	if len(tests) != 0 {
 		t.Fatalf("discoverTests() filtered tests = %#v", tests)
+	}
+}
+
+// TestDiscoverTestsSkipsGitAndGlutTmpDirs guards against `glut run .`
+// descending into .git or GLUT's own stale .glut-tmp* workspace copies,
+// which would otherwise produce phantom results.
+func TestDiscoverTestsSkipsGitAndGlutTmpDirs(t *testing.T) {
+	env := newRunnerTestEnv(t)
+	env.writeTestFile(t, "tests/real.yml", testFileYAML("real test", "job", "ok"))
+	env.writeTestFile(t, "tests/.git/phantom.yml", testFileYAML("phantom test", "job", "ok"))
+	env.writeTestFile(t, "tests/.glut-tmp-abc123/phantom.yml", testFileYAML("phantom test", "job", "ok"))
+
+	tests, err := discoverTests([]string{filepath.Join(env.workDir, "tests")}, "")
+	if err != nil {
+		t.Fatalf("discoverTests() error = %v", err)
+	}
+	if len(tests) != 1 || tests[0].Glut.Name != "real test" {
+		t.Fatalf("discoverTests() = %#v, want only the real test", tests)
 	}
 }
 
@@ -1041,24 +1463,58 @@ func TestResolveDockerMode(t *testing.T) {
 	}
 }
 
-func TestResolvePrivileged(t *testing.T) {
-	trueVal := true
-	falseVal := false
+// TestSetupPrivilegedPassedToExecutor asserts setup.privileged through
+// behavior — a fake gitlab-ci-local script reports whether --privileged was
+// in its argv — rather than re-evaluating the production expression inline
+// against itself (which can never fail regardless of what the code does).
+func TestSetupPrivilegedPassedToExecutor(t *testing.T) {
+	env := newRunnerTestEnvWithScript(t, `#!/bin/sh
+found=false
+for arg in "$@"; do
+  if [ "$arg" = "--privileged" ]; then
+    found=true
+  fi
+done
+job_name="$(grep '^[A-Za-z0-9_-]\+:' .gitlab-ci.yml | cut -d: -f1 | grep -v '^stages$' | head -n1)"
+printf 'GLUT_JOB|name=%s|exit=0|stdout=privileged=%s|stderr=\n' "$job_name" "$found"
+`)
 
 	cases := []struct {
-		name     string
-		input    *bool
-		expected bool
+		name       string
+		setupBlock string
+		want       string
 	}{
-		{"nil", nil, false},
-		{"false", &falseVal, false},
-		{"true", &trueVal, true},
+		{name: "privileged true passes --privileged", setupBlock: "  setup:\n    privileged: true\n", want: "privileged=true"},
+		{name: "privileged false omits --privileged", setupBlock: "  setup:\n    privileged: false\n", want: "privileged=false"},
+		{name: "privileged omitted omits --privileged", setupBlock: "", want: "privileged=false"},
 	}
-	for _, c := range cases {
-		got := c.input != nil && *c.input
-		if got != c.expected {
-			t.Errorf("privileged %s: got %v, want %v", c.name, got, c.expected)
-		}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fileName := "tests/" + strings.ReplaceAll(tc.name, " ", "-") + ".yml"
+			yaml := "stages: [test]\n\n" +
+				"job:\n" +
+				"  stage: test\n" +
+				"  script:\n" +
+				"    - echo ok\n" +
+				"---\n" +
+				".glut:\n" +
+				"  name: " + tc.name + "\n" +
+				tc.setupBlock +
+				"  assert:\n" +
+				"    job:\n" +
+				"      job:\n" +
+				fmt.Sprintf("        stdout: %q\n", tc.want)
+			env.writeRawFile(t, fileName, yaml)
+
+			result, exitCode := Run(context.Background(), []string{fileName}, env.opts())
+			if exitCode != ExitOK {
+				t.Fatalf("Run() exit = %d, want %d; tests = %#v", exitCode, ExitOK, result.Tests)
+			}
+			if len(result.Tests) != 1 || !result.Tests[0].Passed {
+				t.Fatalf("Run() tests = %#v", result.Tests)
+			}
+		})
 	}
 }
 

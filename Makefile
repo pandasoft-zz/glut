@@ -3,22 +3,24 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS  = -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 COVER_PACKAGES = ./cmd/glut ./internal/... ./schema
 
+.PHONY: build test test-cover test-cover-check test-cover-html lint docker test-integration release
+
 build:
 	go build $(LDFLAGS) -o glut ./cmd/glut
 
 test:
-	go test ./...
+	go test -race ./...
 
 test-cover:
-	go test $(COVER_PACKAGES) -covermode=atomic -coverprofile=coverage.out
+	go test -race $(COVER_PACKAGES) -covermode=atomic -coverprofile=coverage.out
 	go tool cover -func=coverage.out
 
 test-cover-check:
-	go test $(COVER_PACKAGES) -covermode=atomic -coverprofile=coverage.out
+	go test -race $(COVER_PACKAGES) -covermode=atomic -coverprofile=coverage.out
 	sh ./scripts/check-coverage.sh coverage.out 90
 
 test-cover-html:
-	go test $(COVER_PACKAGES) -covermode=atomic -coverprofile=coverage.out
+	go test -race $(COVER_PACKAGES) -covermode=atomic -coverprofile=coverage.out
 	go tool cover -html=coverage.out
 
 lint:
@@ -48,14 +50,12 @@ test-integration: docker
 		-v "$(PWD):/repo" \
 		-w /repo \
 		-e GLUT_WORK_DIR=/repo/.glut-tmp \
-		-e GLUT_HOST_WORK_DIR=$(PWD)/.glut-tmp \
 		glut:dev run $(GLUT_RUN_FLAGS) ./tests/passing/
 	@if docker run --rm \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v "$(PWD):/repo" \
 		-w /repo \
 		-e GLUT_WORK_DIR=/repo/.glut-tmp \
-		-e GLUT_HOST_WORK_DIR=$(PWD)/.glut-tmp \
 		glut:dev run $(GLUT_RUN_FLAGS) ./tests/failing/; then \
 		echo "Expected tests to fail but they passed"; exit 1; \
 	fi

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -38,8 +39,10 @@ const (
 const (
 	defaultKeepLastFailed = 3
 	DefaultWaitTimeout    = 120 * time.Second
-	dockerTestRetryPause  = 5 * time.Second
 )
+
+// dockerTestRetryPause is a var (not const) so tests can shrink it.
+var dockerTestRetryPause = 5 * time.Second
 
 type RunOptions struct {
 	RunPattern           string
@@ -61,6 +64,14 @@ type RunOptions struct {
 	WaitTimeout          time.Duration // max time to wait for Docker daemon; 0 uses default (120s)
 	DockerWaitOutput     io.Writer     // where to write Docker wait progress; nil discards output
 	DockerVolumeStrategy string        // "auto" (default), "bind" (native Linux), "volume" (Docker Desktop/WSL2)
+	// WorkspaceTempDir is the base directory each test's ephemeral workspace
+	// is created under (empty uses the system default, e.g. /tmp). Set this
+	// when GLUT itself runs inside a container that only bind-mounts part of
+	// its filesystem (e.g. GLUT_WORK_DIR in the Makefile's containerized
+	// test-integration target), so temp workspaces land somewhere the host
+	// can actually see rather than an ephemeral path invisible outside the
+	// container.
+	WorkspaceTempDir string
 }
 
 type ListOptions struct {
@@ -162,7 +173,7 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 	// Resolve the Docker volume strategy once for the whole suite run.
 	// "auto" detects whether the workspace path is on a native Linux
 	// filesystem (bind mounts) or a Windows-backed 9P path (named volumes).
-	effectiveVolumeStrategy := docker.ResolveVolumeStrategy(opts.DockerVolumeStrategy)
+	effectiveVolumeStrategy := docker.ResolveVolumeStrategy(opts.DockerVolumeStrategy, opts.HostEnv)
 
 	// Docker volumes are collected here and destroyed together at the end.
 	// Destroying them immediately after each test triggers overlay-FS cleanup
@@ -177,19 +188,24 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 	}()
 
 	for _, testFile := range tests {
+		if ctx.Err() != nil {
+			break
+		}
+
 		if testNeedsDocker(&testFile) && !dockerReady {
 			remaining := opts.WaitTimeout - time.Since(runStart)
 			if remaining < 0 {
 				remaining = 0
 			}
-			if err := docker.Wait(ctx, opts.DockerWaitOutput, remaining); err != nil {
-				return RunResult{Error: fmt.Errorf("wait for Docker: %w", err)}, ExitRunnerError
+			if err := docker.Wait(ctx, opts.DockerWaitOutput, remaining, opts.HostEnv); err != nil {
+				result.Error = fmt.Errorf("wait for Docker: %w", err)
+				break
 			}
 			// Prune orphaned volumes from previous GLUT runs before the first
 			// Docker test. Named volumes that are no longer referenced by any
 			// container accumulate across suite runs and keep the daemon busy
 			// with background cleanup work that can delay new container starts.
-			docker.PruneOrphanedVolumes()
+			docker.PruneOrphanedVolumes(opts.HostEnv)
 			dockerReady = true
 		}
 
@@ -200,11 +216,23 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		// failures explicitly tagged as infrastructure (e.g. volume create,
 		// populate). The fallback covers executor-level daemon failures that
 		// occur before any job starts and are therefore not wrapped as
-		// InfraError — those also produce error + no job outputs.
+		// InfraError — those also produce error + no executed job output.
+		// JobOutputs alone cannot signal this: when the test has present:/when:
+		// assertions, executor.ListJobs pre-populates JobOutputs before the
+		// pipeline ever runs, so its length is non-zero even on a daemon-level
+		// failure. Only entries actually produced by the pipeline run are
+		// marked Executed.
 		var infraErr *workspace.InfraError
-		executorFailedBeforeJobs := testResult.Error != nil && len(testResult.JobOutputs) == 0
+		executorRan := false
+		for _, output := range testResult.JobOutputs {
+			if output.Executed {
+				executorRan = true
+				break
+			}
+		}
+		executorFailedBeforeJobs := testResult.Error != nil && !executorRan
 		if testNeedsDocker(&testFile) && !testResult.Passed &&
-			(errors.As(testResult.Error, &infraErr) || executorFailedBeforeJobs) {
+			(errors.As(testResult.Error, &infraErr) || executorFailedBeforeJobs) && ctx.Err() == nil {
 			for _, sink := range opts.Progress {
 				sink.TestRetry(testResult.TestName, testResult.Error)
 			}
@@ -212,9 +240,11 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 			case <-time.After(dockerTestRetryPause):
 			case <-ctx.Done():
 			}
-			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
-			if retryResult.Passed || len(retryResult.Failures) > 0 {
-				testResult = retryResult
+			if ctx.Err() == nil {
+				retryResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
+				if retryResult.Passed || len(retryResult.Failures) > 0 {
+					testResult = retryResult
+				}
 			}
 		}
 
@@ -239,6 +269,9 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		sink.Summary(result)
 	}
 
+	if result.Error != nil {
+		return result, ExitRunnerError
+	}
 	if result.Failed > 0 {
 		return result, ExitTestFailed
 	}
@@ -291,6 +324,9 @@ func discoverTests(paths []string, pattern string) ([]parser.TestFile, error) {
 					return walkErr
 				}
 				if entry.IsDir() {
+					if parser.SkipDiscoveryDir(entry.Name()) {
+						return filepath.SkipDir
+					}
 					return nil
 				}
 				if !isYAMLPath(path) {
@@ -434,22 +470,22 @@ func runSingleTest(
 			result.PreservedWorkspace = preserved
 		}
 
-		if primaryErr == nil && len(cleanupErrors) > 0 {
-			primaryErr = cleanupErrors[0]
-		}
-		result.Error = primaryErr
+		result.Passed, result.Error = finalizeCleanupError(result.Passed, primaryErr, cleanupErrors)
 
 		if opts.Debug && !result.Passed {
-			result.Debug = &DebugData{
-				RawStdout:       execResult.RawStdout,
-				RawStderr:       execResult.RawStderr,
-				BinaryLogs:      binaryLogs,
-				APICalls:        apiCalls,
-				WorkspaceGitLog: safeGitLog(work.WorkspaceDir),
-				OriginGitLog:    safeGitLog(work.WorkspaceDir, "--git-dir="+filepath.Join(work.WorkspaceDir, ".glut-origin.git")),
-				PhaseTimings:    copyPhaseTimings(phaseTimings),
-				CleanupErrors:   errorsToStrings(cleanupErrors),
+			debug := &DebugData{
+				RawStdout:     execResult.RawStdout,
+				RawStderr:     execResult.RawStderr,
+				BinaryLogs:    binaryLogs,
+				APICalls:      apiCalls,
+				PhaseTimings:  copyPhaseTimings(phaseTimings),
+				CleanupErrors: errorsToStrings(cleanupErrors),
 			}
+			if work != nil {
+				debug.WorkspaceGitLog = safeGitLog(work.WorkspaceDir)
+				debug.OriginGitLog = safeGitLog(work.WorkspaceDir, "--git-dir="+filepath.Join(work.WorkspaceDir, ".glut-origin.git"))
+			}
+			result.Debug = debug
 		}
 	}()
 
@@ -464,6 +500,7 @@ func runSingleTest(
 		Include:      opts.Include,
 		Verbose:      opts.Verbose,
 		HostEnv:      opts.HostEnv,
+		TempDir:      opts.WorkspaceTempDir,
 	})
 	phaseTimings["workspace"] = time.Since(phaseStart)
 	if primaryErr != nil {
@@ -471,6 +508,12 @@ func runSingleTest(
 		result.Passed = false
 		return
 	}
+
+	// Resolved before mockserver.Start so the bind address can be scoped to
+	// loopback for shell-only tests — Docker jobs need the mock server
+	// reachable from the bridge network, but a shell-only job never does,
+	// and 0.0.0.0 is reachable by any host on a shared network.
+	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
 
 	phaseStart = time.Now()
 	server, primaryErr = mockserver.New(apiConfig(testFile))
@@ -482,7 +525,7 @@ func runSingleTest(
 	}
 
 	phaseStart = time.Now()
-	primaryErr = server.Start()
+	primaryErr = server.Start(useDocker)
 	phaseTimings["mockserver-start"] = time.Since(phaseStart)
 	if primaryErr != nil {
 		primaryErr = fmt.Errorf("start mock server: %w", primaryErr)
@@ -492,7 +535,6 @@ func runSingleTest(
 	server.SetGitRepo(work.OriginRepo)
 
 	phaseStart = time.Now()
-	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
 	usePrivileged := testFile.Glut.Setup.Privileged != nil && *testFile.Glut.Setup.Privileged
 	// Snapshot gcl volumes before the pipeline so FetchArtifactsFromGCLVolumes
 	// can identify which ones belong to this run (volume strategy only, where
@@ -607,6 +649,10 @@ func runSingleTest(
 		HostEnv:             opts.HostEnv,
 		KeepDockerResources: needsGCLArtifacts,
 		GitConfigEnv:        gitConfigEnv,
+		// dockerVolumeName is only set for the named-volume strategy (see
+		// above); bind-mount workspaces have no volume for the output monitor
+		// to watch.
+		MonitorVolume: dockerVolumeName,
 	}
 
 	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
@@ -615,9 +661,16 @@ func runSingleTest(
 		return
 	}
 
+	// ListJobs and Run each apply cfg.Timeout independently via their own
+	// context; without a shared deadline, a test that needs both invocations
+	// could take up to 2x --timeout in the worst case. Derive one deadline
+	// here and let both share it.
+	execCtx, cancelExec := sharedExecutorDeadline(ctx, opts.Timeout)
+	defer cancelExec()
+
 	if needsJobList(testFile) {
 		phaseStart = time.Now()
-		jobEntries, err := executor.ListJobs(ctx, execCfg)
+		jobEntries, err := executor.ListJobs(execCtx, execCfg)
 		phaseTimings["list-jobs"] = time.Since(phaseStart)
 		if err != nil {
 			primaryErr = fmt.Errorf("list jobs: %w", err)
@@ -630,7 +683,7 @@ func runSingleTest(
 	}
 
 	phaseStart = time.Now()
-	execResult, err = executor.Run(ctx, execCfg)
+	execResult, err = executor.Run(execCtx, execCfg)
 	phaseTimings["pipeline"] = time.Since(phaseStart)
 	for name, output := range execResult.Jobs {
 		output.Present = true
@@ -733,6 +786,17 @@ func runSingleTest(
 	}
 
 	return
+}
+
+// sharedExecutorDeadline derives a single deadline for a test's executor
+// invocations (ListJobs and Run), so they share one --timeout budget instead
+// of each getting a fresh one. timeout <= 0 means unlimited, matching
+// executor.withTimeout's own convention.
+func sharedExecutorDeadline(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(ctx, time.Now().Add(timeout))
 }
 
 func normalizeRunOptions(opts RunOptions) RunOptions {
@@ -911,9 +975,11 @@ func gitHeadCommit(dir string) (string, string, error) {
 func gitOutput(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(string(output)), nil
 }
@@ -950,6 +1016,23 @@ func shouldStop(result RunResult, opts RunOptions) bool {
 		return true
 	}
 	return opts.MaxFail > 0 && result.Failed >= opts.MaxFail
+}
+
+// finalizeCleanupError merges a deferred cleanup error (mock server stop,
+// workspace policy) into the result's error, promoting the first cleanup
+// error into primaryErr when the test otherwise succeeded. passed is
+// recomputed here rather than trusted from the caller: it was set earlier
+// in runSingleTest based only on primaryErr as it stood before cleanup ran,
+// so without this a cleanup failure could leave Passed=true alongside a
+// non-nil Error.
+func finalizeCleanupError(passed bool, primaryErr error, cleanupErrors []error) (bool, error) {
+	if primaryErr == nil && len(cleanupErrors) > 0 {
+		primaryErr = cleanupErrors[0]
+	}
+	if primaryErr != nil {
+		passed = false
+	}
+	return passed, primaryErr
 }
 
 func applyWorkspacePolicy(

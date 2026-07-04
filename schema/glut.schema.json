@@ -88,12 +88,6 @@
           "type": "boolean",
           "description": "Sets CI_COMMIT_REF_PROTECTED. Default false. Set true to simulate a pipeline running on a protected branch."
         }
-      },
-      "not": {
-        "required": [
-          "branch",
-          "tag"
-        ]
       }
     },
     "components": {
@@ -326,11 +320,11 @@
           "description": "Human-readable project name. Sets CI_PROJECT_TITLE and the name field in mock API project responses. Defaults to the last segment of the project path."
         },
         "access_level": {
-          "description": "Member access level in permissions.project_access. Accepts string (guest, reporter, developer, maintainer, owner) or integer (10, 20, 30, 40, 50). Defaults to maintainer (40).",
+          "description": "Member access level in permissions.project_access. Accepts string (guest, reporter, developer, maintainer, owner; case-insensitive) or integer (10, 20, 30, 40, 50). Defaults to maintainer (40).",
           "oneOf": [
             {
               "type": "string",
-              "enum": ["guest", "reporter", "developer", "maintainer", "owner"]
+              "pattern": "^([Gg][Uu][Ee][Ss][Tt]|[Rr][Ee][Pp][Oo][Rr][Tt][Ee][Rr]|[Dd][Ee][Vv][Ee][Ll][Oo][Pp][Ee][Rr]|[Mm][Aa][Ii][Nn][Tt][Aa][Ii][Nn][Ee][Rr]|[Oo][Ww][Nn][Ee][Rr])$"
             },
             {
               "type": "integer",

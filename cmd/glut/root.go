@@ -93,24 +93,7 @@ current directory. Each test gets its own workspace and mock services.`,
 			writeError(err)
 			os.Exit(int(runner.ExitRunnerError))
 		}
-		result, exitCode := runner.Run(ctx, opts.Paths, runner.RunOptions{
-			RunPattern:       opts.Pattern,
-			FailFast:         opts.FailFast,
-			MaxFail:          opts.MaxFail,
-			Verbose:          opts.Verbose,
-			Quiet:            opts.Quiet,
-			Timeout:          opts.Timeout,
-			WaitTimeout:      opts.WaitTimeout,
-			Debug:            opts.Debug,
-			KeepWorkspace:    opts.KeepWorkspace,
-			DebugPause:       opts.DebugPause,
-			KeepLastFailed:   opts.KeepLastFailed,
-			CopyStrategy:         opts.CopyStrategy,
-			DockerVolumeStrategy: opts.DockerVolumeStrategy,
-			Include:              opts.Include,
-			Progress:         sinks,
-			DockerWaitOutput: os.Stderr,
-		})
+		result, exitCode := runner.Run(ctx, opts.Paths, toRunnerOptions(opts, sinks, os.Stderr))
 		if result.Error != nil {
 			writeError(result.Error)
 		}
@@ -156,6 +139,10 @@ assert.job references to missing pipeline jobs.`,
   glut lint ./tests/release.yml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := lintOptionsFromCommand(args)
+		if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
+			writeError(err)
+			os.Exit(int(runner.ExitRunnerError))
+		}
 		report := buildLintReport(opts.Paths)
 		if err := printLintReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
 			writeError(err)
@@ -182,6 +169,10 @@ Use JSON output when another tool or AI assistant needs structured feedback.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		opts := lintOptionsFromCommand(args)
 		opts.Format = doctorFormat
+		if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
+			writeError(err)
+			os.Exit(int(runner.ExitRunnerError))
+		}
 		report := buildDoctorReportFiltered(opts.Paths, doctorPattern)
 		if err := printDoctorReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
 			writeError(err)
@@ -261,6 +252,7 @@ func envDuration(env func(string) string, name string, fallback time.Duration) t
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil {
+		_, _ = fmt.Fprintf(stderrWriter(), "warning: %s=%q is not a valid duration, using default %s\n", name, value, fallback)
 		return fallback
 	}
 	return duration

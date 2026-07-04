@@ -253,6 +253,16 @@ Mock API seed supports:
 - `releases`
 - `merge_requests`
 - `labels`
+- `milestones`
+- `issues`
+- `variables`
+- `hooks`
+- `tags`
+- `branches`
+- `environments`
+- `deployments`
+- `pipelines`
+- `jobs`
 
 Common mock API project resources:
 
@@ -351,9 +361,20 @@ Job assert fields:
 
 - `present`
 - `exit-status`
+- `when` — job status such as `on_success`, `on_failure`, `always`
 - `stdout`
 - `stderr`
 - `output` — combined stdout + stderr; use when the stream does not matter
+
+Skipped job:
+
+```yaml
+assert:
+  job:
+    deploy:
+      present: true
+      when: "never"
+```
 
 Artifact content:
 
@@ -378,6 +399,20 @@ Artifact assert fields:
 - `md5`
 - `sha256`
 - `filetype`
+- `report` — parse a structured report file (junit, dotenv, coverage, gitlab-security) and assert on typed fields
+
+Structured report:
+
+```yaml
+assert:
+  artifacts:
+    "reports/junit.xml":
+      report:
+        format: "junit"
+        tests:
+          ge: 1
+        failures: 0
+```
 
 Git side effect:
 
@@ -557,30 +592,31 @@ release:
 
 ## Docker Executor
 
-By default GLUT runs jobs without Docker (`--shell-executor-no-image`). Scripts
-run directly on the host — fast, no image pull, suitable for testing logic that
-does not depend on a specific runtime environment.
+By default GLUT runs in full Docker mode: jobs with `image:` run in Docker
+containers; jobs without `image:` run in the shell. This is the default and
+matches the realistic runtime used in production, but requires a Docker
+daemon to be accessible.
 
-Set `setup.docker: true` to enable Docker. GLUT will let gitlab-ci-local pull
-and run the `image:` defined in each job. Use this when:
+Set `setup.docker: false` to force every job to the shell executor regardless
+of `image:` declarations (`--force-shell-executor`). Use this when:
 
-- The component under test relies on tools only available in a specific image.
-- You want the full realistic runtime as used in production.
-- You are writing tests for components that define `image:`.
+- The component under test does not depend on a specific runtime image.
+- You want a fast run without an image pull.
+- Docker is unavailable in the environment running the tests.
 
 ```yaml
 setup:
   branch: "main"
   pipeline_source: "push"
-  docker: true
+  docker: false
 ```
 
-Docker tests are slower (image pull on first run) and require a Docker daemon
-to be accessible. Omit `docker:` or set `docker: false` for tests that only
-need shell commands — this is the default and keeps the suite fast.
+Omit `docker:` or set `docker: true` for tests that need the full Docker
+runtime — this is the default and is slower (image pull on first run).
 
-**Rule of thumb**: start without Docker to cover logic. Add `docker: true` when
-you need to prove the component works in its actual runtime image.
+**Rule of thumb**: start with the default Docker mode to prove the component
+works in its actual runtime image. Set `docker: false` once logic is covered
+and you want a faster shell-only run.
 
 ## Debugging Failing Tests
 

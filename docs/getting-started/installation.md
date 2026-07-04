@@ -3,7 +3,7 @@
 Try GLUT immediately without installing anything:
 
 ```bash
-docker run --rm ghcr.io/pandasoft-zz/glut:latest glut --help
+docker run --rm ghcr.io/pandasoft-zz/glut:latest --help
 ```
 
 Download released binaries and tagged Docker images from
@@ -72,7 +72,9 @@ stages:
 
 lint:glut:
   stage: lint
-  image: ghcr.io/pandasoft-zz/glut:latest
+  image:
+    name: ghcr.io/pandasoft-zz/glut:latest
+    entrypoint: [""]
   script:
     - mkdir -p reports
     - glut lint --format=json ./tests > reports/glut-lint.json
@@ -83,7 +85,9 @@ lint:glut:
 
 test:glut:
   stage: test
-  image: ghcr.io/pandasoft-zz/glut:latest
+  image:
+    name: ghcr.io/pandasoft-zz/glut:latest
+    entrypoint: [""]
   needs:
     - lint:glut
   variables:
@@ -115,7 +119,9 @@ stages:
 
 lint:glut:
   stage: lint
-  image: ghcr.io/pandasoft-zz/glut:latest
+  image:
+    name: ghcr.io/pandasoft-zz/glut:latest
+    entrypoint: [""]
   script:
     - mkdir -p reports
     - glut lint --format=json ./tests > reports/glut-lint.json
@@ -126,7 +132,9 @@ lint:glut:
 
 test:glut:
   stage: test
-  image: ghcr.io/pandasoft-zz/glut:latest
+  image:
+    name: ghcr.io/pandasoft-zz/glut:latest
+    entrypoint: [""]
   needs:
     - lint:glut
   services:
@@ -183,7 +191,9 @@ Add a login step in `script` before calling `glut run`:
 ```yaml
 test:glut:
   stage: test
-  image: ghcr.io/pandasoft-zz/glut:latest
+  image:
+    name: ghcr.io/pandasoft-zz/glut:latest
+    entrypoint: [""]
   services:
     - name: docker:25-dind
       alias: docker
