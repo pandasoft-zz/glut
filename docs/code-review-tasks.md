@@ -86,10 +86,23 @@ Areas: `[cli]` cmd/glut + parser + config + schema, `[workspace]` internal/works
   Fix: use `json.NewDecoder(...).Decode` for the list (tolerates trailing data); verify the gcl version at startup and fail loudly when the finished-line regex matches nothing.
   Done: switched `parseJobListJSON` to `json.NewDecoder(...).Decode`, which tolerates a diagnostic line after the array (regression test added). Deferred: gcl-version verification / fail-loud-on-zero-regex-matches is a larger design decision (would need a maintained compatibility table and a new error-reporting path through `Run`) and was left out of this pass — worth a follow-up.
 
-- [ ] **[runner] Split runSingleTest (~360 LOC) into phase functions** (`internal/runner/runner.go:374`)
+- [x] **[runner] Split runSingleTest (~360 LOC) into phase functions** (`internal/runner/runner.go:374`)
   One function handles 10+ phases coordinated through a mutable named return and a 40-line defer — the direct cause of the nil-guard bug above. Conventions require small single-responsibility functions.
   Fix: extract `setupTestEnv`, `buildExecConfig`, `collectDockerResults`, and a phase-timer helper; keep one thin orchestrating function owning a single defer.
-  Deferred: a large structural refactor of the core test-execution path touching every phase of a single test run; disproportionate risk/scope for this cleanup pass (same reasoning as the other deferred structural-refactor items below).
+  Done: the single-test execution moved to `internal/runner/testrun.go`. A `testRun`
+  struct carries per-test state; `runSingleTest` is now a thin orchestrator that
+  runs named phase methods (`createWorkspace`, `startMockServer`,
+  `setupDockerVolumeAndMocks`, `buildExecConfig`, `listJobs`, `runPipeline`,
+  `collectMockLogs`, `fetchGCLArtifacts`, `resolveOriginSource`, `runAsserts`)
+  and owns the single cleanup defer (`finalize`). A `timePhase` helper replaces
+  the repeated stopwatch code, and `recordErr` centralizes the
+  `if err != nil && primaryErr == nil` first-error pattern. The suite-level
+  state (volume strategy, pending volume cleanup, preserved workspaces) moved
+  into a `suiteRun` struct; the Docker-readiness wait (`ensureDockerReady`) and
+  the infra-retry policy (`runTestWithRetry` + `shouldRetryInfraFailure`) were
+  extracted from `Run` as well. Behavior-preserving: error wrapping, phase
+  timings, defer ordering, and retry semantics are unchanged, and the full
+  runner test suite passes.
 
 - [x] **[runner] Delete or rewrite tautological TestResolvePrivileged** (`internal/runner/runner_test.go:1044`)
   The test re-implements the production expression inline (`got := c.input != nil && *c.input`) and calls no production code — it can never fail. Conventions forbid tests that do not assert behavior.
