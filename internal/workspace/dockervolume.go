@@ -6,15 +6,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/pandasoft-zz/glut/internal/docker"
 	"github.com/pandasoft-zz/glut/internal/parser"
 )
 
@@ -293,27 +292,6 @@ func FetchArtifactsFromGCLVolumes(preRunVolumes, jobNames []string, workspaceDir
 	return firstErr
 }
 
-// gclBuildVolumeRE matches gitlab-ci-local's build-volume naming pattern,
-// gcl-<encodedJobName>-<jobId>-build, where jobId is a random number. This is
-// the single source of truth for parsing those names; the executor's log-capture
-// path reuses it by calling the exported GCLJobName below.
-var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
-
-// GCLJobName extracts the (URL-decoded) job name from a gcl-*-build volume name.
-// gitlab-ci-local URL-encodes characters outside [\w-] into the segment, so we
-// decode it to recover the original job name. Returns ok=false when the name
-// does not match the build-volume shape.
-func GCLJobName(vol string) (string, bool) {
-	m := gclBuildVolumeRE.FindStringSubmatch(vol)
-	if len(m) != 2 {
-		return "", false
-	}
-	if decoded, err := url.PathUnescape(m[1]); err == nil {
-		return decoded, true
-	}
-	return m[1], true
-}
-
 // selectGCLArtifactVolumes picks the gcl build volumes belonging to this run.
 // Because the jobId in the name is random, volume names cannot be predicted up
 // front. We instead keep volumes that are new since preRun, end in "-build", and
@@ -343,7 +321,7 @@ func selectGCLArtifactVolumes(preRun, current, jobNames []string) []string {
 			continue
 		}
 		if scoped {
-			seg, ok := GCLJobName(vol)
+			seg, ok := docker.GCLJobName(vol)
 			if !ok {
 				continue
 			}

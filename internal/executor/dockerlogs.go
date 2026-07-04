@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pandasoft-zz/glut/internal/workspace"
+	"github.com/pandasoft-zz/glut/internal/docker"
 )
 
 const (
@@ -214,7 +214,7 @@ func containerInfo(ctx context.Context, containerID, glutVolumeName string, host
 		if name == glutVolumeName {
 			hasGlutVol = true
 		}
-		if decoded, ok := workspace.GCLJobName(name); ok {
+		if decoded, ok := docker.GCLJobName(name); ok {
 			jobName = decoded
 		}
 	}
