@@ -9,51 +9,25 @@ import (
 	"time"
 )
 
-func TestRunOptionsFromCommandUsesGlobalsAndDefaultPath(t *testing.T) {
-	saveRunGlobals := func() {
-		oldPattern := runPattern
-		oldFailFast := runFailFast
-		oldMaxFail := runMaxFail
-		oldVerbose := runVerbose
-		oldQuiet := runQuiet
-		oldFormat := runFormat
-		oldReports := append([]string(nil), runReports...)
-		oldTimeout := runTimeout
-		oldDebug := runDebug
-		oldKeepWorkspace := runKeepWorkspace
-		oldDebugPause := runDebugPause
-		oldKeepLastFailed := runKeepLastFailed
-		t.Cleanup(func() {
-			runPattern = oldPattern
-			runFailFast = oldFailFast
-			runMaxFail = oldMaxFail
-			runVerbose = oldVerbose
-			runQuiet = oldQuiet
-			runFormat = oldFormat
-			runReports = oldReports
-			runTimeout = oldTimeout
-			runDebug = oldDebug
-			runKeepWorkspace = oldKeepWorkspace
-			runDebugPause = oldDebugPause
-			runKeepLastFailed = oldKeepLastFailed
-		})
+func TestRunFlagsToRunOptionsAndDefaultPath(t *testing.T) {
+	t.Parallel()
+
+	flags := &runFlags{
+		pattern:        "release",
+		failFast:       true,
+		maxFail:        2,
+		verbose:        true,
+		quiet:          true,
+		format:         "json",
+		reports:        []string{"junit:report.xml"},
+		timeout:        3 * time.Minute,
+		debug:          true,
+		keepWorkspace:  true,
+		debugPause:     "on-fail",
+		keepLastFailed: 4,
 	}
-	saveRunGlobals()
 
-	runPattern = "release"
-	runFailFast = true
-	runMaxFail = 2
-	runVerbose = true
-	runQuiet = true
-	runFormat = "json"
-	runReports = []string{"junit:report.xml"}
-	runTimeout = 3 * time.Minute
-	runDebug = true
-	runKeepWorkspace = true
-	runDebugPause = "on-fail"
-	runKeepLastFailed = 4
-
-	opts := runOptionsFromCommand(nil)
+	opts := flags.toRunOptions(nil)
 	if !reflect.DeepEqual(opts.Paths, []string{"."}) {
 		t.Fatalf("Paths = %#v", opts.Paths)
 	}
@@ -70,33 +44,26 @@ func TestRunOptionsFromCommandUsesGlobalsAndDefaultPath(t *testing.T) {
 		t.Fatalf("Reports = %#v", opts.Reports)
 	}
 
-	runReports[0] = "tap:report.tap"
+	flags.reports[0] = "tap:report.tap"
 	if opts.Reports[0] != "junit:report.xml" {
 		t.Fatalf("Reports must be copied, got %#v", opts.Reports)
 	}
 }
 
 func TestListAndLintOptionsUseDefaultPaths(t *testing.T) {
-	oldPattern := listPattern
-	oldLintFormat := lintFormat
-	listPattern = "smoke"
-	lintFormat = "json"
-	t.Cleanup(func() {
-		listPattern = oldPattern
-		lintFormat = oldLintFormat
-	})
+	t.Parallel()
 
-	listOpts := listOptionsFromCommand(nil)
+	listOpts := listOptionsFromCommand(nil, "smoke")
 	if !reflect.DeepEqual(listOpts.Paths, []string{"."}) || listOpts.Pattern != "smoke" {
 		t.Fatalf("list options = %+v", listOpts)
 	}
 
-	lintOpts := lintOptionsFromCommand(nil)
+	lintOpts := lintOptionsFromCommand(nil, "json")
 	if !reflect.DeepEqual(lintOpts.Paths, []string{"./tests/"}) || lintOpts.Format != "json" {
 		t.Fatalf("lint options = %+v", lintOpts)
 	}
 
-	custom := lintOptionsFromCommand([]string{"custom"})
+	custom := lintOptionsFromCommand([]string{"custom"}, "json")
 	if !reflect.DeepEqual(custom.Paths, []string{"custom"}) {
 		t.Fatalf("custom lint paths = %#v", custom.Paths)
 	}

@@ -37,34 +37,36 @@ type ListOptions struct {
 	Pattern string
 }
 
-func runOptionsFromCommand(args []string) RunOptions {
+// toRunOptions converts the bound flag values into RunOptions. Slices are
+// copied so later flag-struct mutation cannot leak into the returned options.
+func (f *runFlags) toRunOptions(args []string) RunOptions {
 	paths := args
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
 
 	return RunOptions{
-		Paths:          paths,
-		Pattern:        runPattern,
-		FailFast:       runFailFast,
-		MaxFail:        runMaxFail,
-		Verbose:        runVerbose,
-		Quiet:          runQuiet,
-		Format:         runFormat,
-		Reports:        append([]string(nil), runReports...),
-		Timeout:        runTimeout,
-		WaitTimeout:    runWaitTimeout,
-		Debug:          runDebug,
-		KeepWorkspace:  runKeepWorkspace,
-		DebugPause:     runDebugPause,
-		KeepLastFailed: runKeepLastFailed,
-		CopyStrategy:         runCopyStrategy,
-		DockerVolumeStrategy: runDockerVolumeStrategy,
-		Include:              append([]string(nil), runInclude...),
+		Paths:                paths,
+		Pattern:              f.pattern,
+		FailFast:             f.failFast,
+		MaxFail:              f.maxFail,
+		Verbose:              f.verbose,
+		Quiet:                f.quiet,
+		Format:               f.format,
+		Reports:              append([]string(nil), f.reports...),
+		Timeout:              f.timeout,
+		WaitTimeout:          f.waitTimeout,
+		Debug:                f.debug,
+		KeepWorkspace:        f.keepWorkspace,
+		DebugPause:           f.debugPause,
+		KeepLastFailed:       f.keepLastFailed,
+		CopyStrategy:         f.copyStrategy,
+		DockerVolumeStrategy: f.dockerVolumeStrategy,
+		Include:              append([]string(nil), f.include...),
 	}
 }
 
-func listOptionsFromCommand(args []string) ListOptions {
+func listOptionsFromCommand(args []string, pattern string) ListOptions {
 	paths := args
 	if len(paths) == 0 {
 		paths = []string{"."}
@@ -72,16 +74,16 @@ func listOptionsFromCommand(args []string) ListOptions {
 
 	return ListOptions{
 		Paths:   paths,
-		Pattern: listPattern,
+		Pattern: pattern,
 	}
 }
 
-func lintOptionsFromCommand(args []string) LintOptions {
+func lintOptionsFromCommand(args []string, format string) LintOptions {
 	paths := args
 	if len(paths) == 0 {
 		paths = []string{"./tests/"}
 	}
-	return LintOptions{Paths: paths, Format: lintFormat}
+	return LintOptions{Paths: paths, Format: format}
 }
 
 // checkDefaultTestsDirExists returns a clear, actionable error when lint/doctor

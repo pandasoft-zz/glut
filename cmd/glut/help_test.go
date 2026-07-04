@@ -2,25 +2,36 @@ package main
 
 import (
 	"bytes"
-	"os"
 	"strings"
 	"testing"
 )
 
-func TestRootHelpContainsCommandsAndPurpose(t *testing.T) {
-	var out bytes.Buffer
-	rootCmd.SetOut(&out)
-	rootCmd.SetErr(&out)
-	t.Cleanup(func() {
-		rootCmd.SetOut(os.Stdout)
-		rootCmd.SetErr(os.Stderr)
-	})
-
-	if err := rootCmd.Help(); err != nil {
-		t.Fatalf("root help failed: %v", err)
+// commandHelp renders help for a (sub)command of a fresh root command tree.
+// Subcommands are looked up through the root so they inherit the styled help
+// function the same way they do in a real invocation.
+func commandHelp(t *testing.T, name ...string) string {
+	t.Helper()
+	root := newRootCmd()
+	cmd := root
+	if len(name) > 0 {
+		found, _, err := root.Find(name)
+		if err != nil {
+			t.Fatalf("find command %v: %v", name, err)
+		}
+		cmd = found
 	}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	if err := cmd.Help(); err != nil {
+		t.Fatalf("help for %v failed: %v", name, err)
+	}
+	return out.String()
+}
 
-	help := out.String()
+func TestRootHelpContainsCommandsAndPurpose(t *testing.T) {
+	t.Parallel()
+	help := commandHelp(t)
 	for _, want := range []string{
 		"GLUT runs GitLab CI component tests locally.",
 		"run",
@@ -36,19 +47,8 @@ func TestRootHelpContainsCommandsAndPurpose(t *testing.T) {
 }
 
 func TestRunHelpDocumentsReportsAndDebug(t *testing.T) {
-	var out bytes.Buffer
-	runCmd.SetOut(&out)
-	runCmd.SetErr(&out)
-	t.Cleanup(func() {
-		runCmd.SetOut(os.Stdout)
-		runCmd.SetErr(os.Stderr)
-	})
-
-	if err := runCmd.Help(); err != nil {
-		t.Fatalf("run help failed: %v", err)
-	}
-
-	help := out.String()
+	t.Parallel()
+	help := commandHelp(t, "run")
 	for _, want := range []string{
 		"Run GLUT tests from one or more paths.",
 		"--report",
@@ -62,19 +62,8 @@ func TestRunHelpDocumentsReportsAndDebug(t *testing.T) {
 }
 
 func TestDoctorHelpDocumentsFilterAndFormat(t *testing.T) {
-	var out bytes.Buffer
-	doctorCmd.SetOut(&out)
-	doctorCmd.SetErr(&out)
-	t.Cleanup(func() {
-		doctorCmd.SetOut(os.Stdout)
-		doctorCmd.SetErr(os.Stderr)
-	})
-
-	if err := doctorCmd.Help(); err != nil {
-		t.Fatalf("doctor help failed: %v", err)
-	}
-
-	help := out.String()
+	t.Parallel()
+	help := commandHelp(t, "doctor")
 	for _, want := range []string{
 		"--run",
 		"--format",

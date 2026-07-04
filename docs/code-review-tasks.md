@@ -240,10 +240,16 @@ Areas: `[cli]` cmd/glut + parser + config + schema, `[workspace]` internal/works
 
 ### Runner and executor
 
-- [ ] **[runner] Docker networking/plumbing logic lives in runner instead of docker/executor** (`internal/runner/runner.go:1004`)
+- [x] **[runner] Docker networking/plumbing logic lives in runner instead of docker/executor** (`internal/runner/runner.go:1004`)
   Bridge-IP discovery, `--extra-host` construction, and volume-mount building are Docker-domain concerns per architecture.md; `executor/dockerlogs.go` also imports `internal/workspace` just for a shared name constant.
   Fix: move the helpers into `internal/docker` and the GCL volume-name vocabulary into a shared package.
-  Deferred: pure code-organization refactor moving working code across package boundaries with no behavior change; disproportionate risk/scope for this cleanup pass (same reasoning as the runSingleTest split).
+  Done: `dockerVolumes`/`dockerExtraHosts`/`outboundIP` moved to
+  `internal/docker/jobnet.go` as `VolumeMounts`/`ExtraHosts`/`OutboundIP` (with
+  unit tests), and the GCL volume-name codec (`GCLJobName`) moved to
+  `internal/docker/gclvolume.go`. `executor/dockerlogs.go` now imports
+  `internal/docker` instead of `internal/workspace`, and workspace's artifact
+  fetch uses the same shared codec — one source of truth, no cross-boundary
+  import for vocabulary.
 
 - [x] **[runner] docker CLI helpers ignore HostEnv / DOCKER_HOST abstraction** (`internal/docker/wait.go:82,163`, `internal/executor/dockerlogs.go:61`)
   gcl gets `DOCKER_*` forwarded from `cfg.HostEnv`, but `docker.Endpoint()`, the readiness check, log monitor, and volume prune use the raw process env — with a custom HostEnv they talk to a different daemon than gcl.
@@ -317,10 +323,16 @@ Areas: `[cli]` cmd/glut + parser + config + schema, `[workspace]` internal/works
   `GLUT_TIMEOUT=10minutes` (or a unit-less `30`) silently falls back to the default with no warning and no documenting comment.
   Fix: print a one-line stderr warning on parse failure, or document the intentional fallback at the call site.
 
-- [ ] **[cli] Package-level mutable flag state in cmd/glut contradicts stated conventions** (`cmd/glut/root.go:25,214`)
+- [x] **[cli] Package-level mutable flag state in cmd/glut contradicts stated conventions** (`cmd/glut/root.go:25,214`)
   20 package-level mutable variables hold flag values and `init()` mutates two from the environment; options tests need save/restore boilerplate and cannot run in parallel.
   Fix: bind flags to per-command option structs captured by the RunE closures.
-  Deferred: this is a repo-wide structural refactor of every command's flag wiring (comparable in scope/risk to the runSingleTest split), disproportionate for a single findings-cleanup pass.
+  Done: every command is now built by a constructor (`newRootCmd`, `newRunCmd`,
+  `newListCmd`, `newLintCmd`, `newDoctorCmd`, `newVersionCmd`) that binds flags
+  to a local `runFlags` struct (or local variables) captured by the Run
+  closures. The `init()` functions in root.go and help.go are gone; the only
+  remaining package vars are `version`/`commit`, which the linker writes via
+  ldflags. Option tests construct flag structs directly — the save/restore
+  boilerplate was deleted and the tests run in parallel.
 
 - [x] **[cli] lint/doctor default path "./tests/" errors out when the directory does not exist** (`cmd/glut/options.go:77`)
   `glut lint` with no args fails with a raw stat error in any repo that keeps tests elsewhere; `run`/`list` default to `.` instead.
