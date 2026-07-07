@@ -1,6 +1,9 @@
 # Versions — single source of truth for all stages
 ARG GO_VERSION=1.26.2
 ARG NODE_VERSION=22.23
+# Keep GCL_VERSION in sync with config.TestedGCLVersion (internal/config/constants.go):
+# GLUT parses gitlab-ci-local's human-oriented output, so the tested version is
+# part of the runtime contract.
 ARG GCL_VERSION=4.72.0
 ARG DOCKER_CLI_VERSION=29.6.1
 

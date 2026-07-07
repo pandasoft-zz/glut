@@ -87,6 +87,13 @@ type JobOutput struct {
 	// Executed reports whether the job actually ran in the pipeline. A job can
 	// be present but not executed (e.g. `when: manual`).
 	Executed bool
+	// StatusKnown reports whether ExitStatus was actually recovered from the
+	// gitlab-ci-local output (a finished/summary status line or a GLUT_JOB
+	// marker), as opposed to being the zero default of a job reconstructed
+	// from output lines alone. Run refuses to report results when no job has
+	// a known status: silently defaulting every ExitStatus to 0 would turn a
+	// gitlab-ci-local output-format change into false PASSes.
+	StatusKnown bool
 }
 
 // JobListEntry is one job from `gitlab-ci-local --list-json`.
@@ -133,13 +140,57 @@ func Run(ctx context.Context, cfg ExecutorConfig) (RunResult, error) {
 		if runCtx.Err() != nil {
 			return result, fmt.Errorf("run gitlab-ci-local: %w", ErrInterrupted)
 		}
-		if len(result.Jobs) > 0 {
+		// A non-zero gitlab-ci-local exit with parsed job statuses means a
+		// job failed on its own merits — let the assertions judge that. Jobs
+		// reconstructed from output lines alone are not enough: without one
+		// known status we cannot tell a failed job from unparseable output.
+		if anyJobStatusKnown(result.Jobs) {
 			return result, nil
 		}
 		return result, fmt.Errorf("run gitlab-ci-local: %w", err)
 	}
 
+	// Loud-failure guard: gitlab-ci-local succeeded and job output was
+	// captured, but no status line matched. Every ExitStatus would silently
+	// default to 0 (false PASSes), so fail with a version diagnostic instead.
+	// gitlab-ci-local has no machine-readable run result (only --list-json),
+	// which is why results are recovered from its human-oriented output.
+	if len(result.Jobs) > 0 && !anyJobStatusKnown(result.Jobs) {
+		return result, fmt.Errorf(
+			"parse gitlab-ci-local job results: job output was captured but no job status lines matched — the gitlab-ci-local output format may have changed (installed version: %s, GLUT is tested with %s)",
+			installedGCLVersion(cfg.HostEnv), config.TestedGCLVersion)
+	}
+
 	return result, nil
+}
+
+// anyJobStatusKnown reports whether at least one job's exit status was
+// actually recovered from the gitlab-ci-local output.
+func anyJobStatusKnown(jobs map[string]JobOutput) bool {
+	for _, job := range jobs {
+		if job.StatusKnown {
+			return true
+		}
+	}
+	return false
+}
+
+// installedGCLVersion returns the version reported by the gitlab-ci-local
+// binary, for diagnostics when its output cannot be parsed. Best-effort:
+// any failure returns "unknown".
+func installedGCLVersion(hostEnv []string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, resolveExecutable("gitlab-ci-local", hostEnv), "--version")
+	cmd.Env = hostEnv
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	if version := strings.TrimSpace(string(out)); version != "" {
+		return version
+	}
+	return "unknown"
 }
 
 func ListJobs(ctx context.Context, cfg ExecutorConfig) ([]JobListEntry, error) {
@@ -440,7 +491,9 @@ func parseJobMarkers(jobs map[string]JobOutput, raw string) {
 }
 
 func parseJobMarker(line string) (JobOutput, bool) {
-	job := JobOutput{Present: true}
+	// Markers are an explicit test protocol: the emitter controls the status
+	// deliberately (absence of exit= means 0), so it always counts as known.
+	job := JobOutput{Present: true, StatusKnown: true}
 	parts := strings.Split(line, "|")
 	for _, part := range parts[1:] {
 		key, value, ok := strings.Cut(part, "=")
@@ -478,6 +531,7 @@ func parseGitLabOutput(jobs map[string]JobOutput, raw string, stream string) {
 		if matches := gitlabFinishedLineRE.FindStringSubmatch(line); len(matches) == 4 {
 			job := ensureJob(jobs, strings.TrimSpace(matches[1]))
 			job.ExitStatus = statusFromGitLab(matches[2], matches[3])
+			job.StatusKnown = true
 			jobs[job.Name] = job
 			continue
 		}
@@ -493,6 +547,7 @@ func parseGitLabOutput(jobs map[string]JobOutput, raw string, stream string) {
 			} else if job.ExitStatus == 0 {
 				job.ExitStatus = 1
 			}
+			job.StatusKnown = true
 			jobs[job.Name] = job
 			continue
 		}

@@ -251,6 +251,80 @@ func TestRunReturnsCommandErrorWhenNoJobWasCaptured(t *testing.T) {
 	}
 }
 
+// TestRunFailsLoudWhenNoJobStatusLinesMatch guards against a gitlab-ci-local
+// output-format change turning into false PASSes: when job output lines parse
+// but no status line does, every ExitStatus would silently default to 0.
+// Run must fail with a version diagnostic instead.
+func TestRunFailsLoudWhenNoJobStatusLinesMatch(t *testing.T) {
+	t.Parallel()
+	hostPath := os.Getenv("PATH")
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := writeExecutable(binDir, "gitlab-ci-local", outputWithoutStatusScript()); err != nil {
+		t.Fatalf("write gitlab-ci-local: %v", err)
+	}
+
+	result, err := Run(context.Background(), ExecutorConfig{
+		WorkspacePath: tempDir,
+		PipelineYAML:  "job:\n  script: echo hi\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
+	})
+	if err == nil {
+		t.Fatalf("Run() error = nil, want a loud parse failure; jobs = %#v", result.Jobs)
+	}
+	if !strings.Contains(err.Error(), "no job status lines matched") {
+		t.Fatalf("Run() error = %v, want a status-parse diagnostic", err)
+	}
+	if !strings.Contains(err.Error(), "GLUT is tested with") {
+		t.Fatalf("Run() error = %v, want the tested gitlab-ci-local version in the message", err)
+	}
+	if len(result.Jobs) == 0 {
+		t.Fatal("result.Jobs is empty; the guard must only fire when job output was captured")
+	}
+}
+
+// TestRunFailedPipelineWithoutParsedStatusReturnsError pins the tightened
+// error path: a non-zero gitlab-ci-local exit is only treated as "a job
+// failed on its own merits" when at least one job status was actually parsed.
+// Output lines alone must surface the command error instead.
+func TestRunFailedPipelineWithoutParsedStatusReturnsError(t *testing.T) {
+	t.Parallel()
+	hostPath := os.Getenv("PATH")
+	tempDir := t.TempDir()
+	binDir := filepath.Join(tempDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create bin dir: %v", err)
+	}
+
+	if err := writeExecutable(binDir, "gitlab-ci-local", outputWithoutStatusFailingScript()); err != nil {
+		t.Fatalf("write gitlab-ci-local: %v", err)
+	}
+
+	_, err := Run(context.Background(), ExecutorConfig{
+		WorkspacePath: tempDir,
+		PipelineYAML:  "job:\n  script: echo hi\n",
+		HostEnv: []string{
+			"PATH=" + joinPath(binDir, hostPath),
+			"HOME=" + tempDir,
+			"TMP=" + tempDir,
+		},
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want the command error when no job status was parsed")
+	}
+	if !strings.Contains(err.Error(), "run gitlab-ci-local") {
+		t.Fatalf("Run() error = %v, want the wrapped command error", err)
+	}
+}
+
 func TestListJobsParsesNames(t *testing.T) {
 	t.Parallel()
 	hostPath := os.Getenv("PATH")
@@ -866,6 +940,33 @@ func badArgsScript() string {
 		return "@echo off\r\necho Unknown arguments: env 1>&2\r\nexit /b 1\r\n"
 	}
 	return "#!/bin/sh\necho 'Unknown arguments: env' >&2\nexit 1\n"
+}
+
+// outputWithoutStatusScript simulates a gitlab-ci-local whose job output lines
+// still parse but whose status wording changed, so no finished/summary line
+// matches — the false-PASS hazard the loud-failure guard exists for.
+func outputWithoutStatusScript() string {
+	if runtime.GOOS == "windows" {
+		return "@echo off\r\n" +
+			"echo job ^> hello\r\n" +
+			"echo job completed after 19 ms with status OK\r\n"
+	}
+	return "#!/bin/sh\n" +
+		"echo 'job > hello'\n" +
+		"echo 'job completed after 19 ms with status OK'\n"
+}
+
+// outputWithoutStatusFailingScript is the failing variant: output lines only,
+// no parseable status, non-zero exit.
+func outputWithoutStatusFailingScript() string {
+	if runtime.GOOS == "windows" {
+		return "@echo off\r\n" +
+			"echo job ^> hello\r\n" +
+			"exit /b 1\r\n"
+	}
+	return "#!/bin/sh\n" +
+		"echo 'job > hello'\n" +
+		"exit 1\n"
 }
 
 func versionScript(name string) string {
