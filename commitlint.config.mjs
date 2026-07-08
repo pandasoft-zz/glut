@@ -10,7 +10,11 @@
 // documented "under 72 characters" guidance applies to the description; when
 // a series of long commits predates this gate, squash-merge the PR so only the
 // final subject is linted.
-module.exports = {
+//
+// This file is an ES module (.mjs): the commitlint GitHub action runs in an
+// ESM Node environment where a CommonJS module.exports in a .js file fails
+// with "module is not defined in ES module scope".
+export default {
   extends: ['@commitlint/config-conventional'],
   rules: {
     'type-enum': [

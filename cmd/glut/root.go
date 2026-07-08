@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -91,33 +92,9 @@ current directory. Each test gets its own workspace and mock services.`,
   glut run --report=junit:report.xml ./tests
   glut run --debug --keep-workspace ./tests/release.yml`,
 		Run: func(cmd *cobra.Command, args []string) {
-			opts := flags.toRunOptions(args)
-
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-
-			if flags.interactive {
-				result, exitCode := selectAndRun(ctx, opts)
-				if result.Error != nil {
-					writeError(result.Error)
-				}
-				os.Exit(int(exitCode))
-			}
-
-			sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
-			if err != nil {
-				writeError(err)
-				os.Exit(int(runner.ExitRunnerError))
-			}
-			result, exitCode := runner.Run(ctx, opts.Paths, toRunnerOptions(opts, sinks, os.Stderr))
-			if result.Error != nil {
-				writeError(result.Error)
-			}
-			if err := writeFileReports(fileReports); err != nil {
-				writeError(err)
-				os.Exit(int(runner.ExitRunnerError))
-			}
-			os.Exit(int(exitCode))
+			os.Exit(int(runMain(ctx, flags, args, os.Stdout, os.Stderr)))
 		},
 	}
 
@@ -154,15 +131,9 @@ A path can be a directory or a YAML file. Use --run to filter by test name.`,
   glut list ./tests
   glut list -k release ./tests`,
 		Run: func(cmd *cobra.Command, args []string) {
-			opts := listOptionsFromCommand(args, pattern)
-			tests, err := runner.List(context.Background(), opts.Paths, runner.ListOptions{
-				RunPattern: opts.Pattern,
-			})
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(int(runner.ExitRunnerError))
+			if code := listMain(args, pattern, os.Stdout, os.Stderr); code != runner.ExitOK {
+				os.Exit(int(code))
 			}
-			reporter.PrintList(os.Stdout, tests)
 		},
 	}
 	cmd.Flags().StringVarP(&pattern, "run", "k", "", "List tests matching substring or regex")
@@ -182,20 +153,7 @@ assert.job references to missing pipeline jobs.`,
   glut lint ./tests
   glut lint ./tests/release.yml`,
 		Run: func(cmd *cobra.Command, args []string) {
-			opts := lintOptionsFromCommand(args, format)
-			if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
-				writeError(err)
-				os.Exit(int(runner.ExitRunnerError))
-			}
-			report := buildLintReport(opts.Paths)
-			if err := printLintReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
-				writeError(err)
-				os.Exit(int(runner.ExitRunnerError))
-			}
-			if report.HasErrors {
-				os.Exit(int(runner.ExitTestFailed))
-			}
-			os.Exit(int(runner.ExitOK))
+			os.Exit(int(lintMain(args, format, os.Stdout, os.Stderr)))
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "text", "Output format: text or json")
@@ -217,20 +175,7 @@ Use JSON output when another tool or AI assistant needs structured feedback.`,
   glut doctor -k release ./tests
   glut doctor --format=json ./tests/release.yml`,
 		Run: func(cmd *cobra.Command, args []string) {
-			opts := lintOptionsFromCommand(args, format)
-			if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
-				writeError(err)
-				os.Exit(int(runner.ExitRunnerError))
-			}
-			report := buildDoctorReportFiltered(opts.Paths, pattern)
-			if err := printDoctorReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
-				writeError(err)
-				os.Exit(int(runner.ExitRunnerError))
-			}
-			if report.HasErrors {
-				os.Exit(int(runner.ExitTestFailed))
-			}
-			os.Exit(int(runner.ExitOK))
+			os.Exit(int(doctorMain(args, format, pattern, os.Stdout, os.Stderr)))
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "text", "Output format: text or json")
@@ -245,9 +190,89 @@ func newVersionCmd() *cobra.Command {
 		Long:    "Print the GLUT version and build commit.",
 		Example: `  glut version`,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("glut %s (commit: %s, built: unknown)\n", version, commit)
+			fmt.Fprintf(cmd.OutOrStdout(), "glut %s (commit: %s, built: unknown)\n", version, commit)
 		},
 	}
+}
+
+// runMain executes `glut run` and returns the process exit code. Split from
+// the cobra closure (which owns signal wiring and os.Exit) so the command
+// body is testable.
+func runMain(ctx context.Context, flags *runFlags, args []string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := flags.toRunOptions(args)
+
+	if flags.interactive {
+		result, exitCode := selectAndRun(ctx, opts)
+		if result.Error != nil {
+			_, _ = fmt.Fprintln(stderr, result.Error)
+		}
+		return exitCode
+	}
+
+	sinks, fileReports, err := buildProgressSinks(opts, stdout)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	result, exitCode := runner.Run(ctx, opts.Paths, toRunnerOptions(opts, sinks, stderr))
+	if result.Error != nil {
+		_, _ = fmt.Fprintln(stderr, result.Error)
+	}
+	if err := writeFileReports(fileReports); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	return exitCode
+}
+
+// listMain executes `glut list` and returns the process exit code.
+func listMain(args []string, pattern string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := listOptionsFromCommand(args, pattern)
+	tests, err := runner.List(context.Background(), opts.Paths, runner.ListOptions{
+		RunPattern: opts.Pattern,
+	})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	reporter.PrintList(stdout, tests)
+	return runner.ExitOK
+}
+
+// lintMain executes `glut lint` and returns the process exit code.
+func lintMain(args []string, format string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := lintOptionsFromCommand(args, format)
+	if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	report := buildLintReport(opts.Paths)
+	if err := printLintReport(stdout, stderr, report, opts.Format); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	if report.HasErrors {
+		return runner.ExitTestFailed
+	}
+	return runner.ExitOK
+}
+
+// doctorMain executes `glut doctor` and returns the process exit code.
+func doctorMain(args []string, format string, pattern string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := lintOptionsFromCommand(args, format)
+	if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	report := buildDoctorReportFiltered(opts.Paths, pattern)
+	if err := printDoctorReport(stdout, stderr, report, opts.Format); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	if report.HasErrors {
+		return runner.ExitTestFailed
+	}
+	return runner.ExitOK
 }
 
 func Execute() {

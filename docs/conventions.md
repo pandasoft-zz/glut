@@ -160,7 +160,7 @@ feat!: change pipeline source name format
 ```
 
 Enforced in CI by the Commitlint workflow (`.github/workflows/commitlint.yml`)
-on every pull request, using the rules in `commitlint.config.js`.
+on every pull request, using the rules in `commitlint.config.mjs`.
 
 ## Dependencies
 
