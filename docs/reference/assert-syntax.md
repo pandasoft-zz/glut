@@ -20,6 +20,13 @@ commits:
   ge: 2
 ```
 
+A bare list (not wrapped in a matcher key) matches as a **subset**: every
+item in the expected list must be present in the actual list, but the actual
+list may contain extra items. Use `consist-of` for an exact, order-independent
+match, or `equal` for an exact, order-sensitive match. A duplicated expected
+item requires that many distinct matching items in the actual list — e.g.
+`["--flag", "--flag"]` does not match a single `"--flag"`.
+
 ## Operator Reference
 
 Use the same operators across job, artifact, git, API, and binary asserts.
@@ -152,7 +159,16 @@ Each item is checked against the actual text.
 | `plain text` | Text must contain this string. |
 | `/regexp/` | Text must match this regexp. |
 | `!/regexp/` | Text must not match this regexp. |
+| `!text` | Text must not contain this string (negated plain text). |
 | `\!text` | Text must contain a value that starts with `!`. |
+
+A scalar value (not wrapped in a list) uses the same per-line rules **only for
+the special-string forms** `/regexp/`, `!/regexp/`, and `\!text` — e.g.
+`stdout: "/^a$/"` and `stdout: ["/^a$/"]` behave identically, matching if any
+line of the actual text matches. A bare scalar such as `stdout: "hello"` or a
+bare negated scalar `stdout: "!hello"` is instead compared as an exact value,
+not a per-line substring match; wrap it in a list (`stdout: ["hello"]`) to get
+the substring/negation behaviour from the table above.
 
 Example:
 
@@ -488,6 +504,7 @@ Fields for `file` entries (key is the path relative to the repository root):
 | `md5` | string | Expected MD5 hash. |
 | `sha256` | string | Expected SHA-256 hash. |
 | `filetype` | string | `file`, `directory`, `symlink`, or `socket`. |
+| `report` | object | Parse and assert structured report content (see [Artifact Asserts](#artifact-asserts)). |
 
 These fields are identical to `assert.artifacts` fields.
 
@@ -548,7 +565,10 @@ assert:
 ## API Asserts
 
 `assert.api` checks calls recorded by the mock GitLab API. The key is
-`METHOD path`. Use `*` to match a path segment.
+`METHOD path`. Use `*` to match a path segment. Append `?query` to the path
+to match only calls with that exact query string, e.g.
+`"GET /api/v4/projects/*/pipelines?ref=main"`; a key with no `?query` matches
+calls with any (or no) query string.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -683,6 +703,14 @@ assert:
           stdin:
             contain-substring: "apiVersion:"
 ```
+
+The recorded `stdin` is captured as the wrapper streams it to the mock binary.
+Typical inputs are captured in full whether or not the mock reads them, since
+the input is buffered into the OS pipe. Only a payload larger than the OS pipe
+buffer (about 64 KiB) that the mock never reads could be captured only in part;
+if you assert on a large `stdin` payload, make the mock consume it — for
+example, prefix the mock `executable` with `cat >/dev/null`. In Docker mode the
+full piped input is always captured.
 
 ## Full Example
 

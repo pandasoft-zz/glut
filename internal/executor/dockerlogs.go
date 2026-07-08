@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pandasoft-zz/glut/internal/workspace"
+	"github.com/pandasoft-zz/glut/internal/docker"
 )
 
 const (
@@ -35,19 +35,34 @@ type dockerOutputMonitor struct {
 	mu         sync.Mutex
 	known      map[string]*containerCapture // containerID → capture
 	volumeName string
-	cancel     context.CancelFunc
-	watchDone  chan struct{}
+	// hostEnv is set on every docker CLI invocation this monitor makes (nil
+	// inherits the process environment, matching exec.Cmd's own convention),
+	// so a custom DOCKER_HOST talks to the same daemon gitlab-ci-local uses.
+	hostEnv []string
+	// watchCancel stops only the "docker events" watcher (called from stop()).
+	// captureCtx/captureCancel govern the per-container "docker logs --follow"
+	// goroutines and are cancelled separately, after collectLogs() returns —
+	// sharing watchCtx here would kill a capture still draining the final
+	// job's output the instant stop() is called, silently losing it.
+	watchCancel   context.CancelFunc
+	captureCtx    context.Context
+	captureCancel context.CancelFunc
+	watchDone     chan struct{}
 }
 
 // startDockerOutputMonitor begins watching Docker events for the given volume.
 // Call stop() after the pipeline finishes, then collectLogs() to merge output.
-func startDockerOutputMonitor(ctx context.Context, volumeName string) *dockerOutputMonitor {
-	watchCtx, cancel := context.WithCancel(ctx)
+func startDockerOutputMonitor(ctx context.Context, volumeName string, hostEnv []string) *dockerOutputMonitor {
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	captureCtx, captureCancel := context.WithCancel(ctx)
 	m := &dockerOutputMonitor{
-		known:      make(map[string]*containerCapture),
-		volumeName: volumeName,
-		cancel:     cancel,
-		watchDone:  make(chan struct{}),
+		known:         make(map[string]*containerCapture),
+		volumeName:    volumeName,
+		hostEnv:       hostEnv,
+		watchCancel:   watchCancel,
+		captureCtx:    captureCtx,
+		captureCancel: captureCancel,
+		watchDone:     make(chan struct{}),
 	}
 	go m.run(watchCtx)
 	return m
@@ -62,6 +77,7 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 		"--filter", "type=container",
 		"--filter", "event=start",
 		"--format", "{{.Actor.ID}}")
+	cmd.Env = m.hostEnv
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -78,7 +94,7 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 		if containerID == "" {
 			continue
 		}
-		jobName, ok := containerInfo(ctx, containerID, m.volumeName)
+		jobName, ok := containerInfo(ctx, containerID, m.volumeName, m.hostEnv)
 		if !ok {
 			continue
 		}
@@ -94,7 +110,9 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 		// docker wait blocks until container exits, then we immediately call
 		// docker logs — this races against gcl's docker rm but wins because
 		// gcl's cleanup runs through multiple async Node.js Promise hops.
-		go captureAfterExit(ctx, cap)
+		// Uses captureCtx (not the watcher's ctx) so stop() cancelling the
+		// events watcher cannot kill a capture still in progress.
+		go captureAfterExit(m.captureCtx, cap, m.hostEnv)
 	}
 }
 
@@ -103,13 +121,15 @@ func (m *dockerOutputMonitor) run(ctx context.Context) {
 // async docker rm: by the time the container exits and --follow returns, all
 // output has already been received, so a concurrent docker rm cannot cause a
 // "No such container" error on a separate docker logs call.
-func captureAfterExit(parentCtx context.Context, cap *containerCapture) {
+func captureAfterExit(parentCtx context.Context, cap *containerCapture, hostEnv []string) {
 	ctx, cancel := context.WithTimeout(parentCtx, logCaptureTimeout)
 	defer cancel()
 
 	// --follow streams stdout until the container exits, then terminates.
 	// Output() (not CombinedOutput) keeps daemon error messages off the job stdout.
-	out, err := exec.CommandContext(ctx, "docker", "logs", "--follow", cap.id).Output()
+	logsCmd := exec.CommandContext(ctx, "docker", "logs", "--follow", cap.id)
+	logsCmd.Env = hostEnv
+	out, err := logsCmd.Output()
 	if err != nil {
 		cap.logs <- nil
 		return
@@ -117,15 +137,20 @@ func captureAfterExit(parentCtx context.Context, cap *containerCapture) {
 	cap.logs <- out
 }
 
-// stop cancels the event watcher and waits for it to finish.
+// stop cancels the event watcher and waits for it to finish. It does not
+// touch capture goroutines still draining container logs — those are
+// cancelled by collectLogs once it is done waiting on them.
 func (m *dockerOutputMonitor) stop() {
-	m.cancel()
+	m.watchCancel()
 	<-m.watchDone
 }
 
-// collectLogs waits for all log-capture goroutines and merges output into jobs.
-// Must be called after stop().
+// collectLogs waits for all log-capture goroutines and merges output into
+// jobs. Must be called after stop(). Cancels captureCtx before returning,
+// releasing any capture goroutine still running past its own wait here.
 func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
+	defer m.captureCancel()
+
 	m.mu.Lock()
 	caps := make([]*containerCapture, 0, len(m.known))
 	for _, c := range m.known {
@@ -174,10 +199,12 @@ func (m *dockerOutputMonitor) collectLogs(jobs map[string]JobOutput) {
 // containerInfo inspects a container and returns the CI job name and whether
 // the GLUT volume is mounted. ok is false when the container is not part of
 // this GLUT test run or when inspect fails.
-func containerInfo(ctx context.Context, containerID, glutVolumeName string) (jobName string, ok bool) {
-	out, err := exec.CommandContext(ctx, "docker", "inspect",
+func containerInfo(ctx context.Context, containerID, glutVolumeName string, hostEnv []string) (jobName string, ok bool) {
+	inspectCmd := exec.CommandContext(ctx, "docker", "inspect",
 		"--format", "{{range .Mounts}}{{if eq .Type \"volume\"}}{{.Name}}\n{{end}}{{end}}",
-		containerID).Output()
+		containerID)
+	inspectCmd.Env = hostEnv
+	out, err := inspectCmd.Output()
 	if err != nil {
 		return "", false
 	}
@@ -187,7 +214,7 @@ func containerInfo(ctx context.Context, containerID, glutVolumeName string) (job
 		if name == glutVolumeName {
 			hasGlutVol = true
 		}
-		if decoded, ok := workspace.GCLJobName(name); ok {
+		if decoded, ok := docker.GCLJobName(name); ok {
 			jobName = decoded
 		}
 	}

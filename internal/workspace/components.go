@@ -52,17 +52,24 @@ func RealComponentFetch(hostEnv []string) (ComponentFetch, error) {
 	}
 
 	host := first("GLUT_COMPONENTS_SERVER", "CI_SERVER_HOST")
-	port := first("GLUT_COMPONENTS_PORT", "CI_SERVER_PORT")
+	port := h["GLUT_COMPONENTS_PORT"]
 	token := first("GLUT_COMPONENTS_TOKEN", "CI_JOB_TOKEN")
 	namespace := first("GLUT_COMPONENTS_NAMESPACE", "CI_PROJECT_NAMESPACE")
 	projectPath := first("GLUT_COMPONENTS_PROJECT", "CI_PROJECT_PATH")
 
-	// GLUT_COMPONENTS_SERVER may be given as "host" or "host:port".
+	// GLUT_COMPONENTS_SERVER may be given as "host" or "host:port". Inside a
+	// real CI job CI_SERVER_PORT is always set, so it must rank below an
+	// explicit port here — otherwise GLUT_COMPONENTS_SERVER=host:8443 would
+	// silently produce port 443 (or whatever CI_SERVER_PORT holds) URLs.
+	// Only GLUT_COMPONENTS_PORT itself ranks higher.
 	if hostOnly, p, ok := strings.Cut(host, ":"); ok {
 		host = hostOnly
 		if port == "" {
 			port = p
 		}
+	}
+	if port == "" {
+		port = h["CI_SERVER_PORT"]
 	}
 	if port == "" {
 		port = "443"
@@ -132,7 +139,7 @@ func (w *Workspace) SetGCLOriginRemote(url string) error {
 	add.Dir = dir
 	add.Env = w.hostEnv
 	if out, err := add.CombinedOutput(); err != nil {
-		return fmt.Errorf("add gcl-origin remote: %v, output: %s", err, string(out))
+		return fmt.Errorf("add gcl-origin remote: %w, output: %s", err, string(out))
 	}
 	return nil
 }

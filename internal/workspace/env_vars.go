@@ -319,6 +319,7 @@ func applyMergeRequestEnv(env map[string]string, setup parser.SetupConfig) {
 		refProtected = "true"
 	}
 	env["CI_COMMIT_REF_PROTECTED"] = refProtected
+	env["CI_COMMIT_BEFORE_SHA"] = "0000000000000000000000000000000000000000"
 
 	if setup.MergeRequest != nil {
 		env["CI_MERGE_REQUEST_IID"] = fmt.Sprintf("%d", setup.MergeRequest.IID)

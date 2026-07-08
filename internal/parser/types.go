@@ -1,11 +1,15 @@
 package parser
 
-import "github.com/pandasoft-zz/glut/internal/config"
+import (
+	"github.com/pandasoft-zz/glut/internal/config"
+	"gopkg.in/yaml.v3"
+)
 
 type TestFile struct {
 	FilePath     string
 	Glut         GlutSection
 	GlutRaw      map[string]interface{}
+	GlutNode     *yaml.Node // .glut metadata node; carries source line numbers for LintParsed
 	PipelineYAML string
 	ParseError   error
 }

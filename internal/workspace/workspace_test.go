@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -402,33 +403,74 @@ func TestGitOriginFilesAndCommands(t *testing.T) {
 		}
 	}()
 
-	// Verify that hello.txt exists in the cloned workspace on the default branch (main)
+	// setupGitOrigin runs before New() clones workspaceDir from origin, so
+	// hello.txt must be present directly in the cloned workspace.
 	content, err := os.ReadFile(filepath.Join(w.WorkspaceDir, "hello.txt"))
-	if err == nil && string(content) == "world" {
-		// Found it
-	} else {
-		// It might be that the workspace has the snapshot instead, but the origin has the initial commit.
-		// Wait, New clones from origin, so it should have it unless snapshot overwrites.
-		// Actually, New pushes the snapshot to origin main, which has everything.
-		// Let's verify by querying the origin repo directly via git ls-tree
-		cmd := exec.Command("git", "--git-dir="+w.OriginRepo, "ls-tree", "-r", "main")
-		out, _ := cmd.CombinedOutput()
-		if !strings.Contains(string(out), "hello.txt") {
-			t.Errorf("expected hello.txt in origin repo main branch")
-		}
+	if err != nil {
+		t.Fatalf("hello.txt missing from cloned workspace: %v", err)
+	}
+	if string(content) != "world" {
+		t.Fatalf("hello.txt content = %q, want %q", content, "world")
 	}
 
-	// Verify commands (tag v1.0.0 and branch feature-test)
+	// Verify commands (tag v1.0.0 and branch feature-test) landed in the origin repo.
 	cmd := exec.Command("git", "--git-dir="+w.OriginRepo, "tag")
-	out, _ := cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git tag: %v (%s)", err, out)
+	}
 	if !strings.Contains(string(out), "v1.0.0") {
-		t.Errorf("expected tag v1.0.0 in origin repo")
+		t.Errorf("expected tag v1.0.0 in origin repo, got %q", out)
 	}
 
 	cmd = exec.Command("git", "--git-dir="+w.OriginRepo, "branch")
-	out, _ = cmd.CombinedOutput()
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch: %v (%s)", err, out)
+	}
 	if !strings.Contains(string(out), "feature-test") {
-		t.Errorf("expected branch feature-test in origin repo")
+		t.Errorf("expected branch feature-test in origin repo, got %q", out)
+	}
+}
+
+// TestGitOriginCommandsInheritGitConfigOverrides guards against
+// setupGitOrigin's origin.Commands env being stripped to GLUT_ORIGIN_REPO/
+// HOME/PATH only: a GIT_CONFIG_* override from hostEnv (used elsewhere to
+// suppress commit signing) must reach these commands too, or a command that
+// commits/tags honors whatever global gitconfig the host has instead.
+func TestGitOriginCommandsInheritGitConfigOverrides(t *testing.T) {
+	t.Parallel()
+	hostEnv := append([]string(nil), noSignGitEnv(t)...)
+	hostEnv = append(hostEnv, "GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=user.glutoverride", "GIT_CONFIG_VALUE_0=from-hostenv")
+
+	cfg := parser.SetupConfig{
+		Git: &parser.GitSetupConfig{
+			Origin: &parser.GitOriginConfig{
+				Commands: []string{
+					`git config user.glutoverride > glutoverride.txt`,
+					"git add glutoverride.txt",
+					"git commit -m capture-override",
+				},
+			},
+		},
+	}
+	w, err := New(cfg, false, ".", Options{HostEnv: hostEnv})
+	if err != nil {
+		t.Fatalf("failed to create workspace: %v", err)
+	}
+	defer func() {
+		if err := w.Destroy(); err != nil {
+			t.Fatalf("failed to destroy workspace: %v", err)
+		}
+	}()
+
+	content, err := os.ReadFile(filepath.Join(w.WorkspaceDir, "glutoverride.txt"))
+	if err != nil {
+		t.Fatalf("glutoverride.txt missing from cloned workspace: %v", err)
+	}
+	if strings.TrimSpace(string(content)) != "from-hostenv" {
+		t.Fatalf("origin command did not see the GIT_CONFIG_* override: got %q", content)
 	}
 }
 
@@ -569,6 +611,113 @@ func TestCopyDirSkipsGitDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "file.txt")); err != nil {
 		t.Errorf("regular file should be copied: %v", err)
+	}
+}
+
+// TestCopyDirSkipsGlutTmpDir guards against the stale tmpDirPrefix constant
+// (".glut-tmp-", with a trailing dash) not matching the repo-standard
+// ".glut-tmp" directory name that parser.SkipDiscoveryDir and the Makefile
+// actually use, which let native copy snapshot a previous run's leftover
+// workspace files into the new one.
+func TestCopyDirSkipsGlutTmpDir(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(filepath.Join(src, ".glut-tmp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".glut-tmp", "leftover.txt"), []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyDir(src, dst); err != nil {
+		t.Fatalf("copyDir() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".glut-tmp")); err == nil {
+		t.Error(".glut-tmp dir should be skipped by copyDir")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "file.txt")); err != nil {
+		t.Errorf("regular file should be copied: %v", err)
+	}
+}
+
+// TestCopyRepoRsyncExcludesGlutTmpDir guards against the rsync copy path
+// excluding only .git, which used to let a stale .glut-tmp directory from a
+// previous run be copied into the new workspace snapshot.
+func TestCopyRepoRsyncExcludesGlutTmpDir(t *testing.T) {
+	if _, err := exec.LookPath("rsync"); err != nil {
+		t.Skip("rsync not available")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(filepath.Join(src, ".glut-tmp"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".glut-tmp", "leftover.txt"), []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyRsync}); err != nil {
+		t.Fatalf("copyRepo(rsync) error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".glut-tmp")); err == nil {
+		t.Error(".glut-tmp dir should be excluded by the rsync copy strategy")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "file.txt")); err != nil {
+		t.Errorf("regular file should be copied: %v", err)
+	}
+}
+
+// TestCopyRepoForcedRsyncRetriesTransientFailure guards against the forced
+// rsync strategy returning the first error immediately instead of retrying,
+// which auto mode already does for a transient failure (e.g. WSL2 I/O
+// hiccups) — exactly the users who pin --copy-strategy=rsync lost the
+// mitigation.
+func TestCopyRepoForcedRsyncRetriesTransientFailure(t *testing.T) {
+	binDir := t.TempDir()
+	callCountFile := filepath.Join(binDir, "calls")
+	// Fail on the first invocation (no prior call-count file), succeed on the
+	// second by actually invoking the real rsync.
+	realRsync, err := exec.LookPath("rsync")
+	if err != nil {
+		t.Skip("rsync not available")
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+if [ ! -f %q ]; then
+  touch %q
+  echo "simulated transient I/O error" >&2
+  exit 23
+fi
+exec %q "$@"
+`, callCountFile, callCountFile, realRsync)
+	if err := os.WriteFile(filepath.Join(binDir, "rsync"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	dst := filepath.Join(root, "dst")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f.txt"), []byte("v"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyRepo(src, dst, Options{CopyStrategy: CopyStrategyRsync}); err != nil {
+		t.Fatalf("copyRepo(rsync) should retry the transient failure and succeed, got error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "f.txt")); err != nil {
+		t.Errorf("copied file missing after retry: %v", err)
 	}
 }
 

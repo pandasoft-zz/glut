@@ -7,3 +7,58 @@ linters:
     - govet
     - staticcheck
     - unused
+    - errorlint
+    - gosec
+    - bodyclose
+    - nilerr
+    - misspell
+    - revive
+  settings:
+    gosec:
+      # These gosec rules fire structurally for what this tool does by
+      # design and were triaged as false positives, not excluded blindly:
+      # G304/G204: reads user-specified paths and shells out to git/docker
+      #   throughout (that IS the tool's job — a test runner and mock server).
+      # G301/G302/G306: permissive file/dir modes on non-secret workspace
+      #   and log files, matching how the rest of the codebase already writes.
+      # G501/G401: MD5 is used for artifact checksum comparison, not security.
+      # G101: false positives from literal test-fixture token strings
+      #   (e.g. "mock-job-token") flagged as hardcoded credentials.
+      # G115: uintptr->int fd conversion in the flock syscall wrapper.
+      # G705/G107: mock HTTP server internals flagged by taint heuristics
+      #   that do not apply to a local test-only git/HTTP server.
+      # G122: TOCTOU risk in workspace copy — copies the user's own local
+      #   repo into a temp dir, not attacker-controlled multi-tenant input.
+      # G702/G703: taint-analysis variants of G204/G304 above — the git
+      #   subcommand and bare-repo path passed to exec.CommandContext come
+      #   from a hardcoded switch statement and the server's own configured
+      #   repo path, not attacker-supplied request data, despite being
+      #   reachable from an *http.Request context.
+      excludes:
+        - G304
+        - G204
+        - G301
+        - G302
+        - G306
+        - G501
+        - G401
+        - G101
+        - G115
+        - G705
+        - G107
+        - G122
+        - G702
+        - G703
+    revive:
+      rules:
+        # This repo does not follow exported-doc-comment conventions; these
+        # two rules would otherwise flood every exported symbol with noise
+        # unrelated to actual behavior.
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0

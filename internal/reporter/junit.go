@@ -6,8 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
+	"time"
 
 	"github.com/pandasoft-zz/glut/internal/runner"
 )
@@ -122,6 +121,7 @@ func buildJUnitSuites(result runner.RunResult) junitSuites {
 
 	for _, name := range names {
 		suite := junitSuite{Name: name}
+		var suiteDuration time.Duration
 		for _, testResult := range grouped[name] {
 			testCase := junitTestCase{
 				ClassName: name,
@@ -129,12 +129,18 @@ func buildJUnitSuites(result runner.RunResult) junitSuites {
 				File:      filepath.ToSlash(testResult.FilePath),
 				Time:      junitSeconds(testResult.Duration),
 			}
+			suiteDuration += testResult.Duration
 
 			for _, failure := range testResult.Failures {
 				testCase.Failures = append(testCase.Failures, junitFailure{
 					Message: failure.Path,
 					Text:    fmt.Sprintf("expected: %s\nactual: %s", failure.Expected, failure.Actual),
 				})
+			}
+			// Count failed testcases, not failure elements: a testcase with
+			// several failed assertions is still one failed test, so
+			// tests="N" and failures="M" stay consistent for GitLab's test UI.
+			if len(testResult.Failures) > 0 {
 				suite.Failures++
 			}
 
@@ -150,7 +156,7 @@ func buildJUnitSuites(result runner.RunResult) junitSuites {
 			suite.Tests++
 			suite.Cases = append(suite.Cases, testCase)
 		}
-		suite.Time = junitSeconds(sumSuiteDuration(suite.Cases))
+		suite.Time = junitSeconds(suiteDuration)
 		report.Failures += suite.Failures
 		report.Suites = append(report.Suites, suite)
 	}
@@ -158,39 +164,6 @@ func buildJUnitSuites(result runner.RunResult) junitSuites {
 	return report
 }
 
-func sumSuiteDuration(cases []junitTestCase) int64 {
-	var total int64
-	for _, item := range cases {
-		parts := strings.SplitN(item.Time, ".", 2)
-		seconds := int64(0)
-		fraction := int64(0)
-		if len(parts) > 0 && parts[0] != "" {
-			if parsed, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
-				seconds = parsed
-			}
-		}
-		if len(parts) == 2 && parts[1] != "" {
-			padded := parts[1]
-			for len(padded) < 3 {
-				padded += "0"
-			}
-			if len(padded) > 3 {
-				padded = padded[:3]
-			}
-			if parsed, err := strconv.ParseInt(padded, 10, 64); err == nil {
-				fraction = parsed
-			}
-		}
-		total += seconds*1000 + fraction
-	}
-	return total
-}
-
-func junitSeconds(durationMsOrDuration any) string {
-	switch value := durationMsOrDuration.(type) {
-	case int64:
-		return fmt.Sprintf("%.3f", float64(value)/1000)
-	default:
-		return fmt.Sprintf("%.3f", value.(interface{ Seconds() float64 }).Seconds())
-	}
+func junitSeconds(d time.Duration) string {
+	return fmt.Sprintf("%.3f", d.Seconds())
 }

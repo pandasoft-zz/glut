@@ -29,6 +29,14 @@ func (e *FileParseError) Unwrap() error {
 	return e.Err
 }
 
+// SkipDiscoveryDir reports whether a directory name should be excluded when
+// walking a directory tree for test files: ".git" and GLUT's own temporary
+// workspace copies (".glut-tmp*"), which are not part of the user's test
+// suite and would otherwise produce phantom results.
+func SkipDiscoveryDir(name string) bool {
+	return name == ".git" || strings.HasPrefix(name, ".glut-tmp")
+}
+
 // ParseDir recursively finds all *.yml and *.yaml files and parses them.
 func ParseDir(dirPath string) ([]*TestFile, []*FileParseError) {
 	var files []*TestFile
@@ -37,7 +45,11 @@ func ParseDir(dirPath string) ([]*TestFile, []*FileParseError) {
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			errs = append(errs, &FileParseError{FilePath: path, Err: err})
-			return nil
+			return nil //nolint:nilerr // recorded in errs; nil continues the walk instead of aborting it
+		}
+
+		if info.IsDir() && SkipDiscoveryDir(info.Name()) {
+			return filepath.SkipDir
 		}
 
 		ext := filepath.Ext(path)

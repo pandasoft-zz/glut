@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +14,7 @@ import (
 func Parse(filePath string) (*TestFile, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read test file %s: %w", filePath, err)
 	}
 
 	pipelineDoc, glutDoc, err := splitTestDocuments(data)
@@ -49,6 +50,7 @@ func Parse(filePath string) (*TestFile, error) {
 		FilePath:     filePath,
 		Glut:         glutSection,
 		GlutRaw:      glutRaw,
+		GlutNode:     glutNode,
 		PipelineYAML: buf.String(),
 	}, nil
 }
@@ -73,7 +75,7 @@ func decodeDocuments(data []byte) ([]*yaml.Node, error) {
 	for {
 		var doc yaml.Node
 		if err := decoder.Decode(&doc); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			return nil, err

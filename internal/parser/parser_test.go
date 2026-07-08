@@ -423,6 +423,52 @@ func TestParseDir(t *testing.T) {
 	}
 }
 
+// TestParseDirSkipsGitAndGlutTmpDirs guards against lint descending into
+// .git or GLUT's own stale .glut-tmp* workspace copies, which would
+// otherwise produce phantom results.
+func TestParseDirSkipsGitAndGlutTmpDirs(t *testing.T) {
+	root := t.TempDir()
+	skippedDirs := []string{".git", ".glut-tmp-abc123"}
+	for _, name := range skippedDirs {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := testFile("job:\n  script: echo ok\n", "\nname: phantom\n")
+		if err := os.WriteFile(filepath.Join(dir, "phantom.yml"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	realPath := filepath.Join(root, "real.yml")
+	if err := os.WriteFile(realPath, []byte(testFile("job:\n  script: echo ok\n", "\nname: real\n")), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, errs := ParseDir(root)
+	if len(errs) != 0 {
+		t.Fatalf("ParseDir() errs = %v, want none", errs)
+	}
+	if len(files) != 1 || files[0].FilePath != realPath {
+		t.Fatalf("ParseDir() files = %#v, want only %q", files, realPath)
+	}
+}
+
+func TestSkipDiscoveryDir(t *testing.T) {
+	cases := map[string]bool{
+		".git":          true,
+		".glut-tmp-abc": true,
+		".glut-tmp":     true,
+		"tests":         false,
+		".hidden":       false,
+	}
+	for name, want := range cases {
+		if got := SkipDiscoveryDir(name); got != want {
+			t.Errorf("SkipDiscoveryDir(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestLint_HelperBranches(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		errs := Lint(filepath.Join(t.TempDir(), "missing.yml"))
@@ -599,6 +645,25 @@ setup:
 				return false
 			},
 		},
+		{
+			name:     "assert.job references missing pipeline job",
+			pipeline: "test_job:\n  script: echo ok\n",
+			glut: `
+name: "test"
+assert:
+  job:
+    test-jbo:
+      exit-status: 0
+`,
+			check: func(errs []LintError) bool {
+				for _, e := range errs {
+					if e.Level == LevelError && strings.Contains(e.Message, "assert.job.test-jbo") && strings.Contains(e.Message, "not defined in the pipeline") {
+						return true
+					}
+				}
+				return false
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -609,6 +674,137 @@ setup:
 				t.Errorf("Lint did not return expected errors for %s. Got: %v", tt.name, errs)
 			}
 		})
+	}
+}
+
+func TestLintSchemaErrorIncludesLineNumber(t *testing.T) {
+	glutSection := `
+name: "bad source"
+setup:
+  pipeline_source: "manual"
+`
+	pipeline := "test_job:\n  script: echo ok\n"
+	content := testFile(pipeline, glutSection)
+	path := createTempYAML(t, content)
+
+	idx := strings.Index(content, "pipeline_source")
+	if idx < 0 {
+		t.Fatalf("test fixture missing pipeline_source: %q", content)
+	}
+	wantLine := 1 + strings.Count(content[:idx], "\n")
+
+	checkLine := func(t *testing.T, lints []LintError, via string) {
+		t.Helper()
+		var found bool
+		for _, l := range lints {
+			if l.Level == LevelError && strings.Contains(l.Message, "glut schema:") && strings.Contains(l.Message, "pipeline_source") {
+				found = true
+				if l.Line != wantLine {
+					t.Errorf("%s schema error line = %d, want %d (message: %s)", via, l.Line, wantLine, l.Message)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s: expected a schema error for pipeline_source, got %#v", via, lints)
+		}
+	}
+
+	checkLine(t, Lint(path), "Lint()")
+
+	tf, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	checkLine(t, LintParsed(tf), "LintParsed()")
+}
+
+func TestLintNoGlutDocumentReturnsNoLints(t *testing.T) {
+	t.Run("single document", func(t *testing.T) {
+		path := createTempYAML(t, "test_job:\n  script: echo ok\n")
+		if errs := Lint(path); len(errs) != 0 {
+			t.Fatalf("Lint() = %v, want no lints for a file without a .glut document", errs)
+		}
+	})
+
+	t.Run("second document without .glut key", func(t *testing.T) {
+		path := createTempYAML(t, "test_job:\n  script: echo ok\n---\nother: true\n")
+		if errs := Lint(path); len(errs) != 0 {
+			t.Fatalf("Lint() = %v, want no lints when the second document has no .glut key", errs)
+		}
+	})
+}
+
+func TestLintParsedMatchesLint(t *testing.T) {
+	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
+name: "test"
+assert:
+  job:
+    test-jbo:
+      exit-status: 0
+`))
+	want := Lint(path)
+	tf, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	got := LintParsed(tf)
+	if len(got) != len(want) {
+		t.Fatalf("LintParsed() returned %d lints, Lint() returned %d\ngot:  %+v\nwant: %+v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("lint[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLintParsedDoesNotReReadFromDisk(t *testing.T) {
+	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
+name: "test"
+assert:
+  job:
+    test_job:
+      exit-status: 0
+`))
+	tf, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("failed to remove file: %v", err)
+	}
+	// A clean, valid test file should produce zero lints. If LintParsed
+	// re-read filePath from disk instead of using the in-memory TestFile,
+	// it would fail with "cannot read file" here since the file is gone.
+	if errs := LintParsed(tf); len(errs) != 0 {
+		t.Errorf("LintParsed() after removing the source file = %v, want no lints (LintParsed must not touch disk)", errs)
+	}
+}
+
+func TestLintTagAndBranchConflictReportedOnce(t *testing.T) {
+	// The schema used to also reject tag+branch via a "not: {required: [...]}"
+	// block, so a single mistake produced both a cryptic schema error and
+	// this clear semantic one. Only the semantic rule should fire now.
+	path := createTempYAML(t, testFile("test_job:\n  script: echo ok\n", `
+name: "test"
+setup:
+  tag: "1.0"
+  branch: "main"
+`))
+	lints := Lint(path)
+	var errorLints int
+	var sawMutuallyExclusive bool
+	for _, e := range lints {
+		if e.Level != LevelError {
+			continue
+		}
+		errorLints++
+		if strings.Contains(e.Message, "mutually exclusive") {
+			sawMutuallyExclusive = true
+		}
+	}
+	if errorLints != 1 || !sawMutuallyExclusive {
+		t.Fatalf("Lint() reported %d error-level lints (want exactly 1, the semantic mutually-exclusive rule): %#v", errorLints, lints)
 	}
 }
 
@@ -709,6 +905,39 @@ assert:
     build:container: {}
 `,
 		},
+		{
+			name:     "present false asserts a job is absent even if never defined",
+			pipeline: "test_job:\n  script: echo ok\n",
+			glut: `
+name: "absent job"
+assert:
+  job:
+    removed-job:
+      present: false
+`,
+		},
+		{
+			name:     "job defined in pipeline is a valid reference",
+			pipeline: "test_job:\n  script: echo ok\n",
+			glut: `
+name: "existing job"
+assert:
+  job:
+    test_job:
+      exit-status: 0
+`,
+		},
+		{
+			name:     "pages is a real job name, not a reserved keyword",
+			pipeline: "pages:\n  script: echo ok\n",
+			glut: `
+name: "pages job"
+assert:
+  job:
+    pages:
+      exit-status: 0
+`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -748,7 +977,7 @@ func TestFriendlyParseError(t *testing.T) {
 	t.Run("non_type_error_returned_as_is", func(t *testing.T) {
 		orig := errors.New("some error")
 		got := friendlyParseError(orig)
-		if got != orig {
+		if got != orig { //nolint:errorlint // asserting reference identity (unchanged passthrough), not chain membership
 			t.Errorf("expected original error, got %v", got)
 		}
 	})
@@ -764,7 +993,7 @@ func TestFriendlyParseError(t *testing.T) {
 			t.Skip("yaml did not return type error")
 		}
 		got := friendlyParseError(err)
-		if got == err {
+		if got == err { //nolint:errorlint // asserting reference identity (a new error was returned), not chain membership
 			t.Errorf("expected friendly error, got original error")
 		}
 	})

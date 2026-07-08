@@ -33,7 +33,7 @@ workflow:
     name: ghcr.io/pandasoft-zz/glut:ci-$CI_COMMIT_SHA
     entrypoint: [""]
   services:
-    - docker:27-dind
+    - docker:27.5.1-dind
   variables:
     DOCKER_HOST: tcp://docker:2376
     DOCKER_TLS_CERTDIR: "/certs"

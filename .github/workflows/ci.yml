@@ -33,12 +33,12 @@ jobs:
         go-version-file: go.mod
 
     - name: Install test tools
-      run: go install gotest.tools/gotestsum@latest
+      run: go install gotest.tools/gotestsum@v1.13.0
 
     - name: Test
       run: |
         mkdir -p .artifacts
-        "$(go env GOPATH)/bin/gotestsum" --junitfile .artifacts/test-results.xml --format standard-verbose -- ./...
+        "$(go env GOPATH)/bin/gotestsum" --junitfile .artifacts/test-results.xml --format standard-verbose -- -race ./...
 
     - name: Publish test report
       if: always()
@@ -50,6 +50,7 @@ jobs:
 
     - name: Coverage
       run: |
+        set -o pipefail
         mkdir -p .artifacts
         make test-cover-check | tee .artifacts/coverage-summary.txt
         {
@@ -76,7 +77,12 @@ jobs:
 
   # Build the per-commit glut image once and push it to ghcr. Both the Docker
   # test job below and the GitLab pipeline pull this exact image.
+  #
+  # Skipped on forked PRs: their GITHUB_TOKEN is read-only, so the push below
+  # (and the integration-test job, which needs this one) would otherwise
+  # hard-fail on every external contribution.
   build-image:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6

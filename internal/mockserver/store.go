@@ -59,9 +59,16 @@ func (s *InMemoryStore) Update(resource string, id any, obj map[string]any) (map
 		return nil, false
 	}
 
+	// id is the raw URL path segment (always a string), which does not match
+	// the type the identifier was stored as (e.g. int for pipelines/jobs).
+	// Preserve the stored value's original type instead of overwriting it,
+	// so a client decoding the response into an int does not fail after PUT.
+	identifier := identifierFor(resource)
+	originalID := s.objects[resource][index][identifier]
+
 	updated := copyObject(s.objects[resource][index])
 	mergeObject(updated, obj)
-	updated[identifierFor(resource)] = id
+	updated[identifier] = originalID
 	s.objects[resource][index] = copyObject(updated)
 	return copyObject(updated), true
 }
@@ -92,11 +99,28 @@ func (s *InMemoryStore) findLocked(resource string, id any) int {
 
 func (s *InMemoryStore) setDefaultIdentifierLocked(resource string, obj map[string]any) {
 	identifier := identifierFor(resource)
-	if _, ok := obj[identifier]; ok {
+	if identifier != "id" && identifier != "iid" {
 		return
 	}
-	if identifier == "id" || identifier == "iid" {
-		obj[identifier] = len(s.objects[resource]) + 1
+	if v, ok := obj[identifier]; ok && !isUnsetIdentifier(v) {
+		return
+	}
+	obj[identifier] = len(s.objects[resource]) + 1
+}
+
+// isUnsetIdentifier reports whether v is the numeric zero value defaultObject
+// pre-seeds for "id"/"iid" fields. Zero is never a real GitLab identifier, so
+// treating it as unset lets the auto-increment branch below actually run.
+func isUnsetIdentifier(v any) bool {
+	switch n := v.(type) {
+	case int:
+		return n == 0
+	case int64:
+		return n == 0
+	case float64:
+		return n == 0
+	default:
+		return false
 	}
 }
 
@@ -108,12 +132,31 @@ func seedStore(cfgSeed map[string][]map[string]interface{}, store *InMemoryStore
 	}
 }
 
+// copyObject deep-copies obj so the store and every caller holding a
+// returned object never share mutable state: mutating a nested map or slice
+// on a copy handed out by List/Get/Create/Update must not corrupt the
+// store's own data, or a caller in a different goroutine's future request.
 func copyObject(obj map[string]any) map[string]any {
-	copy := make(map[string]any, len(obj))
+	dst := make(map[string]any, len(obj))
 	for key, value := range obj {
-		copy[key] = value
+		dst[key] = deepCopyValue(value)
 	}
-	return copy
+	return dst
+}
+
+func deepCopyValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return copyObject(v)
+	case []any:
+		dst := make([]any, len(v))
+		for i, item := range v {
+			dst[i] = deepCopyValue(item)
+		}
+		return dst
+	default:
+		return value
+	}
 }
 
 func mergeObject(dst map[string]any, src map[string]any) {

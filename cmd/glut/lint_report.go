@@ -7,7 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pandasoft-zz/glut/internal/config"
 	"github.com/pandasoft-zz/glut/internal/parser"
+	"gopkg.in/yaml.v3"
 )
 
 type lintReport struct {
@@ -59,7 +61,7 @@ func buildLintReport(paths []string) lintReport {
 		byFile[issue.File] = append(byFile[issue.File], issue)
 	}
 	for _, file := range files {
-		for _, lint := range parser.Lint(file.FilePath) {
+		for _, lint := range parser.LintParsed(file) {
 			issue := lintIssueFromLint(lint)
 			byFile[issue.File] = append(byFile[issue.File], issue)
 		}
@@ -69,12 +71,6 @@ func buildLintReport(paths []string) lintReport {
 	}
 	return lintReportFromMap(byFile)
 }
-
-func buildDoctorReport(paths []string) buildDoctorReportResult {
-	return buildDoctorReportFiltered(paths, "")
-}
-
-type buildDoctorReportResult = doctorReport
 
 func buildDoctorReportFiltered(paths []string, pattern string) doctorReport {
 	files, parseIssues := collectLintFiles(paths)
@@ -91,7 +87,7 @@ func buildDoctorReportFiltered(paths []string, pattern string) doctorReport {
 		}
 		report := byFile[file.FilePath]
 		report.File = file.FilePath
-		for _, lint := range parser.Lint(file.FilePath) {
+		for _, lint := range parser.LintParsed(file) {
 			report.Issues = append(report.Issues, lintIssueFromLint(lint))
 		}
 		report.Hints = append(report.Hints, doctorHintsForFile(file)...)
@@ -201,9 +197,27 @@ func lintCategory(message string) string {
 
 func lintPath(message string) string {
 	trimmed := strings.TrimPrefix(message, "glut schema: ")
+
+	// lintJobAsserts and lintAssertJobsExistInPipeline messages already carry
+	// the full ".glut.assert.job.<name>" path. Match the fixed message suffix
+	// rather than splitting on the first colon, since a job name itself may
+	// contain a colon (e.g. "deploy:prod"), which would otherwise truncate the
+	// extracted path.
+	if strings.HasPrefix(trimmed, ".glut.assert.job.") {
+		if idx := strings.Index(trimmed, `: "when"`); idx != -1 {
+			return trimmed[:idx]
+		}
+		if idx := strings.Index(trimmed, " references a job"); idx != -1 {
+			return trimmed[:idx]
+		}
+	}
+
 	if strings.Contains(trimmed, ":") {
 		field := strings.TrimSpace(strings.SplitN(trimmed, ":", 2)[0])
 		if field != "" && !strings.Contains(field, " ") {
+			if strings.HasPrefix(field, ".glut.") {
+				return field
+			}
 			return ".glut." + strings.TrimPrefix(field, ".")
 		}
 	}
@@ -238,63 +252,36 @@ func coverageForFile(file *parser.TestFile) *coverage {
 	}
 }
 
-// pipelineJobNames returns the job names inferred from the parsed pipeline YAML.
-// It uses the raw GlutRaw map is not the pipeline; we derive jobs from what
-// assert.job references plus any jobs found via the pipeline text. Since
-// TestFile does not expose a parsed pipeline map directly, we use the jobs
-// that appear in assert.job as a minimum set and complement with the pipeline
-// YAML when parseable.
+// pipelineJobNames returns the job names defined at the top level of the
+// parsed pipeline document. Returns nil when the pipeline pulls in jobs
+// dynamically via include: or is itself a CI/CD component (spec:), since job
+// names cannot be resolved without executing it — reporting a bogus 0/0
+// coverage would be misleading. Job names come only from the pipeline
+// mapping, not from assert.job: unioning them in let a typo'd assert name
+// inflate both the numerator and denominator of the coverage ratio.
 func pipelineJobNames(file *parser.TestFile) []string {
-	seen := make(map[string]struct{})
-	// Jobs we already know about from assert.job
-	for name := range file.Glut.Assert.Job {
-		seen[name] = struct{}{}
+	if file.PipelineYAML == "" {
+		return nil
 	}
-	// Walk the raw pipeline YAML for job keys (lines that look like top-level
-	// map keys followed by "script:" or "stage:").
-	if file.PipelineYAML != "" {
-		for _, name := range extractPipelineJobNames(file.PipelineYAML) {
-			seen[name] = struct{}{}
-		}
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(file.PipelineYAML), &root); err != nil {
+		return nil
 	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
+	if _, ok := root["include"]; ok {
+		return nil
 	}
-	sort.Strings(names)
-	return names
-}
+	if _, ok := root["spec"]; ok {
+		return nil
+	}
 
-var gitlabTopLevelKeywords = map[string]bool{
-	"stages":        true,
-	"variables":     true,
-	"image":         true,
-	"before_script": true,
-	"after_script":  true,
-	"cache":         true,
-	"services":      true,
-	"workflow":      true,
-	"include":       true,
-	"default":       true,
-	"pages":         true,
-}
-
-func extractPipelineJobNames(pipelineYAML string) []string {
-	var names []string
-	for _, line := range strings.Split(pipelineYAML, "\n") {
-		if len(line) == 0 || line[0] == ' ' || line[0] == '\t' || line[0] == '#' || line[0] == '-' {
-			continue
-		}
-		colon := strings.Index(line, ":")
-		if colon <= 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:colon])
-		if key == "" || strings.HasPrefix(key, ".") || gitlabTopLevelKeywords[key] {
+	names := make([]string, 0, len(root))
+	for key := range root {
+		if strings.HasPrefix(key, ".") || parser.IsReservedTopLevelKey(key) {
 			continue
 		}
 		names = append(names, key)
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -340,7 +327,7 @@ func doctorHintsForFile(file *parser.TestFile) []doctorHint {
 	}
 
 	// Merge request test without API asserts.
-	if file.Glut.Setup.PipelineSource == "merge_request_event" && file.Glut.Setup.MergeRequest != nil && len(file.Glut.Assert.API) == 0 {
+	if file.Glut.Setup.PipelineSource == config.PipelineSourceMR && file.Glut.Setup.MergeRequest != nil && len(file.Glut.Assert.API) == 0 {
 		hints = append(hints, doctorHint{
 			File:    file.FilePath,
 			Path:    ".glut.assert.api",
@@ -403,9 +390,10 @@ func hasNoAsserts(file *parser.TestFile) bool {
 	return len(a.Job) == 0 && len(a.Artifacts) == 0 && a.Git == nil && len(a.API) == 0 && len(a.Binary) == 0
 }
 
-// mostlyJobExitStatus returns true when more than half of the job asserts check
-// only exit status (no stdout, stderr, or present check), and no other assert
-// types are present.
+// mostlyJobExitStatus returns true when more than half of the job asserts are
+// weak: either only exit status (no stdout, stderr, output, or present
+// check), or entirely empty (e.g. `jobname: {}`, weaker still). No other
+// assert types may be present.
 func mostlyJobExitStatus(file *parser.TestFile) bool {
 	if len(file.Glut.Assert.Job) == 0 {
 		return false
@@ -413,13 +401,13 @@ func mostlyJobExitStatus(file *parser.TestFile) bool {
 	if len(file.Glut.Assert.Artifacts) > 0 || file.Glut.Assert.Git != nil || len(file.Glut.Assert.API) > 0 || len(file.Glut.Assert.Binary) > 0 {
 		return false
 	}
-	exitOnlyCount := 0
+	weakCount := 0
 	for _, job := range file.Glut.Assert.Job {
-		if job.Present == nil && job.Stdout == nil && job.Stderr == nil && job.ExitStatus != nil {
-			exitOnlyCount++
+		if job.Present == nil && job.Stdout == nil && job.Stderr == nil && job.Output == nil {
+			weakCount++
 		}
 	}
-	return exitOnlyCount > len(file.Glut.Assert.Job)/2
+	return weakCount > len(file.Glut.Assert.Job)/2
 }
 
 func sortedKeys[V any](m map[string]V) []string {

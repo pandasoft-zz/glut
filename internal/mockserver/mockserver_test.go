@@ -3,6 +3,7 @@ package mockserver
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -355,6 +356,31 @@ func TestConcurrentRequestsAreSafe(t *testing.T) {
 	}
 }
 
+// TestOversizedRequestBodyIsRejected guards against unbounded body buffering
+// in the recorder middleware: a request body over maxRecordedBodyBytes must
+// be rejected instead of read fully into memory and retained for the run.
+func TestOversizedRequestBodyIsRejected(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{})
+
+	huge := bytes.Repeat([]byte("a"), maxRecordedBodyBytes+1)
+	req, err := http.NewRequest(http.MethodPost, serverURL(server, "/api/v4/projects/1/releases"), bytes.NewReader(huge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", "token")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeBody(t, resp.Body)
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
 // TestServerDoesNotBindToLocalhostOnly verifies BUG-3: the mock API server must listen on
 // all network interfaces so Docker sibling containers can reach it via glut-mock or the
 // bridge IP. Binding to 127.0.0.1 makes the server unreachable from inside Docker containers.
@@ -366,6 +392,53 @@ func TestServerDoesNotBindToLocalhostOnly(t *testing.T) {
 	}
 }
 
+// TestServerBindsLoopbackWhenDockerNotNeeded guards against binding 0.0.0.0
+// unconditionally: a shell-only test never needs Docker containers to reach
+// the mock server, and 0.0.0.0 is reachable by any host on a shared
+// network, so Start(false) must scope the listener to loopback.
+func TestServerBindsLoopbackWhenDockerNotNeeded(t *testing.T) {
+	server, err := New(config.APISetupConfig{})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	if err := server.Start(false); err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := server.Stop(); err != nil {
+			t.Fatalf("failed to stop server: %v", err)
+		}
+	})
+
+	addr := server.ListenAddr()
+	if !strings.HasPrefix(addr, "127.0.0.1:") {
+		t.Errorf("server listens on %q, want loopback-only when Docker is not needed", addr)
+	}
+}
+
+// TestStopSurfacesFatalServeError guards against a fatal error from the
+// background http.Serve goroutine (e.g. the listener failing unexpectedly
+// mid-run) being recorded in s.serveErr but never read by anything, leaving
+// callers with connection-refused and no diagnostic.
+func TestStopSurfacesFatalServeError(t *testing.T) {
+	server, err := New(config.APISetupConfig{})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	if err := server.Start(false); err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+
+	sentinel := errors.New("simulated listener failure")
+	server.mu.Lock()
+	server.serveErr = sentinel
+	server.mu.Unlock()
+
+	if err := server.Stop(); !errors.Is(err, sentinel) {
+		t.Fatalf("Stop() = %v, want an error wrapping %v", err, sentinel)
+	}
+}
+
 func startTestServer(t *testing.T, cfg config.APISetupConfig) *Server {
 	t.Helper()
 
@@ -373,7 +446,7 @@ func startTestServer(t *testing.T, cfg config.APISetupConfig) *Server {
 	if err != nil {
 		t.Fatalf("failed to create server: %v", err)
 	}
-	if err := server.Start(); err != nil {
+	if err := server.Start(true); err != nil {
 		t.Fatalf("failed to start server: %v", err)
 	}
 	t.Cleanup(func() {

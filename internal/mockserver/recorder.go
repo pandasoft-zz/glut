@@ -9,6 +9,7 @@ import (
 type APICall struct {
 	Method      string
 	Path        string
+	Query       string
 	RequestBody []byte
 	StatusCode  int
 	Timestamp   time.Time

@@ -38,6 +38,8 @@ Flags:
 | `--keep-last-failed <n>` | | | Keep the last N failed workspaces. |
 | `--include <dir>` | | | Copy only this subdirectory into the workspace. Can be repeated. |
 | `--copy-strategy <strategy>` | | | Workspace copy strategy: `auto` (default), `rsync`, or `native`. |
+| `--wait-timeout <duration>` | | `GLUT_WAIT_TIMEOUT` | Max time to wait for the Docker daemon to become ready. Default is `120s`. |
+| `--docker-volume-strategy <strategy>` | | | Docker volume strategy: `auto` (default, detect), `bind` (native Linux), or `volume` (Docker Desktop/WSL2). |
 
 Examples:
 

@@ -15,6 +15,32 @@ type reportTarget struct {
 	path   string
 }
 
+// toRunnerOptions maps the CLI's RunOptions onto runner.RunOptions. It is the
+// single translation point for both the normal and interactive run paths, so
+// a flag wired into one and forgotten in the other no longer compiles fine
+// while silently dropping the option in one mode.
+func toRunnerOptions(opts RunOptions, progress []runner.ProgressSink, dockerWaitOutput io.Writer) runner.RunOptions {
+	return runner.RunOptions{
+		RunPattern:           opts.Pattern,
+		FailFast:             opts.FailFast,
+		MaxFail:              opts.MaxFail,
+		Verbose:              opts.Verbose,
+		Quiet:                opts.Quiet,
+		Timeout:              opts.Timeout,
+		WaitTimeout:          opts.WaitTimeout,
+		Debug:                opts.Debug,
+		KeepWorkspace:        opts.KeepWorkspace,
+		DebugPause:           opts.DebugPause,
+		KeepLastFailed:       opts.KeepLastFailed,
+		CopyStrategy:         opts.CopyStrategy,
+		DockerVolumeStrategy: opts.DockerVolumeStrategy,
+		Include:              opts.Include,
+		Progress:             progress,
+		DockerWaitOutput:     dockerWaitOutput,
+		WorkspaceTempDir:     os.Getenv("GLUT_WORK_DIR"),
+	}
+}
+
 type fileReportTarget struct {
 	path   string
 	report reporter.FileReport

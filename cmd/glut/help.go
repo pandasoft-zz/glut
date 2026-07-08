@@ -34,12 +34,6 @@ func newHelpSt(w io.Writer) helpSt {
 	}
 }
 
-func init() {
-	// Set once on root; cobra traverses up the tree so all subcommands
-	// that don't override will use this renderer automatically.
-	rootCmd.SetHelpFunc(helpFunc)
-}
-
 func helpFunc(cmd *cobra.Command, _ []string) {
 	renderHelp(cmd, cmd.OutOrStdout())
 }

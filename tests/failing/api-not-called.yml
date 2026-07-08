@@ -1,0 +1,25 @@
+stages: [test]
+
+no-api-call:
+  stage: test
+  script:
+    - echo "never calls the mock API"
+---
+.glut:
+  name: "assert fails when an expected API call never happens"
+  setup:
+    branch: "main"
+    pipeline_source: "push"
+    api:
+      token:
+        valid: true
+      project:
+        path: "test-group/test-project"
+        default_branch: main
+  assert:
+    job:
+      no-api-call:
+        exit-status: 0
+    api:
+      "GET /api/v4/projects/1":
+        called: true

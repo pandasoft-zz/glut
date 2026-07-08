@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version and commit are set at link time via -ldflags "-X main.version=...".
+// They are build constants written only by the linker, not mutable state.
 var (
 	version = "v0.0.0-dev"
 	commit  = "unknown"
@@ -22,227 +25,261 @@ const (
 	defaultRunTimeout = 10 * time.Minute
 )
 
-var (
-	runPattern        string
-	runFailFast       bool
-	runMaxFail        int
-	runVerbose        bool
-	runQuiet          bool
-	runFormat         string
-	runReports        []string
-	runTimeout        time.Duration
-	runWaitTimeout    time.Duration
-	runDebug          bool
-	runKeepWorkspace  bool
-	runDebugPause     string
-	runKeepLastFailed int
-	runCopyStrategy          string
-	runDockerVolumeStrategy  string
-	runInclude               []string
-	runInteractive           bool
-	listPattern       string
-	lintFormat        string
-	doctorFormat      string
-	doctorPattern     string
-)
+// runFlags holds the `glut run` flag values. newRunCmd binds a fresh instance
+// into the command's closure, so there is no package-level mutable flag state
+// and tests can build option structs directly and run in parallel.
+type runFlags struct {
+	pattern              string
+	failFast             bool
+	maxFail              int
+	verbose              bool
+	quiet                bool
+	format               string
+	reports              []string
+	timeout              time.Duration
+	waitTimeout          time.Duration
+	debug                bool
+	keepWorkspace        bool
+	debugPause           string
+	keepLastFailed       int
+	copyStrategy         string
+	dockerVolumeStrategy string
+	include              []string
+	interactive          bool
+}
 
-var rootCmd = &cobra.Command{
-	Use:   "glut",
-	Short: "GLUT is a test runner",
-	Long: `GLUT runs GitLab CI component tests locally.
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "glut",
+		Short: "GLUT is a test runner",
+		Long: `GLUT runs GitLab CI component tests locally.
 
 A GLUT test file has normal GitLab CI YAML and a .glut metadata document.
 GLUT prepares an isolated workspace, starts mocks, runs gitlab-ci-local,
 checks asserts, and prints a result.`,
-	Example: `  glut run ./tests
+		Example: `  glut run ./tests
   glut run -k release ./tests
   glut lint ./tests
   glut list ./tests
   glut version`,
+	}
+
+	// Set once on root; cobra traverses up the tree so all subcommands
+	// that don't override will use this renderer automatically.
+	root.SetHelpFunc(helpFunc)
+
+	root.AddCommand(newRunCmd())
+	root.AddCommand(newListCmd())
+	root.AddCommand(newLintCmd())
+	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newVersionCmd())
+	return root
 }
 
-var runCmd = &cobra.Command{
-	Use:   "run [paths...]",
-	Short: "Run tests",
-	Long: `Run GLUT tests from one or more paths.
+func newRunCmd() *cobra.Command {
+	flags := &runFlags{}
+	cmd := &cobra.Command{
+		Use:   "run [paths...]",
+		Short: "Run tests",
+		Long: `Run GLUT tests from one or more paths.
 
 A path can be a directory or a YAML file. If no path is given, GLUT uses the
 current directory. Each test gets its own workspace and mock services.`,
-	Example: `  glut run
+		Example: `  glut run
   glut run ./tests
   glut run ./tests/release.yml
   glut run -k release ./tests
   glut run --report=junit:report.xml ./tests
   glut run --debug --keep-workspace ./tests/release.yml`,
-	Run: func(cmd *cobra.Command, args []string) {
-		opts := runOptionsFromCommand(args)
+		Run: func(cmd *cobra.Command, args []string) {
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			os.Exit(int(runMain(ctx, flags, args, os.Stdout, os.Stderr)))
+		},
+	}
 
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-
-		if runInteractive {
-			result, exitCode := selectAndRun(ctx, opts)
-			if result.Error != nil {
-				writeError(result.Error)
-			}
-			os.Exit(int(exitCode))
-		}
-
-		sinks, fileReports, err := buildProgressSinks(opts, os.Stdout)
-		if err != nil {
-			writeError(err)
-			os.Exit(int(runner.ExitRunnerError))
-		}
-		result, exitCode := runner.Run(ctx, opts.Paths, runner.RunOptions{
-			RunPattern:       opts.Pattern,
-			FailFast:         opts.FailFast,
-			MaxFail:          opts.MaxFail,
-			Verbose:          opts.Verbose,
-			Quiet:            opts.Quiet,
-			Timeout:          opts.Timeout,
-			WaitTimeout:      opts.WaitTimeout,
-			Debug:            opts.Debug,
-			KeepWorkspace:    opts.KeepWorkspace,
-			DebugPause:       opts.DebugPause,
-			KeepLastFailed:   opts.KeepLastFailed,
-			CopyStrategy:         opts.CopyStrategy,
-			DockerVolumeStrategy: opts.DockerVolumeStrategy,
-			Include:              opts.Include,
-			Progress:         sinks,
-			DockerWaitOutput: os.Stderr,
-		})
-		if result.Error != nil {
-			writeError(result.Error)
-		}
-		if err := writeFileReports(fileReports); err != nil {
-			writeError(err)
-			os.Exit(int(runner.ExitRunnerError))
-		}
-		os.Exit(int(exitCode))
-	},
+	f := cmd.Flags()
+	f.StringVarP(&flags.pattern, "run", "k", "", "Run tests matching substring or regex")
+	f.BoolVarP(&flags.failFast, "fail-fast", "x", envBool(os.Getenv, "GLUT_FAIL_FAST"), "Stop after first failure")
+	f.IntVar(&flags.maxFail, "maxfail", 0, "Stop after N failures")
+	f.BoolVarP(&flags.verbose, "verbose", "v", envBool(os.Getenv, "GLUT_VERBOSE"), "Verbose output")
+	f.BoolVarP(&flags.quiet, "quiet", "q", false, "Quiet output")
+	f.StringVar(&flags.format, "format", os.Getenv("GLUT_FORMAT"), "Console output format")
+	f.StringArrayVar(&flags.reports, "report", envList(os.Getenv, "GLUT_REPORT"), "Report output as <format>:<path>, repeatable")
+	f.DurationVar(&flags.timeout, "timeout", envDuration(os.Getenv, "GLUT_TIMEOUT", defaultRunTimeout), "Timeout for one test")
+	f.DurationVar(&flags.waitTimeout, "wait-timeout", envDuration(os.Getenv, "GLUT_WAIT_TIMEOUT", runner.DefaultWaitTimeout), "Max time to wait for Docker daemon to become ready")
+	f.BoolVar(&flags.debug, "debug", envBool(os.Getenv, "GLUT_DEBUG"), "Enable debug mode")
+	f.BoolVar(&flags.keepWorkspace, "keep-workspace", envBool(os.Getenv, "GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
+	f.StringVar(&flags.debugPause, "debug-pause", "", "Pause point: before-pipeline, before-asserts, after-pipeline, or on-fail")
+	f.IntVar(&flags.keepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
+	f.StringVar(&flags.copyStrategy, "copy-strategy", "auto", "Copy strategy: auto, rsync, native")
+	f.StringVar(&flags.dockerVolumeStrategy, "docker-volume-strategy", "auto", "Docker volume strategy: auto (detect), bind (native Linux), volume (Docker Desktop/WSL2)")
+	f.StringArrayVar(&flags.include, "include", nil, "Copy only these subdirectories into the workspace (repeatable)")
+	f.BoolVarP(&flags.interactive, "interactive", "i", false, "Select tests to run interactively")
+	return cmd
 }
 
-var listCmd = &cobra.Command{
-	Use:   "list [paths...]",
-	Short: "List tests",
-	Long: `List GLUT tests without running them.
+func newListCmd() *cobra.Command {
+	var pattern string
+	cmd := &cobra.Command{
+		Use:   "list [paths...]",
+		Short: "List tests",
+		Long: `List GLUT tests without running them.
 
 A path can be a directory or a YAML file. Use --run to filter by test name.`,
-	Example: `  glut list
+		Example: `  glut list
   glut list ./tests
   glut list -k release ./tests`,
-	Run: func(cmd *cobra.Command, args []string) {
-		opts := listOptionsFromCommand(args)
-		tests, err := runner.List(context.Background(), opts.Paths, runner.ListOptions{
-			RunPattern: opts.Pattern,
-		})
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(int(runner.ExitRunnerError))
-		}
-		reporter.PrintList(os.Stdout, tests)
-	},
+		Run: func(cmd *cobra.Command, args []string) {
+			if code := listMain(args, pattern, os.Stdout, os.Stderr); code != runner.ExitOK {
+				os.Exit(int(code))
+			}
+		},
+	}
+	cmd.Flags().StringVarP(&pattern, "run", "k", "", "List tests matching substring or regex")
+	return cmd
 }
 
-var lintCmd = &cobra.Command{
-	Use:   "lint [paths...]",
-	Short: "Lint tests",
-	Long: `Lint GLUT test files.
+func newLintCmd() *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "lint [paths...]",
+		Short: "Lint tests",
+		Long: `Lint GLUT test files.
 
 Lint checks YAML syntax, .glut schema errors, and semantic mistakes such as
 assert.job references to missing pipeline jobs.`,
-	Example: `  glut lint
+		Example: `  glut lint
   glut lint ./tests
   glut lint ./tests/release.yml`,
-	Run: func(cmd *cobra.Command, args []string) {
-		opts := lintOptionsFromCommand(args)
-		report := buildLintReport(opts.Paths)
-		if err := printLintReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
-			writeError(err)
-			os.Exit(int(runner.ExitRunnerError))
-		}
-		if report.HasErrors {
-			os.Exit(int(runner.ExitTestFailed))
-		}
-		os.Exit(int(runner.ExitOK))
-	},
+		Run: func(cmd *cobra.Command, args []string) {
+			os.Exit(int(lintMain(args, format, os.Stdout, os.Stderr)))
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "text", "Output format: text or json")
+	return cmd
 }
 
-var doctorCmd = &cobra.Command{
-	Use:   "doctor [paths...]",
-	Short: "Explain tests for AI tools",
-	Long: `Explain GLUT test files for AI tools.
+func newDoctorCmd() *cobra.Command {
+	var format string
+	var pattern string
+	cmd := &cobra.Command{
+		Use:   "doctor [paths...]",
+		Short: "Explain tests for AI tools",
+		Long: `Explain GLUT test files for AI tools.
 
 Doctor returns lint issues, authoring hints, and job coverage per file.
 Use --run to focus on a single test by name substring.
 Use JSON output when another tool or AI assistant needs structured feedback.`,
-	Example: `  glut doctor ./tests
+		Example: `  glut doctor ./tests
   glut doctor -k release ./tests
   glut doctor --format=json ./tests/release.yml`,
-	Run: func(cmd *cobra.Command, args []string) {
-		opts := lintOptionsFromCommand(args)
-		opts.Format = doctorFormat
-		report := buildDoctorReportFiltered(opts.Paths, doctorPattern)
-		if err := printDoctorReport(os.Stdout, os.Stderr, report, opts.Format); err != nil {
-			writeError(err)
-			os.Exit(int(runner.ExitRunnerError))
-		}
-		if report.HasErrors {
-			os.Exit(int(runner.ExitTestFailed))
-		}
-		os.Exit(int(runner.ExitOK))
-	},
+		Run: func(cmd *cobra.Command, args []string) {
+			os.Exit(int(doctorMain(args, format, pattern, os.Stdout, os.Stderr)))
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "text", "Output format: text or json")
+	cmd.Flags().StringVarP(&pattern, "run", "k", "", "Analyse tests matching substring")
+	return cmd
 }
 
-var versionCmd = &cobra.Command{
-	Use:     "version",
-	Short:   "Print version",
-	Long:    "Print the GLUT version and build commit.",
-	Example: `  glut version`,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("glut %s (commit: %s, built: unknown)\n", version, commit)
-	},
-}
-
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(int(runner.ExitRunnerError))
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "version",
+		Short:   "Print version",
+		Long:    "Print the GLUT version and build commit.",
+		Example: `  glut version`,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintf(cmd.OutOrStdout(), "glut %s (commit: %s, built: unknown)\n", version, commit)
+		},
 	}
 }
 
-func init() {
-	runFormat = os.Getenv("GLUT_FORMAT")
-	runReports = envList(os.Getenv, "GLUT_REPORT")
+// runMain executes `glut run` and returns the process exit code. Split from
+// the cobra closure (which owns signal wiring and os.Exit) so the command
+// body is testable.
+func runMain(ctx context.Context, flags *runFlags, args []string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := flags.toRunOptions(args)
 
-	runCmd.Flags().StringVarP(&runPattern, "run", "k", "", "Run tests matching substring or regex")
-	runCmd.Flags().BoolVarP(&runFailFast, "fail-fast", "x", envBool(os.Getenv, "GLUT_FAIL_FAST"), "Stop after first failure")
-	runCmd.Flags().IntVar(&runMaxFail, "maxfail", 0, "Stop after N failures")
-	runCmd.Flags().BoolVarP(&runVerbose, "verbose", "v", envBool(os.Getenv, "GLUT_VERBOSE"), "Verbose output")
-	runCmd.Flags().BoolVarP(&runQuiet, "quiet", "q", false, "Quiet output")
-	runCmd.Flags().StringVar(&runFormat, "format", runFormat, "Console output format")
-	runCmd.Flags().StringArrayVar(&runReports, "report", runReports, "Report output as <format>:<path>, repeatable")
-	runCmd.Flags().DurationVar(&runTimeout, "timeout", envDuration(os.Getenv, "GLUT_TIMEOUT", defaultRunTimeout), "Timeout for one test")
-	runCmd.Flags().DurationVar(&runWaitTimeout, "wait-timeout", envDuration(os.Getenv, "GLUT_WAIT_TIMEOUT", runner.DefaultWaitTimeout), "Max time to wait for Docker daemon to become ready")
-	runCmd.Flags().BoolVar(&runDebug, "debug", envBool(os.Getenv, "GLUT_DEBUG"), "Enable debug mode")
-	runCmd.Flags().BoolVar(&runKeepWorkspace, "keep-workspace", envBool(os.Getenv, "GLUT_KEEP_WORKSPACE"), "Keep workspace after run")
-	runCmd.Flags().StringVar(&runDebugPause, "debug-pause", "", "Pause point: before-pipeline, before-asserts, after-pipeline, or on-fail")
-	runCmd.Flags().IntVar(&runKeepLastFailed, "keep-last-failed", 3, "Keep the last N failed workspaces")
-	runCmd.Flags().StringVar(&runCopyStrategy, "copy-strategy", "auto", "Copy strategy: auto, rsync, native")
-	runCmd.Flags().StringVar(&runDockerVolumeStrategy, "docker-volume-strategy", "auto", "Docker volume strategy: auto (detect), bind (native Linux), volume (Docker Desktop/WSL2)")
-	runCmd.Flags().StringArrayVar(&runInclude, "include", nil, "Copy only these subdirectories into the workspace (repeatable)")
-	runCmd.Flags().BoolVarP(&runInteractive, "interactive", "i", false, "Select tests to run interactively")
+	if flags.interactive {
+		result, exitCode := selectAndRun(ctx, opts)
+		if result.Error != nil {
+			_, _ = fmt.Fprintln(stderr, result.Error)
+		}
+		return exitCode
+	}
 
-	listCmd.Flags().StringVarP(&listPattern, "run", "k", "", "List tests matching substring or regex")
-	lintCmd.Flags().StringVar(&lintFormat, "format", "text", "Output format: text or json")
-	doctorCmd.Flags().StringVar(&doctorFormat, "format", "text", "Output format: text or json")
-	doctorCmd.Flags().StringVarP(&doctorPattern, "run", "k", "", "Analyse tests matching substring")
+	sinks, fileReports, err := buildProgressSinks(opts, stdout)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	result, exitCode := runner.Run(ctx, opts.Paths, toRunnerOptions(opts, sinks, stderr))
+	if result.Error != nil {
+		_, _ = fmt.Fprintln(stderr, result.Error)
+	}
+	if err := writeFileReports(fileReports); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	return exitCode
+}
 
-	rootCmd.AddCommand(runCmd)
-	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(lintCmd)
-	rootCmd.AddCommand(doctorCmd)
-	rootCmd.AddCommand(versionCmd)
+// listMain executes `glut list` and returns the process exit code.
+func listMain(args []string, pattern string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := listOptionsFromCommand(args, pattern)
+	tests, err := runner.List(context.Background(), opts.Paths, runner.ListOptions{
+		RunPattern: opts.Pattern,
+	})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	reporter.PrintList(stdout, tests)
+	return runner.ExitOK
+}
+
+// lintMain executes `glut lint` and returns the process exit code.
+func lintMain(args []string, format string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := lintOptionsFromCommand(args, format)
+	if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	report := buildLintReport(opts.Paths)
+	if err := printLintReport(stdout, stderr, report, opts.Format); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	if report.HasErrors {
+		return runner.ExitTestFailed
+	}
+	return runner.ExitOK
+}
+
+// doctorMain executes `glut doctor` and returns the process exit code.
+func doctorMain(args []string, format string, pattern string, stdout, stderr io.Writer) runner.ExitCode {
+	opts := lintOptionsFromCommand(args, format)
+	if err := checkDefaultTestsDirExists(opts.Paths, len(args) == 0); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	report := buildDoctorReportFiltered(opts.Paths, pattern)
+	if err := printDoctorReport(stdout, stderr, report, opts.Format); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return runner.ExitRunnerError
+	}
+	if report.HasErrors {
+		return runner.ExitTestFailed
+	}
+	return runner.ExitOK
+}
+
+func Execute() {
+	if err := newRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(int(runner.ExitRunnerError))
+	}
 }
 
 func envBool(env func(string) string, name string) bool {
@@ -261,6 +298,7 @@ func envDuration(env func(string) string, name string, fallback time.Duration) t
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil {
+		_, _ = fmt.Fprintf(stderrWriter(), "warning: %s=%q is not a valid duration, using default %s\n", name, value, fallback)
 		return fallback
 	}
 	return duration

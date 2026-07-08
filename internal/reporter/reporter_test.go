@@ -186,6 +186,50 @@ func TestJUnitXMLStructureAndEscaping(t *testing.T) {
 	}
 }
 
+// TestJUnitCountsFailedTestcasesNotFailureElements guards against
+// suite.Failures incrementing once per failed assertion instead of once per
+// failed testcase: a test with 3 failed assertions must report failures="1"
+// (one failed test), not failures="3".
+func TestJUnitCountsFailedTestcasesNotFailureElements(t *testing.T) {
+	multi := sampleFailResult()
+	multi.Failures = []asserter.AssertResult{
+		{Path: "assert.job.a", Expected: "1", Actual: "2"},
+		{Path: "assert.job.b", Expected: "3", Actual: "4"},
+		{Path: "assert.job.c", Expected: "5", Actual: "6"},
+	}
+
+	report := NewJUnit()
+	report.TestDone(multi)
+	report.Summary(runner.RunResult{
+		Tests:    []runner.TestResult{multi},
+		Failed:   1,
+		Duration: time.Second,
+	})
+
+	path := filepath.Join(t.TempDir(), "multi-failure.xml")
+	if err := report.WriteFile(path); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var decoded junitSuites
+	if err := xml.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("xml.Unmarshal() error = %v", err)
+	}
+	if decoded.Failures != 1 {
+		t.Fatalf("root failures = %d, want 1 (one failed testcase, not 3 failed assertions)", decoded.Failures)
+	}
+	if len(decoded.Suites) != 1 || decoded.Suites[0].Failures != 1 {
+		t.Fatalf("suite failures = %#v, want 1", decoded.Suites)
+	}
+	if len(decoded.Suites[0].Cases) != 1 || len(decoded.Suites[0].Cases[0].Failures) != 3 {
+		t.Fatalf("expected one testcase with 3 <failure> elements, got %#v", decoded.Suites[0].Cases)
+	}
+}
+
 func TestJUnitGroupsByDirectory(t *testing.T) {
 	report := NewJUnit()
 	first := samplePassResult()
@@ -212,6 +256,49 @@ func TestJUnitGroupsByDirectory(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "tests/image-build") || !strings.Contains(string(data), "tests/release") {
 		t.Fatalf("JUnit output missing grouped directories: %s", string(data))
+	}
+}
+
+// TestJUnitSuiteTimeSumsDurationsExactly guards against summing suite
+// duration by re-parsing each testcase's already-rounded "%.3f" time string:
+// two cases at 333.333ms each sum to 666.666ms (rounds to "0.667"), but
+// re-parsing the rounded per-case strings ("0.333" + "0.333") gives 666ms
+// ("0.666") — a different, wrong answer purely from the string round-trip.
+func TestJUnitSuiteTimeSumsDurationsExactly(t *testing.T) {
+	report := NewJUnit()
+	first := samplePassResult()
+	first.FilePath = filepath.Join("tests", "group", "one.yml")
+	first.Duration = 333333 * time.Microsecond
+	second := samplePassResult()
+	second.FilePath = filepath.Join("tests", "group", "two.yml")
+	second.Duration = 333333 * time.Microsecond
+
+	report.TestDone(first)
+	report.TestDone(second)
+	report.Summary(runner.RunResult{
+		Tests:    []runner.TestResult{first, second},
+		Passed:   2,
+		Duration: first.Duration + second.Duration,
+	})
+
+	path := filepath.Join(t.TempDir(), "precise.xml")
+	if err := report.WriteFile(path); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var suites junitSuites
+	if err := xml.Unmarshal(data, &suites); err != nil {
+		t.Fatalf("xml.Unmarshal() error = %v", err)
+	}
+	if len(suites.Suites) != 1 {
+		t.Fatalf("expected 1 suite, got %d: %s", len(suites.Suites), data)
+	}
+	if got := suites.Suites[0].Time; got != "0.667" {
+		t.Fatalf("suite time = %q, want %q (sum of the exact durations, not a re-parse of the rounded per-case strings)", got, "0.667")
 	}
 }
 
@@ -370,6 +457,44 @@ func TestReporterStartMethods(t *testing.T) {
 
 	NewJUnit().Start(2)
 	NewTAP().Start(2)
+}
+
+// TestTAPEscapesHashInDescriptionAndQuotesYAMLMessage guards against two TAP
+// output bugs: an unescaped "#" in a test description would start an
+// unintended TAP directive, and an unquoted "message: %s" line with ": ",
+// quotes, or a carriage return would produce invalid YAML in the
+// "---"/"..." diagnostic block. Failure messages embed raw job output, so
+// these characters are realistic.
+func TestTAPEscapesHashInDescriptionAndQuotesYAMLMessage(t *testing.T) {
+	result := sampleFailResult()
+	result.TestName = "release #123 check"
+	result.Failures = []asserter.AssertResult{
+		{Path: "assert.job.stdout", Expected: `say "hi": ok`, Actual: "line1\r\nline2"},
+	}
+
+	report := NewTAP()
+	report.TestDone(result)
+	report.Summary(runner.RunResult{Tests: []runner.TestResult{result}, Failed: 1})
+
+	path := filepath.Join(t.TempDir(), "escaped.tap")
+	if err := report.WriteFile(path); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	output := string(data)
+
+	if !strings.Contains(output, `release \#123 check`) {
+		t.Fatalf("expected # in description to be escaped, got: %s", output)
+	}
+	if !strings.Contains(output, `message: "`) {
+		t.Fatalf("expected the message line to be YAML double-quoted, got: %s", output)
+	}
+	if strings.Contains(output, "\r") {
+		t.Fatalf("expected no raw carriage return in output, got: %q", output)
+	}
 }
 
 func TestTAPWriteFileReturnsPathContextOnError(t *testing.T) {

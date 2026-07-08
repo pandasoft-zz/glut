@@ -2,8 +2,12 @@ package docker
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,7 +29,7 @@ func TestDialUnreachable(t *testing.T) {
 func TestResolveVolumeStrategyExplicit(t *testing.T) {
 	t.Parallel()
 	for _, strategy := range []string{VolumeStrategyBind, VolumeStrategyVolume} {
-		got := ResolveVolumeStrategy(strategy)
+		got := ResolveVolumeStrategy(strategy, nil)
 		if got != strategy {
 			t.Errorf("ResolveVolumeStrategy(%q) = %q, want %q", strategy, got, strategy)
 		}
@@ -34,7 +38,7 @@ func TestResolveVolumeStrategyExplicit(t *testing.T) {
 
 func TestResolveVolumeStrategyAutoReturnsKnown(t *testing.T) {
 	t.Parallel()
-	got := ResolveVolumeStrategy(VolumeStrategyAuto)
+	got := ResolveVolumeStrategy(VolumeStrategyAuto, nil)
 	if got != VolumeStrategyBind && got != VolumeStrategyVolume {
 		t.Errorf("ResolveVolumeStrategy(auto) = %q, want bind or volume", got)
 	}
@@ -42,8 +46,27 @@ func TestResolveVolumeStrategyAutoReturnsKnown(t *testing.T) {
 
 func TestResolveVolumeStrategyEmptyEqualsAuto(t *testing.T) {
 	t.Parallel()
-	if ResolveVolumeStrategy("") != ResolveVolumeStrategy(VolumeStrategyAuto) {
+	if ResolveVolumeStrategy("", nil) != ResolveVolumeStrategy(VolumeStrategyAuto, nil) {
 		t.Error("empty strategy should behave same as auto")
+	}
+}
+
+func TestLookupEnvPrefersGivenEnvOverProcessEnv(t *testing.T) {
+	// This is the mechanism behind the fix: ResolveVolumeStrategy, Wait, and
+	// Endpoint used to read os.Getenv("DOCKER_HOST") directly, ignoring a
+	// caller-resolved hostEnv entirely. A caller with a custom DOCKER_HOST
+	// (e.g. a different daemon than the actual process env points at) would
+	// wait on / detect the wrong daemon.
+	t.Setenv("GLUT_TEST_LOOKUP_ENV_VAR", "from-process-env")
+
+	if got := lookupEnv(nil, "GLUT_TEST_LOOKUP_ENV_VAR"); got != "from-process-env" {
+		t.Errorf("lookupEnv(nil, ...) = %q, want fallback to the process env", got)
+	}
+	if got := lookupEnv([]string{"GLUT_TEST_LOOKUP_ENV_VAR=from-host-env"}, "GLUT_TEST_LOOKUP_ENV_VAR"); got != "from-host-env" {
+		t.Errorf("lookupEnv(hostEnv, ...) = %q, want the hostEnv value, not the process env", got)
+	}
+	if got := lookupEnv([]string{}, "GLUT_TEST_LOOKUP_ENV_VAR"); got != "" {
+		t.Errorf("lookupEnv(empty non-nil hostEnv, ...) = %q, want empty (must not fall back to process env)", got)
 	}
 }
 
@@ -105,7 +128,7 @@ func TestWaitSucceedsWhenDaemonReachable(t *testing.T) {
 	addr := "tcp://" + ln.Addr().String()
 	t.Setenv("DOCKER_HOST", addr)
 
-	if err := Wait(context.Background(), io.Discard, 5*time.Second); err != nil {
+	if err := Wait(context.Background(), io.Discard, 5*time.Second, nil); err != nil {
 		t.Fatalf("Wait() = %v, want nil", err)
 	}
 }
@@ -113,7 +136,7 @@ func TestWaitSucceedsWhenDaemonReachable(t *testing.T) {
 func TestWaitTimesOutWhenDaemonUnreachable(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix:///tmp/glut-no-daemon-test.sock")
 
-	err := Wait(context.Background(), io.Discard, 2*time.Second)
+	err := Wait(context.Background(), io.Discard, 2*time.Second, nil)
 	if err == nil {
 		t.Fatal("Wait() expected timeout error, got nil")
 	}
@@ -125,8 +148,51 @@ func TestWaitCancelledByContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := Wait(ctx, io.Discard, 30*time.Second)
+	err := Wait(ctx, io.Discard, 30*time.Second, nil)
 	if err == nil {
 		t.Fatal("Wait() expected context error, got nil")
+	}
+}
+
+// TestPruneOrphanedVolumesOnlyRemovesExactPrefixMatches guards against two
+// bugs: Docker's name= filter is a substring match (so "my-glut-data" would
+// otherwise be listed and removed alongside real "glut-*" volumes), and a
+// missing dangling=true filter (which could remove a volume a concurrent
+// glut process is still using).
+func TestPruneOrphanedVolumesOnlyRemovesExactPrefixMatches(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "docker-calls.log")
+
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+  echo glut-abc123
+  echo gcl-build-1
+  echo my-glut-data
+fi
+`, logFile)
+	dockerPath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(dockerPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	PruneOrphanedVolumes(nil)
+
+	calls, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("read docker call log: %v", err)
+	}
+	log := string(calls)
+
+	if !strings.Contains(log, "dangling=true") {
+		t.Fatalf("expected dangling=true filter in ls call, got:\n%s", log)
+	}
+	if strings.Contains(log, "rm my-glut-data") {
+		t.Fatalf("must not remove a volume that only contains the prefix as a substring, got:\n%s", log)
+	}
+	if !strings.Contains(log, "rm glut-abc123") || !strings.Contains(log, "rm gcl-build-1") {
+		t.Fatalf("expected the exact-prefix volumes to be removed, got:\n%s", log)
 	}
 }

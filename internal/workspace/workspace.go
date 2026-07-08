@@ -14,8 +14,6 @@ import (
 	"github.com/pandasoft-zz/glut/internal/parser"
 )
 
-const tmpDirPrefix = ".glut-tmp-"
-
 const (
 	CopyStrategyAuto   = "auto"
 	CopyStrategyRsync  = "rsync"
@@ -42,14 +40,14 @@ type Workspace struct {
 func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options) (workspace *Workspace, err error) {
 	srcDir, err = filepath.Abs(srcDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve srcDir: %v", err)
+		return nil, fmt.Errorf("failed to resolve srcDir: %w", err)
 	}
 	tmpWork, err := os.MkdirTemp(opts.TempDir, "glut-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp workspace: %v", err)
+		return nil, fmt.Errorf("failed to create temp workspace: %w", err)
 	}
 
-	defaultBranch := resolveDefaultBranch(cfg, srcDir)
+	defaultBranch := resolveDefaultBranch(cfg, srcDir, opts.HostEnv)
 
 	gitBin := resolveExecutable("git", opts.HostEnv)
 	runGit := func(dir string, args ...string) error {
@@ -58,7 +56,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		cmd.Env = opts.HostEnv // nil = inherit process env
 		out, cmdErr := cmd.CombinedOutput()
 		if cmdErr != nil {
-			return fmt.Errorf("command git %v failed: %v, output: %s", args, cmdErr, string(out))
+			return fmt.Errorf("command git %v failed: %w, output: %s", args, cmdErr, string(out))
 		}
 		return nil
 	}
@@ -68,7 +66,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 			return
 		}
 		if removeErr := os.RemoveAll(tmpWork); removeErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to remove temp workspace %s: %v", tmpWork, removeErr))
+			err = errors.Join(err, fmt.Errorf("failed to remove temp workspace %s: %w", tmpWork, removeErr))
 		}
 	}()
 
@@ -81,10 +79,10 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 	}
 
 	if err := runGit(tmpWork, "init", "--bare", originRepo); err != nil {
-		return nil, fmt.Errorf("failed to init bare origin: %v", err)
+		return nil, fmt.Errorf("failed to init bare origin: %w", err)
 	}
 	if err := runGit(stagingDir, "init"); err != nil {
-		return nil, fmt.Errorf("failed to init staging repo: %v", err)
+		return nil, fmt.Errorf("failed to init staging repo: %w", err)
 	}
 
 	userName := config.DefaultUserName
@@ -96,40 +94,40 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 		userEmail = cfg.Git.User.Email
 	}
 	if err := runGit(stagingDir, "config", "user.email", userEmail); err != nil {
-		return nil, fmt.Errorf("failed to configure staging git email: %v", err)
+		return nil, fmt.Errorf("failed to configure staging git email: %w", err)
 	}
 	if err := runGit(stagingDir, "config", "user.name", userName); err != nil {
-		return nil, fmt.Errorf("failed to configure staging git user: %v", err)
+		return nil, fmt.Errorf("failed to configure staging git user: %w", err)
 	}
 	if err := runGit(stagingDir, "config", "commit.gpgSign", "false"); err != nil {
-		return nil, fmt.Errorf("failed to disable staging git signing: %v", err)
+		return nil, fmt.Errorf("failed to disable staging git signing: %w", err)
 	}
 
 	if err := commitIfStaged(stagingDir, "glut: workspace snapshot", opts.HostEnv); err != nil {
-		return nil, fmt.Errorf("failed to create workspace snapshot: %v", err)
+		return nil, fmt.Errorf("failed to create workspace snapshot: %w", err)
 	}
 
 	if err := removeRemoteIfExists(stagingDir, "origin", opts.HostEnv); err != nil {
-		return nil, fmt.Errorf("failed to remove existing origin remote: %v", err)
+		return nil, fmt.Errorf("failed to remove existing origin remote: %w", err)
 	}
 	if err := runGit(stagingDir, "remote", "add", "origin", originRepo); err != nil {
-		return nil, fmt.Errorf("failed to add origin remote: %v", err)
+		return nil, fmt.Errorf("failed to add origin remote: %w", err)
 	}
 	branch := config.DefaultBranchName
 	if cfg.Git != nil && cfg.Git.Origin != nil && cfg.Git.Origin.Branch != "" {
 		branch = cfg.Git.Origin.Branch
 	}
 	if err := runGit(stagingDir, "checkout", "-B", branch); err != nil {
-		return nil, fmt.Errorf("failed to checkout origin branch %q: %v", branch, err)
+		return nil, fmt.Errorf("failed to checkout origin branch %q: %w", branch, err)
 	}
 	if err := runGit(stagingDir, "push", "-f", "origin", branch); err != nil {
-		return nil, fmt.Errorf("failed to push snapshot to bare origin: %v", err)
+		return nil, fmt.Errorf("failed to push snapshot to bare origin: %w", err)
 	}
 	if err := runGit(tmpWork, "--git-dir", originRepo, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
-		return nil, fmt.Errorf("failed to set bare origin HEAD: %v", err)
+		return nil, fmt.Errorf("failed to set bare origin HEAD: %w", err)
 	}
 	if err := os.RemoveAll(stagingDir); err != nil {
-		return nil, fmt.Errorf("failed to remove staging directory: %v", err)
+		return nil, fmt.Errorf("failed to remove staging directory: %w", err)
 	}
 
 	w := &Workspace{
@@ -148,7 +146,7 @@ func New(cfg parser.SetupConfig, keepWorkspace bool, srcDir string, opts Options
 	}
 
 	if err := runGit(tmpWork, "clone", originRepo, workspaceDir); err != nil {
-		return nil, fmt.Errorf("failed to clone workspace: %v", err)
+		return nil, fmt.Errorf("failed to clone workspace: %w", err)
 	}
 
 	created = true
@@ -168,14 +166,14 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 		cmd.Env = hostEnv
 		out, cmdErr := cmd.CombinedOutput()
 		if cmdErr != nil {
-			return fmt.Errorf("command git %v failed: %v, output: %s", args, cmdErr, string(out))
+			return fmt.Errorf("command git %v failed: %w, output: %s", args, cmdErr, string(out))
 		}
 		return nil
 	}
 
 	worktree := filepath.Join(tmpWork, "origin-worktree")
 	if err := runGit(tmpWork, "clone", originRepo, worktree); err != nil {
-		return fmt.Errorf("failed to clone worktree: %v", err)
+		return fmt.Errorf("failed to clone worktree: %w", err)
 	}
 	defer func() {
 		if err := os.RemoveAll(worktree); err != nil {
@@ -192,16 +190,16 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 		userEmail = gitCfg.User.Email
 	}
 	if err := runGit(worktree, "config", "user.email", userEmail); err != nil {
-		return fmt.Errorf("failed to configure origin worktree git email: %v", err)
+		return fmt.Errorf("failed to configure origin worktree git email: %w", err)
 	}
 	if err := runGit(worktree, "config", "user.name", userName); err != nil {
-		return fmt.Errorf("failed to configure origin worktree git user: %v", err)
+		return fmt.Errorf("failed to configure origin worktree git user: %w", err)
 	}
 	if err := runGit(worktree, "config", "commit.gpgSign", "false"); err != nil {
-		return fmt.Errorf("failed to disable origin worktree git signing: %v", err)
+		return fmt.Errorf("failed to disable origin worktree git signing: %w", err)
 	}
 	if err := runGit(worktree, "remote", "set-url", "origin", originRepo); err != nil {
-		return fmt.Errorf("failed to set origin worktree remote: %v", err)
+		return fmt.Errorf("failed to set origin worktree remote: %w", err)
 	}
 
 	if len(origin.Files) > 0 {
@@ -212,14 +210,14 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 				return fmt.Errorf("setup.git.origin.files key %q escapes workspace", name)
 			}
 			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				return err
+				return fmt.Errorf("setup.git.origin.files: failed to create directory for %q: %w", name, err)
 			}
 			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-				return err
+				return fmt.Errorf("setup.git.origin.files: failed to write %q: %w", name, err)
 			}
 		}
 		if err := commitIfStaged(worktree, "seed commit from setup.git.origin.files", hostEnv); err != nil {
-			return fmt.Errorf("failed to commit setup.git.origin.files: %v", err)
+			return fmt.Errorf("failed to commit setup.git.origin.files: %w", err)
 		}
 
 		branch := defaultBranch
@@ -227,7 +225,7 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 			branch = gitCfg.Origin.Branch
 		}
 		if err := runGit(worktree, "branch", "-M", branch); err != nil {
-			return fmt.Errorf("failed to rename origin worktree branch: %v", err)
+			return fmt.Errorf("failed to rename origin worktree branch: %w", err)
 		}
 	}
 
@@ -237,27 +235,38 @@ func (w *Workspace) setupGitOrigin(tmpWork string, originRepo string, defaultBra
 			effectiveEnv = os.Environ()
 		}
 		host := envSliceToMap(effectiveEnv)
+		cmdEnv := []string{
+			"GLUT_ORIGIN_REPO=" + originRepo,
+			"HOME=" + host["HOME"],
+			"PATH=" + host["PATH"],
+		}
+		// Carry GIT_* overrides (e.g. GIT_CONFIG_COUNT/KEY_n/VALUE_n used
+		// elsewhere to suppress commit signing) through to these commands too.
+		// Without this, a command running `git commit`/`git tag` here honors
+		// whatever global gitconfig the host has (e.g. tag.gpgSign=true),
+		// which can fail or hang waiting for a passphrase.
+		for _, kv := range effectiveEnv {
+			if strings.HasPrefix(kv, "GIT_") {
+				cmdEnv = append(cmdEnv, kv)
+			}
+		}
 		for _, cmdStr := range origin.Commands {
 			cmd := exec.Command("bash", "-c", cmdStr)
 			cmd.Dir = worktree
-			cmd.Env = []string{
-				"GLUT_ORIGIN_REPO=" + originRepo,
-				"HOME=" + host["HOME"],
-				"PATH=" + host["PATH"],
-			}
+			cmd.Env = cmdEnv
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				return fmt.Errorf("origin command failed: %v, output: %s", err, string(out))
+				return fmt.Errorf("origin command failed: %w, output: %s", err, string(out))
 			}
 		}
 	}
 
 	// Push everything to the bare origin repo
 	if err := runGit(worktree, "push", "--all", "origin"); err != nil {
-		return fmt.Errorf("failed to push origin branches: %v", err)
+		return fmt.Errorf("failed to push origin branches: %w", err)
 	}
 	if err := runGit(worktree, "push", "--tags", "origin"); err != nil {
-		return fmt.Errorf("failed to push origin tags: %v", err)
+		return fmt.Errorf("failed to push origin tags: %w", err)
 	}
 
 	return nil
@@ -288,7 +297,7 @@ func runCmdEnv(dir string, env []string, name string, args ...string) error {
 	cmd.Env = env // nil = inherit process env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("command %s %v failed: %v, output: %s", name, args, err, string(out))
+		return fmt.Errorf("command %s %v failed: %w, output: %s", name, args, err, string(out))
 	}
 	return nil
 }
@@ -330,14 +339,14 @@ func envSliceToMap(env []string) map[string]string {
 // resolveDefaultBranch returns the effective CI_DEFAULT_BRANCH value for a
 // workspace. Priority: setup.default_branch > setup.api.project.default_branch
 // (deprecated) > origin/HEAD detected from the source repo > "main".
-func resolveDefaultBranch(cfg parser.SetupConfig, srcDir string) string {
+func resolveDefaultBranch(cfg parser.SetupConfig, srcDir string, hostEnv []string) string {
 	if cfg.DefaultBranch != "" {
 		return cfg.DefaultBranch
 	}
 	if cfg.API != nil && cfg.API.Project != nil && cfg.API.Project.DefaultBranch != "" {
 		return cfg.API.Project.DefaultBranch
 	}
-	detected := getDefaultBranchFromRepo(srcDir)
+	detected := getDefaultBranchFromRepo(srcDir, hostEnv)
 	if detected != "" && detected != DetachedHead {
 		return detected
 	}
@@ -348,9 +357,11 @@ func resolveDefaultBranch(cfg parser.SetupConfig, srcDir string) string {
 // reading refs/remotes/origin/HEAD. This works on the real source repo, giving
 // an accurate result regardless of what branch the test workspace is configured
 // to use.
-func getDefaultBranchFromRepo(dir string) string {
-	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+func getDefaultBranchFromRepo(dir string, hostEnv []string) string {
+	gitBin := resolveExecutable("git", hostEnv)
+	cmd := exec.Command(gitBin, "symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Dir = dir
+	cmd.Env = hostEnv
 	out, err := cmd.Output()
 	if err == nil {
 		ref := strings.TrimSpace(string(out))
@@ -383,7 +394,7 @@ func removeRemoteIfExists(dir string, name string, hostEnv []string) error {
 	cmd.Dir = dir
 	cmd.Env = hostEnv
 	if err := cmd.Run(); err != nil {
-		return nil
+		return nil //nolint:nilerr // "remote get-url" failing means the remote does not exist, which is not an error here
 	}
 	return runCmdEnv(dir, hostEnv, "git", "remote", "remove", name)
 }
@@ -431,7 +442,7 @@ func copyRepoAll(src, dst string, opts Options) error {
 
 	runRsync := func() error {
 		var stderr strings.Builder
-		cmd := exec.Command("rsync", "-a", "--no-owner", "--no-group", "--exclude=.git", srcSlash, dstSlash)
+		cmd := exec.Command("rsync", "-a", "--no-owner", "--no-group", "--exclude=.git", "--exclude=.glut-tmp*", srcSlash, dstSlash)
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			if msg := strings.TrimSpace(stderr.String()); msg != "" {
@@ -450,19 +461,20 @@ func copyRepoAll(src, dst string, opts Options) error {
 		return nil
 	}
 
-	if strategy == CopyStrategyRsync {
+	if isNotFound(err) {
+		// auto: rsync not installed — fall back to native.
+		if strategy == CopyStrategyAuto {
+			if opts.Verbose {
+				fmt.Println("[glut] copy strategy: native (rsync not found)")
+			}
+			return copyDir(src, dst)
+		}
+		// Forced rsync strategy: nothing to retry if the binary isn't there.
 		return err
 	}
 
-	// auto: rsync not installed — fall back to native.
-	if isNotFound(err) {
-		if opts.Verbose {
-			fmt.Println("[glut] copy strategy: native (rsync not found)")
-		}
-		return copyDir(src, dst)
-	}
-
-	// rsync ran but failed (e.g. transient WSL2 I/O error) — retry once.
+	// rsync ran but failed (e.g. transient WSL2 I/O error) — retry once,
+	// whether the strategy is auto or a forced rsync.
 	if removeErr := os.RemoveAll(dst); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 		return removeErr
 	}
@@ -522,7 +534,7 @@ func copyDir(src string, dst string) error {
 
 		if info.IsDir() {
 			base := filepath.Base(relPath)
-			if base == ".git" || strings.HasPrefix(base, tmpDirPrefix) {
+			if parser.SkipDiscoveryDir(base) {
 				return filepath.SkipDir
 			}
 			return os.MkdirAll(dstPath, info.Mode())

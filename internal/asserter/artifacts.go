@@ -7,6 +7,7 @@ import (
 	"hash"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/pandasoft-zz/glut/internal/config"
 )
@@ -101,7 +102,9 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 				if sumErr != nil {
 					results = append(results, failResult(basePath+".md5", assert.MD5, sumErr))
 				} else {
-					results = append(results, resultFromBool(basePath+".md5", assert.MD5 == sum, assert.MD5, sum))
+					// checksumFile formats with lowercase %x; a digest pasted
+					// from another tool in uppercase should still match.
+					results = append(results, resultFromBool(basePath+".md5", strings.EqualFold(assert.MD5, sum), assert.MD5, sum))
 				}
 			}
 			if _, seekErr := file.Seek(0, 0); seekErr != nil && assert.SHA256 != "" {
@@ -112,7 +115,7 @@ func runArtifactAssert(basePath string, fullPath string, assert config.ArtifactA
 				if sumErr != nil {
 					results = append(results, failResult(basePath+".sha256", assert.SHA256, sumErr))
 				} else {
-					results = append(results, resultFromBool(basePath+".sha256", assert.SHA256 == sum, assert.SHA256, sum))
+					results = append(results, resultFromBool(basePath+".sha256", strings.EqualFold(assert.SHA256, sum), assert.SHA256, sum))
 				}
 			}
 		}

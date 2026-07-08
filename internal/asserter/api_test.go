@@ -46,6 +46,32 @@ func TestRunAPIAsserts(t *testing.T) {
 	}
 }
 
+// TestRunAPIAssertsDistinguishByQueryString guards against APICall lacking a
+// Query field: without it, GET /pipelines?ref=main and ?ref=dev are
+// indistinguishable, so an assertion scoped to one query would match calls
+// for the other too.
+func TestRunAPIAssertsDistinguishByQueryString(t *testing.T) {
+	calls := []mockserver.APICall{
+		{Method: "GET", Path: "/api/v4/projects/1/pipelines", Query: "ref=main"},
+		{Method: "GET", Path: "/api/v4/projects/1/pipelines", Query: "ref=dev"},
+	}
+
+	asserts := config.AssertConfig{
+		API: map[string]config.APICallAssert{
+			"GET /api/v4/projects/*/pipelines?ref=main": {Times: 1},
+			"GET /api/v4/projects/*/pipelines?ref=dev":  {Times: 1},
+			"GET /api/v4/projects/*/pipelines":          {Times: 2},
+		},
+	}
+
+	results := Run(asserts, AssertContext{APICalls: calls})
+	for _, result := range results {
+		if !result.Passed {
+			t.Fatalf("unexpected failure: %+v", result)
+		}
+	}
+}
+
 func TestRunAPIAssertsFailWhenBodyDoesNotMatch(t *testing.T) {
 	asserts := config.AssertConfig{
 		API: map[string]config.APICallAssert{

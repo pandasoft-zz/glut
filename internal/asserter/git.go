@@ -1,6 +1,8 @@
 package asserter
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -162,8 +164,37 @@ func runBareGitFileAssert(basePath string, repoPath string, relativePath string,
 		results = append(results, resultFromBool(basePath+".exists", *assert.Exists == exists, *assert.Exists, exists))
 	}
 	if !exists {
-		if assert.Exists == nil || *assert.Exists {
-			results = append(results, failResult(basePath, "git file to exist", existsErr))
+		// Mirror runArtifactAssert's per-field handling instead of a single
+		// generic failure: when exists: true is also set, that duplicated the
+		// same "file missing" fact under both basePath and basePath+".exists".
+		// Report one failure per other field that was actually set instead.
+		expectedAbsent := assert.Exists != nil && !*assert.Exists
+		if !expectedAbsent {
+			missing := []struct {
+				set    bool
+				suffix string
+			}{
+				{assert.Report != nil, ".report"},
+				{assert.Contents != nil, ".contents"},
+				{assert.Mode != "", ".mode"},
+				{assert.Size != nil, ".size"},
+				{assert.Filetype != "", ".filetype"},
+				{assert.MD5 != "", ".md5"},
+				{assert.SHA256 != "", ".sha256"},
+			}
+			anySet := false
+			for _, check := range missing {
+				if check.set {
+					anySet = true
+					results = append(results, failResult(basePath+check.suffix, "git file to exist", existsErr))
+				}
+			}
+			// Nothing else was asserted and exists wasn't set explicitly
+			// either — still report the bare missing-file failure so the
+			// assert doesn't silently produce zero results.
+			if assert.Exists == nil && !anySet {
+				results = append(results, failResult(basePath, "git file to exist", existsErr))
+			}
 		}
 		return results
 	}
@@ -193,6 +224,53 @@ func runBareGitFileAssert(basePath string, repoPath string, relativePath string,
 				results = append(results, resultFromBool(basePath+".filetype", assert.Filetype == actualType, assert.Filetype, actualType))
 			}
 		}
+	}
+
+	if assert.Size != nil || assert.MD5 != "" || assert.SHA256 != "" || assert.Report != nil {
+		results = append(results, runBareGitBlobAsserts(basePath, repoPath, cleanPath, assert)...)
+	}
+
+	return results
+}
+
+// runBareGitBlobAsserts measures the exact bytes of a blob via `git show`,
+// which for a blob path outputs the raw content with no extra formatting —
+// the same bytes as `git cat-file -p`. Content is read once via runGitBytes
+// (unlike runGit, which trims trailing newlines and would corrupt binary
+// checksums and size measurement).
+func runBareGitBlobAsserts(basePath string, repoPath string, cleanPath string, assert config.ArtifactAssert) []AssertResult {
+	var results []AssertResult
+
+	content, err := runGitBytes("", "--git-dir", repoPath, "show", "HEAD:"+cleanPath)
+	if err != nil {
+		if assert.Size != nil {
+			results = append(results, failResult(basePath+".size", assert.Size, err))
+		}
+		if assert.MD5 != "" {
+			results = append(results, failResult(basePath+".md5", assert.MD5, err))
+		}
+		if assert.SHA256 != "" {
+			results = append(results, failResult(basePath+".sha256", assert.SHA256, err))
+		}
+		if assert.Report != nil {
+			results = append(results, failResult(basePath+".report", "readable git blob", err))
+		}
+		return results
+	}
+
+	if assert.Size != nil {
+		results = append(results, resultFromState(basePath+".size", matchValue(assert.Size, int64(len(content)))))
+	}
+	if assert.MD5 != "" {
+		sum := fmt.Sprintf("%x", md5.Sum(content))
+		results = append(results, resultFromBool(basePath+".md5", strings.EqualFold(assert.MD5, sum), assert.MD5, sum))
+	}
+	if assert.SHA256 != "" {
+		sum := fmt.Sprintf("%x", sha256.Sum256(content))
+		results = append(results, resultFromBool(basePath+".sha256", strings.EqualFold(assert.SHA256, sum), assert.SHA256, sum))
+	}
+	if assert.Report != nil {
+		results = append(results, assertReportData(basePath, content, assert.Report)...)
 	}
 	return results
 }

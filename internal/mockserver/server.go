@@ -58,7 +58,11 @@ func New(cfg config.APISetupConfig) (*Server, error) {
 	}, nil
 }
 
-func (s *Server) Start() error {
+// Start begins serving. When allInterfaces is false, the server binds to
+// loopback only — sufficient for shell-only jobs on the same host and safer
+// on a shared network. Docker jobs need allInterfaces=true so containers on
+// the bridge network can reach the host port.
+func (s *Server) Start(allInterfaces bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -66,7 +70,11 @@ func (s *Server) Start() error {
 		return nil
 	}
 
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
+	bindAddr := "127.0.0.1:0"
+	if allInterfaces {
+		bindAddr = "0.0.0.0:0"
+	}
+	listener, err := net.Listen("tcp", bindAddr)
 	if err != nil {
 		return fmt.Errorf("server start: listen on local port: %w", err)
 	}
@@ -94,11 +102,19 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// Stop shuts down the server. If the serve goroutine had already exited with
+// a fatal error (e.g. the listener failed unexpectedly mid-run), that error
+// is returned here so a caller sees why job requests were getting
+// connection-refused instead of only the (successful) shutdown outcome.
 func (s *Server) Stop() error {
 	s.mu.Lock()
 	if !s.started || s.stopped || s.http == nil {
 		s.stopped = true
+		serveErr := s.serveErr
 		s.mu.Unlock()
+		if serveErr != nil {
+			return fmt.Errorf("server serve: %w", serveErr)
+		}
 		return nil
 	}
 	server := s.http
@@ -109,6 +125,13 @@ func (s *Server) Stop() error {
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		return fmt.Errorf("server shutdown: %w", err)
+	}
+
+	s.mu.Lock()
+	serveErr := s.serveErr
+	s.mu.Unlock()
+	if serveErr != nil {
+		return fmt.Errorf("server serve: %w", serveErr)
 	}
 	return nil
 }
@@ -140,15 +163,30 @@ func (s *Server) SetGitRepo(path string) {
 	s.gitRepoPath = path
 }
 
+// maxRecordedBodyBytes bounds how much of a single API request body the
+// recorder will buffer and retain for the lifetime of the test run.
+const maxRecordedBodyBytes = 10 << 20 // 10 MiB
+
 func (s *Server) record(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-		body, err := io.ReadAll(r.Body)
+
+		// Git smart HTTP is not an API call — its body can be a multi-hundred
+		// MB packfile that would otherwise be buffered fully in memory here
+		// and retained by the recorder for the whole run. Serve it directly
+		// without recording or reading the body through this wrapper.
+		if isGitHTTPPath(r.URL.EscapedPath()) {
+			next(w, r)
+			return
+		}
+
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRecordedBodyBytes))
 		if err != nil {
 			writeJSON(rec, http.StatusBadRequest, map[string]any{"message": "request parse failed"})
 			s.recorder.Record(APICall{
 				Method:     r.Method,
 				Path:       r.URL.EscapedPath(),
+				Query:      r.URL.RawQuery,
 				StatusCode: rec.statusCode,
 				Timestamp:  time.Now(),
 			})
@@ -161,10 +199,29 @@ func (s *Server) record(next http.HandlerFunc) http.HandlerFunc {
 		s.recorder.Record(APICall{
 			Method:      r.Method,
 			Path:        r.URL.EscapedPath(),
+			Query:       r.URL.RawQuery,
 			RequestBody: body,
 			StatusCode:  rec.statusCode,
 			Timestamp:   time.Now(),
 		})
+	}
+}
+
+// isGitHTTPPath reports whether path is a git smart HTTP endpoint, regardless
+// of whether a git repo is currently configured to serve it. It matches the
+// exact service suffixes used by serveGitHTTP rather than any path containing
+// ".git/", so a real API path that happened to embed ".git/" is still
+// recorded normally.
+func isGitHTTPPath(path string) bool {
+	idx := strings.Index(path, ".git/")
+	if idx == -1 {
+		return false
+	}
+	switch path[idx+len(".git"):] {
+	case "/info/refs", "/git-upload-pack", "/git-receive-pack":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -204,12 +261,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v4/users/") {
-		s.handleUserByID(w)
+		s.handleUserByID(w, strings.TrimPrefix(path, "/api/v4/users/"))
 		return
 	}
 
 	if r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v4/groups/") {
-		s.handleGroup(w)
+		s.handleGroup(w, strings.TrimPrefix(path, "/api/v4/groups/"))
 		return
 	}
 
@@ -247,8 +304,16 @@ func (s *Server) handleCurrentUser(w http.ResponseWriter) {
 	})
 }
 
-func (s *Server) handleUserByID(w http.ResponseWriter) {
+// handleUserByID serves GET /api/v4/users/:id. rest is the path after
+// "/api/v4/users/". Any sub-path (e.g. "1/keys") is not implemented and 404s,
+// and an :id that does not match the configured user 404s too — GLUT only
+// ever configures one user, so any other id does not exist in the mock.
+func (s *Server) handleUserByID(w http.ResponseWriter, rest string) {
 	u := s.userConfig()
+	if rest != strconv.Itoa(u.ID) {
+		writeNotFound(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":         u.ID,
 		"name":       u.Name,
@@ -260,8 +325,17 @@ func (s *Server) handleUserByID(w http.ResponseWriter) {
 	})
 }
 
-func (s *Server) handleGroup(w http.ResponseWriter) {
+// handleGroup serves GET /api/v4/groups/:id. rest is the path after
+// "/api/v4/groups/". Any sub-path (e.g. "1/projects", which real GitLab
+// answers with an array) is not implemented and 404s, and an :id that does
+// not match the configured group 404s too — GLUT only ever configures one
+// group, so any other id does not exist in the mock.
+func (s *Server) handleGroup(w http.ResponseWriter, rest string) {
 	g := s.groupConfig()
+	if rest != strconv.Itoa(g.ID) {
+		writeNotFound(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":         g.ID,
 		"name":       g.Name,
@@ -336,11 +410,14 @@ func (s *Server) projectAccessLevel() int {
 	return int(config.AccessLevelMaintainer)
 }
 
-// addNote stores a note for the given resource (e.g. "merge_requests") and ID.
+// addNote stores a note for the given resource (e.g. "merge_requests") and
+// ID, assigning note["id"] under the lock so two concurrent posts to the
+// same resource cannot compute the same id from a stale RLock snapshot.
 func (s *Server) addNote(resource, id string, note map[string]any) {
 	s.notesMu.Lock()
 	defer s.notesMu.Unlock()
 	key := resource + "/" + id
+	note["id"] = len(s.notes[key]) + 1
 	s.notes[key] = append(s.notes[key], note)
 }
 
@@ -355,10 +432,13 @@ func (s *Server) listNotes(resource, id string) []map[string]any {
 	return result
 }
 
-// addCommitStatus stores a commit build status for the given SHA.
+// addCommitStatus stores a commit build status for the given SHA, assigning
+// status["id"] under the lock so two concurrent posts for the same SHA
+// cannot compute the same id from a stale RLock snapshot.
 func (s *Server) addCommitStatus(sha string, status map[string]any) {
 	s.statusesMu.Lock()
 	defer s.statusesMu.Unlock()
+	status["id"] = len(s.commitStatuses[sha]) + 1
 	s.commitStatuses[sha] = append(s.commitStatuses[sha], status)
 }
 
@@ -449,9 +529,7 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 		}
 		sha := strings.TrimPrefix(rest, "/statuses/")
 		state, _ := body["state"].(string)
-		existing := s.listCommitStatuses(sha)
 		status := map[string]any{
-			"id":          len(existing) + 1,
 			"sha":         sha,
 			"state":       state,
 			"name":        body["name"],
@@ -513,9 +591,7 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 			return true
 		}
 		iid := pathSegment(rest, 1)
-		existing := s.listNotes("merge_requests", iid)
 		note := map[string]any{
-			"id":   len(existing) + 1,
 			"body": body["body"],
 		}
 		s.addNote("merge_requests", iid, note)
@@ -589,9 +665,7 @@ func (s *Server) handleDedicatedProjectEndpoint(w http.ResponseWriter, r *http.R
 			return true
 		}
 		iid := pathSegment(rest, 1)
-		existing := s.listNotes("issues", iid)
 		note := map[string]any{
-			"id":   len(existing) + 1,
 			"body": body["body"],
 		}
 		s.addNote("issues", iid, note)

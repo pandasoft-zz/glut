@@ -69,7 +69,7 @@ make release        # build a snapshot release with goreleaser
 Docs are built with MkDocs:
 
 ```bash
-pip install mkdocs mkdocs-readthedocs
+pip install mkdocs mkdocs-mermaid2-plugin
 mkdocs serve        # preview at http://localhost:8000
 ```
 

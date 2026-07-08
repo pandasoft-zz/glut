@@ -51,11 +51,11 @@ func TestWorkspaceHelpers(t *testing.T) {
 	t.Run("getDefaultBranchFromRepo reads origin/HEAD", func(t *testing.T) {
 		repo := initGitRepo(t)
 		mustRunGitWorkspace(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-		if branch := getDefaultBranchFromRepo(repo); branch != "main" {
+		if branch := getDefaultBranchFromRepo(repo, nil); branch != "main" {
 			t.Fatalf("getDefaultBranchFromRepo(origin HEAD) = %q", branch)
 		}
 
-		if branch := getDefaultBranchFromRepo(t.TempDir()); branch != "" {
+		if branch := getDefaultBranchFromRepo(t.TempDir(), nil); branch != "" {
 			t.Fatalf("getDefaultBranchFromRepo(no origin) = %q, want empty", branch)
 		}
 	})
@@ -251,7 +251,7 @@ func TestResolveDefaultBranch(t *testing.T) {
 		got := resolveDefaultBranch(parser.SetupConfig{
 			DefaultBranch: "release",
 			API:           &parser.APISetupConfig{Project: &parser.ProjectConfig{DefaultBranch: "master"}},
-		}, t.TempDir())
+		}, t.TempDir(), nil)
 		if got != "release" {
 			t.Fatalf("got %q, want release", got)
 		}
@@ -260,7 +260,7 @@ func TestResolveDefaultBranch(t *testing.T) {
 	t.Run("api.project.default_branch used when setup.default_branch absent", func(t *testing.T) {
 		got := resolveDefaultBranch(parser.SetupConfig{
 			API: &parser.APISetupConfig{Project: &parser.ProjectConfig{DefaultBranch: "master"}},
-		}, t.TempDir())
+		}, t.TempDir(), nil)
 		if got != "master" {
 			t.Fatalf("got %q, want master", got)
 		}
@@ -275,22 +275,44 @@ func TestResolveDefaultBranch(t *testing.T) {
 		// Set refs/remotes/origin/HEAD in the source repo itself (not the bare remote).
 		mustRunGitWorkspace(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 
-		if got := getDefaultBranchFromRepo(repo); got != "main" {
+		if got := getDefaultBranchFromRepo(repo, nil); got != "main" {
 			t.Fatalf("getDefaultBranchFromRepo = %q, want main", got)
 		}
 
-		got := resolveDefaultBranch(parser.SetupConfig{}, repo)
+		got := resolveDefaultBranch(parser.SetupConfig{}, repo, nil)
 		if got != "main" {
 			t.Fatalf("resolveDefaultBranch via srcDir = %q, want main", got)
 		}
 	})
 
 	t.Run("fallback to main when no origin configured", func(t *testing.T) {
-		got := resolveDefaultBranch(parser.SetupConfig{}, t.TempDir())
+		got := resolveDefaultBranch(parser.SetupConfig{}, t.TempDir(), nil)
 		if got != config.DefaultBranchName {
 			t.Fatalf("got %q, want %q", got, config.DefaultBranchName)
 		}
 	})
+}
+
+// TestGetDefaultBranchFromRepoUsesHostEnv guards against getDefaultBranchFromRepo
+// resolving "git" from the real process PATH/env instead of a caller-supplied
+// hostEnv, like every other git call in this file does via resolveExecutable.
+// With a custom PATH, this used to silently resolve a different git (or
+// fall back to "main" if none was found) than the one gitlab-ci-local uses.
+func TestGetDefaultBranchFromRepoUsesHostEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git script targets POSIX sh")
+	}
+	binDir := t.TempDir()
+	fakeGit := "#!/bin/sh\necho refs/remotes/origin/from-hostenv\n"
+	if err := os.WriteFile(filepath.Join(binDir, "git"), []byte(fakeGit), 0755); err != nil {
+		t.Fatal(err)
+	}
+	hostEnv := []string{"PATH=" + binDir}
+
+	got := getDefaultBranchFromRepo(t.TempDir(), hostEnv)
+	if got != "from-hostenv" {
+		t.Fatalf("getDefaultBranchFromRepo(hostEnv) = %q, want %q (the hostEnv's git, not the real PATH's)", got, "from-hostenv")
+	}
 }
 
 func TestWorkspaceEnvHelperBranches(t *testing.T) {
@@ -897,6 +919,10 @@ func TestNewCIVariables(t *testing.T) {
 			"CI_MERGE_REQUEST_SOURCE_PROJECT_ID":   "1",
 			"CI_MERGE_REQUEST_SOURCE_PROJECT_PATH": "myorg/myapp",
 			"CI_MERGE_REQUEST_SOURCE_PROJECT_URL":  "http://127.0.0.1:8080/myorg/myapp",
+			// Real GitLab sets CI_COMMIT_BEFORE_SHA (zero SHA) in MR pipelines
+			// too; applyBranchOrTagEnv (which normally sets it) is skipped
+			// entirely for MR pipelines, so this must be set here instead.
+			"CI_COMMIT_BEFORE_SHA": "0000000000000000000000000000000000000000",
 		}
 		for k, want := range cases {
 			if env[k] != want {

@@ -22,10 +22,13 @@ const (
 )
 
 // Wait blocks until the Docker daemon is reachable or the timeout expires.
-// Progress is written to w; display adapts to whether w is a TTY.
+// Progress is written to w; display adapts to whether w is a TTY. hostEnv
+// resolves DOCKER_HOST the same way gitlab-ci-local sees it (nil falls back
+// to the process environment); without this, a caller with a custom
+// DOCKER_HOST would wait on the wrong daemon.
 // Returns nil immediately if the daemon is already reachable.
-func Wait(ctx context.Context, w io.Writer, timeout time.Duration) error {
-	endpoint := Endpoint()
+func Wait(ctx context.Context, w io.Writer, timeout time.Duration, hostEnv []string) error {
+	endpoint := Endpoint(hostEnv)
 
 	if dial(endpoint) == nil {
 		return nil
@@ -78,12 +81,31 @@ func Wait(ctx context.Context, w io.Writer, timeout time.Duration) error {
 	}
 }
 
-// Endpoint returns the Docker daemon address from DOCKER_HOST or the default socket path.
-func Endpoint() string {
-	if h := os.Getenv("DOCKER_HOST"); h != "" {
+// Endpoint returns the Docker daemon address from DOCKER_HOST or the default
+// socket path. hostEnv resolves DOCKER_HOST from that environment instead of
+// the process environment; nil falls back to the process environment.
+func Endpoint(hostEnv []string) string {
+	if h := lookupEnv(hostEnv, "DOCKER_HOST"); h != "" {
 		return h
 	}
 	return "unix:///var/run/docker.sock"
+}
+
+// lookupEnv returns the value of key from env (in "KEY=VALUE" form), or from
+// the process environment when env is nil — the "nil falls back to
+// os.Environ()" convention used throughout GLUT for a caller-supplied host
+// environment.
+func lookupEnv(env []string, key string) string {
+	if env == nil {
+		return os.Getenv(key)
+	}
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return kv[len(prefix):]
+		}
+	}
+	return ""
 }
 
 func dial(endpoint string) error {
@@ -149,12 +171,14 @@ const (
 // Outside a container with a local daemon (native Linux host): the daemon and
 // GLUT share the same filesystem, so a plain bind mount works and avoids all
 // volume overhead.
-func ResolveVolumeStrategy(strategy string) string {
+// hostEnv resolves DOCKER_HOST from that environment instead of the process
+// environment; nil falls back to the process environment.
+func ResolveVolumeStrategy(strategy string, hostEnv []string) string {
 	if strategy != VolumeStrategyAuto && strategy != "" {
 		return strategy
 	}
 	_, dockerenvErr := os.Stat("/.dockerenv")
-	return resolveAutoVolumeStrategy(os.Getenv("DOCKER_HOST"), dockerenvErr == nil)
+	return resolveAutoVolumeStrategy(lookupEnv(hostEnv, "DOCKER_HOST"), dockerenvErr == nil)
 }
 
 // resolveAutoVolumeStrategy is the pure decision logic behind the "auto"
@@ -184,17 +208,36 @@ func isRemoteDockerHost(dockerHost string) bool {
 // failures in earlier versions. Removing them before the first Docker test
 // reduces the daemon's background cleanup backlog.
 //
+// dangling=true excludes volumes still attached to a running container. This
+// narrows, but does not fully close, the race with a concurrently running glut
+// process: that process's volume is still dangling in the window between its
+// populate container exiting and its job container starting, so an unlucky
+// prune here could remove it. The name= filter is a Docker substring match,
+// not a prefix match, so a user volume like "my-glut-data" would otherwise
+// also be listed; HasPrefix re-checks the exact prefix client-side before any
+// volume is removed.
+//
 // Errors are intentionally ignored: pruning is best-effort and the suite
-// must not fail because of it.
-func PruneOrphanedVolumes() {
+// must not fail because of it. hostEnv is set on the docker CLI's
+// environment (nil inherits the process environment, matching exec.Cmd's own
+// convention) so a custom DOCKER_HOST talks to the same daemon gitlab-ci-local
+// uses instead of whatever daemon the actual process environment points at.
+func PruneOrphanedVolumes(hostEnv []string) {
 	for _, prefix := range []string{"glut-", "gcl-"} {
-		out, err := exec.Command("docker", "volume", "ls",
-			"-q", "--filter", "name="+prefix).Output()
+		lsCmd := exec.Command("docker", "volume", "ls",
+			"-q", "--filter", "dangling=true", "--filter", "name="+prefix)
+		lsCmd.Env = hostEnv
+		out, err := lsCmd.Output()
 		if err != nil {
 			continue
 		}
-		for _, id := range strings.Fields(string(out)) {
-			_ = exec.Command("docker", "volume", "rm", id).Run()
+		for _, name := range strings.Fields(string(out)) {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			rmCmd := exec.Command("docker", "volume", "rm", name)
+			rmCmd.Env = hostEnv
+			_ = rmCmd.Run()
 		}
 	}
 }

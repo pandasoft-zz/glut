@@ -98,7 +98,7 @@ release:
         exit-status: 0
 `)
 
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -138,7 +138,7 @@ job:
       job:
         exit-status: 0
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -180,7 +180,7 @@ release:
       workspace:
         branch: main
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -213,7 +213,7 @@ job_c:
       job_c:
         stdout: "c"
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -225,6 +225,71 @@ job_c:
 	}
 	if !found {
 		t.Fatalf("expected mostly-exit-status hint, hints = %#v", report.Files[0].Hints)
+	}
+}
+
+// TestDoctorHintMostlyExitStatusCountsEmptyAssertsAsWeak verifies that
+// `jobname: {}` — weaker than an exit-status check, since it asserts nothing
+// at all — still counts toward the weak-assert ratio instead of being
+// treated as a rich assert.
+func TestDoctorHintMostlyExitStatusCountsEmptyAssertsAsWeak(t *testing.T) {
+	path := writeTempTest(t, `
+job_a:
+  script: echo a
+job_b:
+  script: echo b
+---
+.glut:
+  name: "empty-job-assert"
+  assert:
+    job:
+      job_a: {}
+      job_b:
+        exit-status: 0
+`)
+	report := buildDoctorReportFiltered([]string{path}, "")
+	if len(report.Files) != 1 {
+		t.Fatalf("files len = %d", len(report.Files))
+	}
+	var found bool
+	for _, hint := range report.Files[0].Hints {
+		if hint.Path == ".glut.assert" && strings.Contains(hint.Message, "exit status") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected mostly-exit-status hint when a job assert is entirely empty, hints = %#v", report.Files[0].Hints)
+	}
+}
+
+// TestDoctorHintOutputAssertCountsAsRich verifies that a job asserting on
+// `output` (combined stdout+stderr) is not misclassified as exit-status-only.
+func TestDoctorHintOutputAssertCountsAsRich(t *testing.T) {
+	path := writeTempTest(t, `
+job_a:
+  script: echo a
+job_b:
+  script: echo b
+---
+.glut:
+  name: "output-assert"
+  assert:
+    job:
+      job_a:
+        exit-status: 0
+        output: "a"
+      job_b:
+        exit-status: 0
+        output: "b"
+`)
+	report := buildDoctorReportFiltered([]string{path}, "")
+	if len(report.Files) != 1 {
+		t.Fatalf("files len = %d", len(report.Files))
+	}
+	for _, hint := range report.Files[0].Hints {
+		if hint.Path == ".glut.assert" && strings.Contains(hint.Message, "exit status") {
+			t.Fatalf("unexpected exit-status hint when all jobs also assert on output: %#v", report.Files[0].Hints)
+		}
 	}
 }
 
@@ -246,7 +311,7 @@ job_b:
       job_b:
         stdout: "b"
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -266,7 +331,7 @@ job:
 .glut:
   name: "empty"
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -300,7 +365,7 @@ job:
       job:
         exit-status: 0
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -332,7 +397,7 @@ job:
       job:
         exit-status: 0
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -362,7 +427,7 @@ job:
       project_id: 456
       job_id: 789
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -399,7 +464,7 @@ unit:
       build:
         exit-status: 0
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	if len(report.Files) != 1 {
 		t.Fatalf("files len = %d", len(report.Files))
 	}
@@ -429,7 +494,7 @@ build:
       build:
         exit-status: 0
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	var out bytes.Buffer
 	if err := printDoctorReport(&out, &bytes.Buffer{}, report, "text"); err != nil {
 		t.Fatal(err)
@@ -447,7 +512,7 @@ func TestDoctorParseErrorsGoToStderr(t *testing.T) {
 	if err := os.WriteFile(path, []byte(": invalid: yaml: {\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	var stdout, stderr bytes.Buffer
 	if err := printDoctorReport(&stdout, &stderr, report, "text"); err != nil {
 		t.Fatal(err)
@@ -566,6 +631,18 @@ func TestLintPathCoverage(t *testing.T) {
 		{"assert.job references missing job", ".glut.assert.job"},
 		{"setup.pipeline_source invalid", ".glut.setup"},
 		{"some other message", ""},
+		{
+			`.glut.assert.job.release: "when" cannot be combined with "present: false" (an absent job has no when value)`,
+			".glut.assert.job.release",
+		},
+		{
+			`.glut.assert.job.deploy:prod: "when" cannot be combined with "present: false" (an absent job has no when value)`,
+			".glut.assert.job.deploy:prod",
+		},
+		{
+			".glut.assert.job.deploy:prod references a job that is not defined in the pipeline",
+			".glut.assert.job.deploy:prod",
+		},
 	}
 	for _, tt := range tests {
 		got := lintPath(tt.msg)
@@ -605,7 +682,7 @@ job:
       job:
         exit-status: 0
 `)
-	report := buildDoctorReport([]string{path})
+	report := buildDoctorReportFiltered([]string{path}, "")
 	var hasMRHint bool
 	for _, hint := range report.Files[0].Hints {
 		if hint.Path == ".glut.assert.api" && strings.Contains(hint.Message, "merge request") {
@@ -633,6 +710,76 @@ func TestBuildLintReportWithParseError(t *testing.T) {
 	}
 	if !hasParseError {
 		t.Fatal("expected parse error in lint report")
+	}
+}
+
+// TestDoctorCoverageHandlesJobNamesContainingColons guards against
+// extractPipelineJobNames cutting at the first colon: "build:image" must not
+// be truncated to "build", which would corrupt coverage totals and make an
+// assert.job entry for the real name look unmatched.
+func TestDoctorCoverageHandlesJobNamesContainingColons(t *testing.T) {
+	path := writeTempTest(t, `
+stages: [build]
+
+build:image:
+  stage: build
+  script: docker build .
+---
+.glut:
+  name: "colon job name"
+  assert:
+    job:
+      build:image:
+        exit-status: 0
+`)
+	report := buildDoctorReportFiltered([]string{path}, "")
+	if len(report.Files) != 1 {
+		t.Fatalf("files len = %d", len(report.Files))
+	}
+	cov := report.Files[0].Coverage
+	if cov == nil {
+		t.Fatal("expected coverage, got nil")
+	}
+	if cov.JobsTotal != 1 {
+		t.Fatalf("JobsTotal = %d, want 1 (job name truncated at the colon)", cov.JobsTotal)
+	}
+	if cov.JobsAsserted != 1 {
+		t.Fatalf("JobsAsserted = %d, want 1", cov.JobsAsserted)
+	}
+}
+
+// TestDoctorCoverageNotInflatedByTypoedAssertName guards against unioning
+// assert.job names into the pipeline job set: a typo'd assert name must not
+// count as an extra pipeline job, which previously inflated both the
+// numerator and denominator of the coverage ratio.
+func TestDoctorCoverageNotInflatedByTypoedAssertName(t *testing.T) {
+	path := writeTempTest(t, `
+stages: [test]
+
+build:
+  stage: test
+  script: make
+---
+.glut:
+  name: "typo'd assert name"
+  assert:
+    job:
+      biuld:
+        exit-status: 0
+`)
+	report := buildDoctorReportFiltered([]string{path}, "")
+	if len(report.Files) != 1 {
+		t.Fatalf("files len = %d", len(report.Files))
+	}
+	cov := report.Files[0].Coverage
+	if cov == nil {
+		t.Fatal("expected coverage, got nil")
+	}
+	if cov.JobsTotal != 1 {
+		t.Fatalf("JobsTotal = %d, want 1 (only the real pipeline job)", cov.JobsTotal)
+	}
+	if cov.JobsAsserted != 0 {
+		t.Fatalf("JobsAsserted = %d, want 0 (the typo'd assert name does not match the real job)", cov.JobsAsserted)
 	}
 }
 

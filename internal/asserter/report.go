@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -16,14 +17,21 @@ func assertReport(basePath, fullPath string, a *config.ReportAssert) []AssertRes
 	if a == nil {
 		return nil
 	}
-	// Surface fields that do not apply to the chosen format instead of silently
-	// ignoring them (which would let a misconfigured assertion pass vacuously).
-	fieldErrs := reportFieldErrors(basePath+".report", a)
 
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
-		return append(fieldErrs, failResult(basePath+".report", "read file", err))
+		return append(reportFieldErrors(basePath+".report", a), failResult(basePath+".report", "read file", err))
 	}
+	return assertReportData(basePath, data, a)
+}
+
+func assertReportData(basePath string, data []byte, a *config.ReportAssert) []AssertResult {
+	if a == nil {
+		return nil
+	}
+	// Surface fields that do not apply to the chosen format instead of silently
+	// ignoring them (which would let a misconfigured assertion pass vacuously).
+	fieldErrs := reportFieldErrors(basePath+".report", a)
 
 	// A dotenv assertion with no keys passes vacuously against ANY readable file
 	// (parseDotenv never fails), so require at least one key. The XML/JSON formats
@@ -55,6 +63,8 @@ func assertReport(basePath, fullPath string, a *config.ReportAssert) []AssertRes
 
 // reportAllowedFields maps each known report format to the assertion fields it
 // supports; reportFieldErrors uses it to reject fields set for the wrong format.
+// Read-only lookup table — never mutate it or any of its inner maps; all
+// access is concurrent reads across goroutines evaluating asserts in parallel.
 var reportAllowedFields = map[string]map[string]bool{
 	"junit":           {"tests": true, "failures": true, "errors": true, "skipped": true, "suites": true},
 	"coverage":        {"line-rate": true, "branch-rate": true},
@@ -162,7 +172,20 @@ type suiteCounts struct {
 // a flat list of every suite node (at any nesting depth) for per-suite lookups.
 func parseJUnit(data []byte) (suiteCounts, []suiteCounts, error) {
 	var doc junitTestSuites
-	_ = xml.Unmarshal(data, &doc)
+	err := xml.Unmarshal(data, &doc)
+	if err != nil {
+		// xml.UnmarshalError here means only that the root element is
+		// <testsuite> instead of <testsuites> — a valid, single-suite JUnit
+		// document — so fall through to the single-suite parse below. Any
+		// other error (e.g. *xml.SyntaxError from truncated/corrupt XML)
+		// must fail loudly instead of silently computing counts from a
+		// partially-populated, invalid document.
+		var xmlErr xml.UnmarshalError
+		if !errors.As(err, &xmlErr) {
+			return suiteCounts{}, nil, fmt.Errorf("parse JUnit XML: %w", err)
+		}
+	}
+
 	roots := doc.Suites
 	if len(roots) == 0 {
 		var single junitTestSuite
@@ -270,9 +293,10 @@ func assertJUnit(basePath string, data []byte, a *config.ReportAssert) []AssertR
 
 // ─── dotenv ──────────────────────────────────────────────────────────────────
 
-func parseDotenv(data []byte) map[string]string {
+func parseDotenv(data []byte) (map[string]string, error) {
 	result := make(map[string]string)
 	sc := bufio.NewScanner(strings.NewReader(string(data)))
+	sc.Buffer(make([]byte, 0, 64*1024), maxScanLineSize)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -291,11 +315,17 @@ func parseDotenv(data []byte) map[string]string {
 		}
 		result[key] = val
 	}
-	return result
+	if err := sc.Err(); err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func assertDotenv(basePath string, data []byte, a *config.ReportAssert) []AssertResult {
-	parsed := parseDotenv(data)
+	parsed, err := parseDotenv(data)
+	if err != nil {
+		return []AssertResult{failResult(basePath, "valid dotenv report", err)}
+	}
 	var results []AssertResult
 	for _, key := range keysSorted(a.Keys) {
 		expected := a.Keys[key]

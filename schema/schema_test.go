@@ -260,6 +260,28 @@ func TestValidateGlutRejectsInvalidEnumValues(t *testing.T) {
 	}
 }
 
+func TestValidateGlutAcceptsMixedCaseAccessLevel(t *testing.T) {
+	// internal/config.AccessLevelValue.UnmarshalYAML lowercases before
+	// matching, so `run` accepts "Maintainer"; the schema must not reject
+	// what `run` would otherwise accept.
+	errs, err := ValidateGlut(map[string]any{
+		"name": "mixed case access level",
+		"setup": map[string]any{
+			"api": map[string]any{
+				"project": map[string]any{
+					"access_level": "Maintainer",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Fatalf("expected no schema errors for mixed-case access_level, got %v", errs)
+	}
+}
+
 func TestValidateGlutUsesEmbeddedSchemaAtRuntime(t *testing.T) {
 	oldDir, err := os.Getwd()
 	if err != nil {

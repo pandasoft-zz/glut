@@ -49,7 +49,8 @@ func (r *tapReport) WriteFile(path string) error {
 			status = "not ok"
 		}
 
-		fmt.Fprintf(&builder, "%s %d - %s: %s\n", status, index+1, testResult.FilePath, testDisplayName(testResult))
+		description := tapEscapeDescription(fmt.Sprintf("%s: %s", testResult.FilePath, testDisplayName(testResult)))
+		fmt.Fprintf(&builder, "%s %d - %s\n", status, index+1, description)
 		if testResult.Passed {
 			continue
 		}
@@ -58,9 +59,8 @@ func (r *tapReport) WriteFile(path string) error {
 		if message == "" {
 			message = "test failed"
 		}
-		message = strings.ReplaceAll(message, "\n", " ")
 		builder.WriteString("  ---\n")
-		fmt.Fprintf(&builder, "  message: %s\n", message)
+		fmt.Fprintf(&builder, "  message: %s\n", yamlQuoteString(message))
 		builder.WriteString("  ...\n")
 	}
 
@@ -68,4 +68,48 @@ func (r *tapReport) WriteFile(path string) error {
 		return fmt.Errorf("write TAP report %s: %w", path, err)
 	}
 	return nil
+}
+
+// tapEscapeDescription makes a string safe to place after "ok N - " on a TAP
+// line: an unescaped "#" would start a directive (e.g. "# SKIP ..."), and a
+// raw newline or carriage return would break the single-line TAP format.
+func tapEscapeDescription(description string) string {
+	description = strings.ReplaceAll(description, "#", "\\#")
+	description = strings.ReplaceAll(description, "\r\n", " ")
+	description = strings.ReplaceAll(description, "\n", " ")
+	description = strings.ReplaceAll(description, "\r", " ")
+	return description
+}
+
+// yamlQuoteString renders s as a double-quoted YAML scalar, so a failure
+// message containing ": ", quotes, or a control character still produces valid
+// YAML inside the TAP "---"/"..." diagnostic block. Raw job output routinely
+// contains control characters (e.g. ANSI escape 0x1B); any C0 control or DEL
+// that is not \n/\r/\t is emitted as a \xNN escape, which strict YAML parsers
+// accept where a literal control byte would be rejected.
+func yamlQuoteString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\x%02X`, r)
+				continue
+			}
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }

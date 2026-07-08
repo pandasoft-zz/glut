@@ -18,4 +18,11 @@ const (
 
 	EnvMockLogDir  = "GLUT_MOCK_LOG_DIR"
 	EnvMockBinReal = "GLUT_MOCK_BIN_REAL"
+
+	// TestedGCLVersion is the gitlab-ci-local version GLUT is developed and
+	// CI-tested against. Job results are recovered from gitlab-ci-local's
+	// human-oriented output (it has no machine-readable run result as of this
+	// version), so a different version may change the wording and break
+	// parsing. Keep in sync with GCL_VERSION in the Dockerfile.
+	TestedGCLVersion = "4.72.0"
 )

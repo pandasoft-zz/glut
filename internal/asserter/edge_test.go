@@ -73,11 +73,14 @@ func TestMatcherFailureBranches(t *testing.T) {
 }
 
 func TestAPIHelpersAndBodyFailures(t *testing.T) {
-	if method, path := splitEndpointPattern("GET /x"); method != "GET" || path != "/x" {
-		t.Fatalf("splitEndpointPattern() = %q %q", method, path)
+	if method, path, query := splitEndpointPattern("GET /x"); method != "GET" || path != "/x" || query != "" {
+		t.Fatalf("splitEndpointPattern() = %q %q %q", method, path, query)
 	}
-	if method, path := splitEndpointPattern("BROKEN"); method != "BROKEN" || path != "" {
-		t.Fatalf("splitEndpointPattern no path = %q %q", method, path)
+	if method, path, query := splitEndpointPattern("BROKEN"); method != "BROKEN" || path != "" || query != "" {
+		t.Fatalf("splitEndpointPattern no path = %q %q %q", method, path, query)
+	}
+	if method, path, query := splitEndpointPattern("GET /pipelines?ref=main"); method != "GET" || path != "/pipelines" || query != "ref=main" {
+		t.Fatalf("splitEndpointPattern with query = %q %q %q", method, path, query)
 	}
 	if pathMatches("/a/*/c", "/a/b") {
 		t.Fatal("path length mismatch should fail")
@@ -87,6 +90,22 @@ func TestAPIHelpersAndBodyFailures(t *testing.T) {
 	}
 	if apiBodyMatches([]byte("{bad json"), map[string]any{"name": "x"}) {
 		t.Fatal("invalid JSON body should fail")
+	}
+
+	// TestApiBodyMatchesGjsonOnlyOnArrayBody guards against a JSON array body
+	// (or any other non-object top level) always failing a gjson-only assert:
+	// apiBodyMatches used to unconditionally unmarshal the body into a map
+	// before checking any keys, so a pure `gjson:` query — which reads the
+	// raw body bytes directly and has no need for an object body — could
+	// never match an array body.
+	arrayBody := []byte(`[{"name":"linux-amd64"},{"name":"windows-amd64"}]`)
+	if !apiBodyMatches(arrayBody, map[string]any{
+		"gjson": map[string]any{"#": map[string]any{"ge": 2}},
+	}) {
+		t.Fatal("gjson-only assert should match an array body")
+	}
+	if apiBodyMatches(arrayBody, map[string]any{"name": "linux-amd64"}) {
+		t.Fatal("non-gjson key assert should still fail on a non-object body")
 	}
 
 	results := runAPIBodyAssert("assert.api.\"GET /x\".body", nil, map[string]any{"name": "x"})

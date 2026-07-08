@@ -2,7 +2,11 @@ package mockserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pandasoft-zz/glut/internal/config"
@@ -89,6 +93,32 @@ func TestUserByIDEndpoint(t *testing.T) {
 	}
 }
 
+// TestUserByIDEndpointRejectsMismatchedIDAndSubPaths guards against the mock
+// returning the configured user for ANY /users/:id, regardless of the
+// requested id, and answering sub-paths like /users/1/keys with the plain
+// user object instead of 404.
+func TestUserByIDEndpointRejectsMismatchedIDAndSubPaths(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{
+		User: &config.UserConfig{ID: 7, Name: "Bob", Login: "bob", Email: "bob@example.com"},
+	})
+
+	t.Run("mismatched id 404s", func(t *testing.T) {
+		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/users/999"), "token", nil)
+		defer closeBody(t, resp.Body)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("sub-path 404s instead of returning the user object", func(t *testing.T) {
+		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/users/7/keys"), "token", nil)
+		defer closeBody(t, resp.Body)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+}
+
 // --- /api/v4/groups/:id ---
 
 func TestGroupEndpoint(t *testing.T) {
@@ -139,6 +169,35 @@ func TestGroupEndpoint(t *testing.T) {
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d", resp.StatusCode)
+		}
+	})
+
+	// Guards against the mock returning the configured group for ANY
+	// /groups/:id, and answering sub-paths like /groups/1/projects (which
+	// real GitLab answers with an array) with the plain group object.
+	t.Run("mismatched id 404s", func(t *testing.T) {
+		server := startTestServer(t, config.APISetupConfig{
+			Group: &config.GroupConfig{ID: 99, Path: "platform/infra", Name: "Infra Team"},
+		})
+
+		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/groups/1"), "token", nil)
+		defer closeBody(t, resp.Body)
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("sub-path 404s instead of returning the group object", func(t *testing.T) {
+		server := startTestServer(t, config.APISetupConfig{
+			Group: &config.GroupConfig{ID: 99, Path: "platform/infra", Name: "Infra Team"},
+		})
+
+		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/groups/99/projects"), "token", nil)
+		defer closeBody(t, resp.Body)
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.StatusCode)
 		}
 	})
 }
@@ -195,7 +254,7 @@ func TestReadmeURLUsesDefaultBranch(t *testing.T) {
 
 	body := decodeObject(t, resp.Body)
 	readmeURL, _ := body["readme_url"].(string)
-	if !contains(readmeURL, "/trunk/") {
+	if !strings.Contains(readmeURL, "/trunk/") {
 		t.Errorf("readme_url = %q, should contain /trunk/", readmeURL)
 	}
 }
@@ -331,9 +390,10 @@ func TestMergeRequestNotesStoredAndRetrieved(t *testing.T) {
 	})
 
 	t.Run("notes are isolated per MR iid", func(t *testing.T) {
-		doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/merge_requests/9/notes"), "token", map[string]any{
+		otherResp := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/merge_requests/9/notes"), "token", map[string]any{
 			"body": "note on MR 9",
 		})
+		defer closeBody(t, otherResp.Body)
 
 		respMR5 := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/merge_requests/5/notes"), "token", nil)
 		defer closeBody(t, respMR5.Body)
@@ -482,8 +542,10 @@ func TestIssueNotesStoredAndRetrieved(t *testing.T) {
 	})
 
 	t.Run("MR and issue note stores are independent", func(t *testing.T) {
-		doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/merge_requests/1/notes"), "token", map[string]any{"body": "mr note"})
-		doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/issues/1/notes"), "token", map[string]any{"body": "issue note 2"})
+		mrPostResp := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/merge_requests/1/notes"), "token", map[string]any{"body": "mr note"})
+		defer closeBody(t, mrPostResp.Body)
+		issuePostResp := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/issues/1/notes"), "token", map[string]any{"body": "issue note 2"})
+		defer closeBody(t, issuePostResp.Body)
 
 		mrResp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/merge_requests/1/notes"), "token", nil)
 		defer closeBody(t, mrResp.Body)
@@ -730,9 +792,10 @@ func TestCommitStatusStoredAndRetrieved(t *testing.T) {
 
 	t.Run("statuses are isolated per SHA", func(t *testing.T) {
 		otherSHA := "def456"
-		doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/statuses/"+otherSHA), "token", map[string]any{
+		otherResp := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/statuses/"+otherSHA), "token", map[string]any{
 			"state": "success", "name": "ci/build",
 		})
+		defer closeBody(t, otherResp.Body)
 
 		resp := doRequest(t, http.MethodGet, serverURL(server, "/api/v4/projects/1/repository/commits/"+otherSHA+"/statuses"), "token", nil)
 		defer closeBody(t, resp.Body)
@@ -777,6 +840,108 @@ func TestJobsResourceCRUD(t *testing.T) {
 	if len(jobs) != 1 {
 		t.Errorf("expected 1 job, got %d", len(jobs))
 	}
+}
+
+// TestConcurrentNotePostsGetUniqueIDs guards against a check-then-act race:
+// POST handlers used to compute id := len(existing)+1 from an RLock
+// snapshot, then insert under a separate Lock, so two concurrent posts to
+// the same resource could compute and store the same id.
+func TestConcurrentNotePostsGetUniqueIDs(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{})
+
+	const n = 50
+	ids := make([]float64, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/merge_requests/5/notes"), "token", map[string]any{
+				"body": fmt.Sprintf("comment %d", i),
+			})
+			defer closeBody(t, resp.Body)
+			note := decodeObject(t, resp.Body)
+			ids[i] = numericField(t, note, "id")
+		}(i)
+	}
+	wg.Wait()
+	// Release pooled keep-alive connections before the server shuts down in
+	// t.Cleanup — otherwise Shutdown can spend its whole grace period
+	// waiting on connections the client would otherwise reuse.
+	http.DefaultClient.CloseIdleConnections()
+
+	seen := make(map[float64]bool, n)
+	for _, id := range ids {
+		if seen[id] {
+			t.Fatalf("duplicate note id %v across concurrent posts: %v", id, ids)
+		}
+		seen[id] = true
+	}
+}
+
+// TestUpdatePreservesNumericIdentifierType guards against Update
+// overwriting a resource's identifier with the raw URL path string: after
+// PUT .../jobs/10, the object must still have "id": 10 (a JSON number), not
+// "id": "10" (a string) — otherwise a client decoding into an int fails.
+func TestUpdatePreservesNumericIdentifierType(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{})
+
+	created := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/jobs"), "token", map[string]any{
+		"name": "build",
+	})
+	defer closeBody(t, created.Body)
+	job := decodeObject(t, created.Body)
+	id := numericField(t, job, "id")
+
+	idPath := strconv.FormatFloat(id, 'f', -1, 64)
+	updated := doRequest(t, http.MethodPut, serverURL(server, "/api/v4/projects/1/jobs/"+idPath), "token", map[string]any{
+		"status": "failed",
+	})
+	defer closeBody(t, updated.Body)
+	if updated.StatusCode != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d", updated.StatusCode)
+	}
+
+	body := decodeObject(t, updated.Body)
+	if _, ok := body["id"].(float64); !ok {
+		t.Fatalf("id = %#v, want a JSON number (not a string)", body["id"])
+	}
+	if numericField(t, body, "id") != id {
+		t.Fatalf("id = %v, want %v", body["id"], id)
+	}
+}
+
+func TestJobsGetIncrementingIDsAcrossPOSTs(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{})
+
+	first := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/jobs"), "token", map[string]any{
+		"name": "build",
+	})
+	defer closeBody(t, first.Body)
+	firstJob := decodeObject(t, first.Body)
+
+	second := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/jobs"), "token", map[string]any{
+		"name": "test",
+	})
+	defer closeBody(t, second.Body)
+	secondJob := decodeObject(t, second.Body)
+
+	firstID, secondID := numericField(t, firstJob, "id"), numericField(t, secondJob, "id")
+	if firstID == 0 || secondID == 0 {
+		t.Fatalf("expected non-zero ids, got first=%v second=%v", firstJob["id"], secondJob["id"])
+	}
+	if firstID == secondID {
+		t.Fatalf("expected distinct ids, both got %v", firstJob["id"])
+	}
+}
+
+func numericField(t *testing.T, obj map[string]any, key string) float64 {
+	t.Helper()
+	v, ok := obj[key].(float64)
+	if !ok {
+		t.Fatalf("field %q = %#v, want a number", key, obj[key])
+	}
+	return v
 }
 
 // --- Seeded pipelines and jobs ---
@@ -835,6 +1000,37 @@ func TestMergeRequestDefaultFields(t *testing.T) {
 	}
 	if body["source_branch"] != "feature/x" {
 		t.Errorf("source_branch = %v, want feature/x", body["source_branch"])
+	}
+}
+
+// TestMergeRequestAutoIncrementsIID guards against the auto-increment id/iid
+// bug: every created resource used to get iid/id 0 because Create merged
+// into a pre-seeded "iid": 0 map, which setDefaultIdentifierLocked treated
+// as "already set" (not unset) and never assigned a real value.
+func TestMergeRequestAutoIncrementsIID(t *testing.T) {
+	server := startTestServer(t, config.APISetupConfig{})
+
+	first := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/merge_requests"), "token", map[string]any{
+		"title":         "First MR",
+		"source_branch": "feature/a",
+		"target_branch": "main",
+	})
+	defer closeBody(t, first.Body)
+	firstBody := decodeObject(t, first.Body)
+
+	second := doRequest(t, http.MethodPost, serverURL(server, "/api/v4/projects/1/merge_requests"), "token", map[string]any{
+		"title":         "Second MR",
+		"source_branch": "feature/b",
+		"target_branch": "main",
+	})
+	defer closeBody(t, second.Body)
+	secondBody := decodeObject(t, second.Body)
+
+	if firstBody["iid"] == float64(0) || secondBody["iid"] == float64(0) {
+		t.Fatalf("expected non-zero iids, got first=%v second=%v", firstBody["iid"], secondBody["iid"])
+	}
+	if firstBody["iid"] == secondBody["iid"] {
+		t.Fatalf("expected distinct iids across two POSTs, both got %v", firstBody["iid"])
 	}
 }
 
@@ -901,17 +1097,4 @@ func TestPathSegmentHelper(t *testing.T) {
 			t.Errorf("pathSegment(%q, %d) = %q, want %q", c.rest, c.n, got, c.want)
 		}
 	}
-}
-
-// contains is a simple substring helper for tests.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		func() bool {
-			for i := 0; i <= len(s)-len(substr); i++ {
-				if s[i:i+len(substr)] == substr {
-					return true
-				}
-			}
-			return false
-		}())
 }

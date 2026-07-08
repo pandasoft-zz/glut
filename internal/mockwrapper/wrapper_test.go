@@ -75,6 +75,35 @@ func TestShouldRunAsMock(t *testing.T) {
 	}
 }
 
+// TestNormalizeMockName guards against argv[0] casing/suffix mismatches on
+// Windows: without normalization, "Glut.exe" would be misrouted as a mock
+// (case-sensitive comparison against "glut"), and a mock invoked as
+// "release-cli.exe" would log to "release-cli.exe.jsonl" — a name
+// ReadBinaryLogs' "only" filter never matches, so assert.binary sees zero
+// calls. goos is a parameter so this is testable without an actual Windows
+// host.
+func TestNormalizeMockName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		goos string
+		name string
+		want string
+	}{
+		{"linux", "release-cli", "release-cli"},
+		{"linux", "release-cli.exe", "release-cli.exe"}, // non-Windows: never touched
+		{"windows", "release-cli", "release-cli"},
+		{"windows", "release-cli.exe", "release-cli"},
+		{"windows", "Release-CLI.EXE", "release-cli"},
+		{"windows", "Glut.exe", "glut"},
+		{"windows", "GLUT", "glut"},
+	}
+	for _, tc := range tests {
+		if got := normalizeMockName(tc.goos, tc.name); got != tc.want {
+			t.Errorf("normalizeMockName(%q, %q) = %q, want %q", tc.goos, tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
 	t.Parallel()
 	logDir := t.TempDir()
@@ -132,6 +161,62 @@ func TestRunWithOptionsLogsAndPassesThroughStreams(t *testing.T) {
 	if !contains(calls[0].Args, "--dry-run") {
 		t.Fatalf("args do not contain user arg: %v", calls[0].Args)
 	}
+}
+
+// TestRunWithOptionsStdinCaptureReflectsWhatMockReads pins the stdin-capture
+// semantics documented in docs/reference/assert-syntax.md: the wrapper tees
+// stdin as it is streamed to the real binary (never draining before exec, which
+// would hang on a never-closing producer). A mock that consumes stdin has it
+// captured in full, and — because os/exec buffers the stream into the OS pipe —
+// a typical (small) input is captured in full even when the mock never reads
+// it. Only a payload larger than the OS pipe buffer that the mock never drains
+// could be captured only in part.
+func TestRunWithOptionsStdinCaptureReflectsWhatMockReads(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, subcommand string) BinaryCall {
+		t.Helper()
+		logDir := t.TempDir()
+		realDir := t.TempDir()
+		linkHelperBinary(t, filepath.Join(realDir, helperBinaryName("tool")))
+
+		var stdout, stderr bytes.Buffer
+		code := RunWithOptions(RunOptions{
+			Args:   []string{"tool", "-test.run=TestHelperProcess", "--", subcommand},
+			Stdin:  strings.NewReader("piped-input"),
+			Stdout: &stdout,
+			Stderr: &stderr,
+			Environ: append(os.Environ(),
+				"GO_WANT_HELPER_PROCESS=1",
+				config.EnvMockLogDir+"="+logDir,
+				config.EnvMockBinReal+"="+realDir,
+			),
+			Now: fixedNow,
+		})
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0; stderr: %s", code, stderr.String())
+		}
+		logs, err := ReadBinaryLogs(logDir, nil)
+		if err != nil {
+			t.Fatalf("read logs: %v", err)
+		}
+		if len(logs["tool"]) != 1 {
+			t.Fatalf("call count = %d, want 1", len(logs["tool"]))
+		}
+		return logs["tool"][0]
+	}
+
+	t.Run("mock that reads stdin captures the full input", func(t *testing.T) {
+		if got := run(t, "echo").Stdin; got != "piped-input" {
+			t.Fatalf("stdin = %q, want %q", got, "piped-input")
+		}
+	})
+
+	t.Run("typical input is captured even when the mock ignores stdin", func(t *testing.T) {
+		if got := run(t, "ignore-stdin").Stdin; got != "piped-input" {
+			t.Fatalf("stdin = %q, want %q (small input is buffered into the pipe and captured)", got, "piped-input")
+		}
+	})
 }
 
 func TestRunWithOptionsPropagatesExitCode(t *testing.T) {
@@ -255,19 +340,30 @@ func TestRunWithOptionsFailureBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("stdin read failure", func(t *testing.T) {
-		var stderr bytes.Buffer
+	t.Run("broken stdin reader does not block launching the real binary", func(t *testing.T) {
+		// teeStdin no longer drains stdin before exec, so a reader that
+		// errors (or a producer that never sends EOF) must not stop the
+		// real binary from running when it never actually needs stdin —
+		// matching how the unmocked binary would behave.
+		realDir := t.TempDir()
+		linkHelperBinary(t, filepath.Join(realDir, helperBinaryName("tool")))
+
 		code := RunWithOptions(RunOptions{
-			Args:    []string{"tool"},
-			Stdin:   errReader{},
-			Stderr:  &stderr,
-			Environ: []string{config.EnvMockBinReal + "=" + t.TempDir()},
+			Args: []string{
+				"tool",
+				"-test.run=TestHelperProcess",
+				"--",
+				"exit",
+				"7",
+			},
+			Stdin: errReader{},
+			Environ: append(os.Environ(),
+				"GO_WANT_HELPER_PROCESS=1",
+				config.EnvMockBinReal+"="+realDir,
+			),
 		})
-		if code != 127 {
-			t.Fatalf("code = %d", code)
-		}
-		if !strings.Contains(stderr.String(), "failed to read stdin") {
-			t.Fatalf("stderr = %q", stderr.String())
+		if code != 7 {
+			t.Fatalf("code = %d, want 7", code)
 		}
 	})
 
@@ -351,15 +447,33 @@ func TestReadBinaryLogsErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("scanner error on long line", func(t *testing.T) {
+	t.Run("scanner error when a line exceeds the raised buffer limit", func(t *testing.T) {
 		logDir := t.TempDir()
-		longLine := strings.Repeat("a", 70*1024)
-		if err := os.WriteFile(filepath.Join(logDir, "tool.jsonl"), []byte(longLine), 0644); err != nil {
+		tooLong := `{"name":"tool","stdin":"` + strings.Repeat("a", 65*1024*1024) + `"}` + "\n"
+		if err := os.WriteFile(filepath.Join(logDir, "tool.jsonl"), []byte(tooLong), 0644); err != nil {
 			t.Fatal(err)
 		}
 		_, err := ReadBinaryLogs(logDir, nil)
 		if err == nil || !strings.Contains(err.Error(), "scan mock log") {
 			t.Fatalf("ReadBinaryLogs() error = %v", err)
+		}
+	})
+
+	t.Run("reads a line past the old 64 KiB default limit", func(t *testing.T) {
+		logDir := t.TempDir()
+		// appendBinaryCall captures full stdin with no size cap; the default
+		// bufio.Scanner limit (64 KiB) used to make this a hard failure.
+		bigStdin := strings.Repeat("a", 128*1024)
+		line := `{"name":"tool","stdin":"` + bigStdin + `"}` + "\n"
+		if err := os.WriteFile(filepath.Join(logDir, "tool.jsonl"), []byte(line), 0644); err != nil {
+			t.Fatal(err)
+		}
+		logs, err := ReadBinaryLogs(logDir, nil)
+		if err != nil {
+			t.Fatalf("ReadBinaryLogs() error = %v", err)
+		}
+		if len(logs["tool"]) != 1 || logs["tool"][0].Stdin != bigStdin {
+			t.Fatalf("ReadBinaryLogs() did not capture the full oversized stdin, got %d bytes", len(logs["tool"][0].Stdin))
 		}
 	})
 
@@ -534,15 +648,9 @@ func TestRunOptionsWithDefaults(t *testing.T) {
 	}
 }
 
-func TestReadStdinHelpers(t *testing.T) {
-	t.Run("reader content", func(t *testing.T) {
-		content, reader, err := readStdin(strings.NewReader("hello"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if content != "hello" {
-			t.Fatalf("content = %q", content)
-		}
+func TestTeeStdinHelpers(t *testing.T) {
+	t.Run("reader content is captured as it is read", func(t *testing.T) {
+		reader, capture := teeStdin(strings.NewReader("hello"))
 		data, err := io.ReadAll(reader)
 		if err != nil {
 			t.Fatal(err)
@@ -550,9 +658,12 @@ func TestReadStdinHelpers(t *testing.T) {
 		if string(data) != "hello" {
 			t.Fatalf("reader data = %q", string(data))
 		}
+		if capture.buf.String() != "hello" {
+			t.Fatalf("captured = %q", capture.buf.String())
+		}
 	})
 
-	t.Run("char device file", func(t *testing.T) {
+	t.Run("char device file is passed through unwrapped", func(t *testing.T) {
 		file, err := os.Open(os.DevNull)
 		if err != nil {
 			t.Fatal(err)
@@ -571,26 +682,55 @@ func TestReadStdinHelpers(t *testing.T) {
 			t.Skip("os.DevNull is not a char device on this platform")
 		}
 
-		content, reader, err := readStdin(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if content != "" || reader != file {
-			t.Fatalf("char device handling = %q %#v", content, reader)
+		reader, capture := teeStdin(file)
+		if reader != file || capture.buf.Len() != 0 {
+			t.Fatalf("char device handling: reader == file: %v, captured = %q", reader == file, capture.buf.String())
 		}
 	})
 
-	t.Run("closed file stat error", func(t *testing.T) {
-		file, err := os.CreateTemp(t.TempDir(), "stdin")
+	t.Run("does not drain a pipe before the reader is consumed", func(t *testing.T) {
+		pr, pw := io.Pipe()
+		reader, _ := teeStdin(pr)
+
+		done := make(chan string, 1)
+		go func() {
+			buf := make([]byte, 5)
+			n, _ := io.ReadFull(reader, buf)
+			done <- string(buf[:n])
+		}()
+
+		// A producer that keeps the pipe open (never closes pw) must not
+		// block teeStdin: the real binary drives consumption directly, so
+		// the first chunk is observed without waiting for EOF.
+		if _, err := pw.Write([]byte("hello")); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case got := <-done:
+			if got != "hello" {
+				t.Fatalf("read = %q, want %q", got, "hello")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("teeStdin blocked reading a still-open pipe instead of letting the consumer drive it")
+		}
+		_ = pw.Close()
+	})
+
+	t.Run("capture is capped without truncating what the real binary sees", func(t *testing.T) {
+		limit := 8
+		capture := &cappedWriter{limit: limit}
+		full := "0123456789"
+		reader := io.TeeReader(strings.NewReader(full), capture)
+
+		data, err := io.ReadAll(reader)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := file.Close(); err != nil {
-			t.Fatal(err)
+		if string(data) != full {
+			t.Fatalf("reader must see the full stream, got %q", string(data))
 		}
-		_, _, err = readStdin(file)
-		if err == nil {
-			t.Fatal("expected readStdin to fail on closed file")
+		if capture.buf.String() != full[:limit] {
+			t.Fatalf("captured = %q, want first %d bytes", capture.buf.String(), limit)
 		}
 	})
 }
@@ -616,8 +756,16 @@ func TestHelperUtilities(t *testing.T) {
 	}
 }
 
+// TestWriteErrorIgnoresWriterFailure verifies writeError attempts the
+// formatted write (rather than silently no-oping) and does not panic or
+// propagate the error when the writer itself fails — it is a best-effort
+// diagnostic with nowhere else to report a failure.
 func TestWriteErrorIgnoresWriterFailure(t *testing.T) {
-	writeError(errWriter{}, "message: %s", "boom")
+	w := &errWriter{}
+	writeError(w, "message: %s", "boom")
+	if string(w.written) != "message: boom" {
+		t.Fatalf("writeError did not attempt the formatted write: got %q", w.written)
+	}
 }
 
 func TestAppendBinaryCallMkdirError(t *testing.T) {
@@ -701,6 +849,10 @@ func TestHelperProcess(t *testing.T) {
 			os.Exit(7)
 		}
 		os.Exit(1)
+	case "ignore-stdin":
+		// Exit 0 without reading stdin at all, to model a mock stub that does
+		// not consume its input.
+		os.Exit(0)
 	default:
 		os.Exit(2)
 	}
@@ -712,9 +864,12 @@ func (errReader) Read(_ []byte) (int, error) {
 	return 0, errors.New("boom")
 }
 
-type errWriter struct{}
+type errWriter struct {
+	written []byte
+}
 
-func (errWriter) Write(_ []byte) (int, error) {
+func (w *errWriter) Write(p []byte) (int, error) {
+	w.written = append(w.written, p...)
 	return 0, errors.New("boom")
 }
 

@@ -6,15 +6,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/pandasoft-zz/glut/internal/docker"
 	"github.com/pandasoft-zz/glut/internal/parser"
 )
 
@@ -77,22 +76,43 @@ for a in "$@"; do
 done
 args_json="${args_json}]"
 
+# Buffer stdin to a temp file so it can both be captured for logging and
+# replayed to the real binary. Unlike the native Go wrapper (which streams
+# stdin via io.TeeReader so a still-open producer cannot block it), this
+# POSIX shell wrapper has no equivalent for tee-while-exec, so it must fully
+# drain stdin first — a producer that never sends EOF will block here.
+# Command substitution also strips trailing newlines from stdin_content,
+# unlike the byte-exact capture the Go wrapper performs.
+stdin_dir="${GLUT_MOCK_LOG_DIR:-/tmp}"
+mkdir -p "$stdin_dir" 2>/dev/null
+stdin_file="$stdin_dir/.${name}.stdin.${pid}"
+cat > "$stdin_file" 2>/dev/null
+stdin_content=$(cat "$stdin_file" 2>/dev/null)
+
 if [ -n "$GLUT_MOCK_LOG_DIR" ]; then
     mkdir -p "$GLUT_MOCK_LOG_DIR" 2>/dev/null
     barrier="$GLUT_MOCK_LOG_DIR/.${name}.jsonl.${pid}"
     touch "$barrier" 2>/dev/null
     cwd_esc=$(json_str "$cwd")
-    printf '{"ts":"%s","pid":%d,"ppid":%d,"cwd":"%s","name":"%s","args":%s,"stdin":""}\n' \
-        "$ts" "$pid" "$ppid" "$cwd_esc" "$name" "$args_json" \
+    stdin_esc=$(json_str "$stdin_content")
+    name_esc=$(json_str "$name")
+    printf '{"ts":"%s","pid":%d,"ppid":%d,"cwd":"%s","name":"%s","args":%s,"stdin":"%s"}\n' \
+        "$ts" "$pid" "$ppid" "$cwd_esc" "$name_esc" "$args_json" "$stdin_esc" \
         >> "$GLUT_MOCK_LOG_DIR/${name}.jsonl"
     rm -f "$barrier" 2>/dev/null
 fi
 
 if [ -z "$GLUT_MOCK_BIN_REAL" ]; then
     printf 'mock wrapper: GLUT_MOCK_BIN_REAL not set\n' >&2
+    rm -f "$stdin_file" 2>/dev/null
     exit 127
 fi
-exec "$GLUT_MOCK_BIN_REAL/$name" "$@"
+# Open the buffered stdin on fd 3 and unlink the backing file before exec —
+# the fd keeps the (now-nameless) file alive for the real binary to read,
+# so no cleanup code needs to run after the process image is replaced.
+exec 3< "$stdin_file"
+rm -f "$stdin_file" 2>/dev/null
+exec "$GLUT_MOCK_BIN_REAL/$name" "$@" <&3
 `
 
 // CreateDockerVolume creates a Docker named volume and populates it with the
@@ -186,14 +206,16 @@ func ReadLogsFromDockerVolume(volName, workDir string) error {
 	runErr := tarCmd.Run()
 	_ = exec.Command("docker", "rm", ctrName).Run() // synchronous cleanup
 	if runErr != nil {
-		// Any non-empty stderr indicates a real Docker or tar error; propagate
-		// it so the caller can distinguish an infrastructure failure from an
-		// intentionally empty log directory (tar exits non-zero but stderr is
-		// empty in that case).
+		// CreateDockerVolume always populates an empty mock-logs directory, so
+		// "no mock calls yet" tars fine (exit 0) — a non-zero exit here is
+		// always a real failure (container OOM-killed, daemon race), never a
+		// benign empty-directory case. Wrap as InfraError so the runner's
+		// retry logic applies instead of silently returning "no logs" and
+		// turning binary.called assertions into false negatives.
 		if se := bytes.TrimSpace(stderr.Bytes()); len(se) > 0 {
-			return fmt.Errorf("read mock logs from volume: %w (%s)", runErr, se)
+			return &InfraError{Err: fmt.Errorf("read mock logs from volume: %w (%s)", runErr, se)}
 		}
-		return nil
+		return &InfraError{Err: fmt.Errorf("read mock logs from volume: %w", runErr)}
 	}
 
 	extractCmd := exec.Command("tar", "-xC", logDir)
@@ -270,27 +292,6 @@ func FetchArtifactsFromGCLVolumes(preRunVolumes, jobNames []string, workspaceDir
 	return firstErr
 }
 
-// gclBuildVolumeRE matches gitlab-ci-local's build-volume naming pattern,
-// gcl-<encodedJobName>-<jobId>-build, where jobId is a random number. This is
-// the single source of truth for parsing those names; the executor's log-capture
-// path reuses it by calling the exported GCLJobName below.
-var gclBuildVolumeRE = regexp.MustCompile(`^gcl-(.+)-\d+-build$`)
-
-// GCLJobName extracts the (URL-decoded) job name from a gcl-*-build volume name.
-// gitlab-ci-local URL-encodes characters outside [\w-] into the segment, so we
-// decode it to recover the original job name. Returns ok=false when the name
-// does not match the build-volume shape.
-func GCLJobName(vol string) (string, bool) {
-	m := gclBuildVolumeRE.FindStringSubmatch(vol)
-	if len(m) != 2 {
-		return "", false
-	}
-	if decoded, err := url.PathUnescape(m[1]); err == nil {
-		return decoded, true
-	}
-	return m[1], true
-}
-
 // selectGCLArtifactVolumes picks the gcl build volumes belonging to this run.
 // Because the jobId in the name is random, volume names cannot be predicted up
 // front. We instead keep volumes that are new since preRun, end in "-build", and
@@ -320,7 +321,7 @@ func selectGCLArtifactVolumes(preRun, current, jobNames []string) []string {
 			continue
 		}
 		if scoped {
-			seg, ok := GCLJobName(vol)
+			seg, ok := docker.GCLJobName(vol)
 			if !ok {
 				continue
 			}

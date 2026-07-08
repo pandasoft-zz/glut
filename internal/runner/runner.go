@@ -1,15 +1,12 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -17,7 +14,6 @@ import (
 	"time"
 
 	"github.com/pandasoft-zz/glut/internal/asserter"
-	"github.com/pandasoft-zz/glut/internal/config"
 	"github.com/pandasoft-zz/glut/internal/docker"
 	"github.com/pandasoft-zz/glut/internal/executor"
 	"github.com/pandasoft-zz/glut/internal/mockserver"
@@ -38,8 +34,10 @@ const (
 const (
 	defaultKeepLastFailed = 3
 	DefaultWaitTimeout    = 120 * time.Second
-	dockerTestRetryPause  = 5 * time.Second
 )
+
+// dockerTestRetryPause is a var (not const) so tests can shrink it.
+var dockerTestRetryPause = 5 * time.Second
 
 type RunOptions struct {
 	RunPattern           string
@@ -61,6 +59,14 @@ type RunOptions struct {
 	WaitTimeout          time.Duration // max time to wait for Docker daemon; 0 uses default (120s)
 	DockerWaitOutput     io.Writer     // where to write Docker wait progress; nil discards output
 	DockerVolumeStrategy string        // "auto" (default), "bind" (native Linux), "volume" (Docker Desktop/WSL2)
+	// WorkspaceTempDir is the base directory each test's ephemeral workspace
+	// is created under (empty uses the system default, e.g. /tmp). Set this
+	// when GLUT itself runs inside a container that only bind-mounts part of
+	// its filesystem (e.g. GLUT_WORK_DIR in the Makefile's containerized
+	// test-integration target), so temp workspaces land somewhere the host
+	// can actually see rather than an ephemeral path invisible outside the
+	// container.
+	WorkspaceTempDir string
 }
 
 type ListOptions struct {
@@ -125,6 +131,17 @@ func relPath(base, path string) string {
 	return rel
 }
 
+// suiteRun carries the state one Run call shares across all its tests: the
+// resolved volume strategy, the Docker volumes waiting for bulk removal, and
+// the failed workspaces preserved by the keep-last-failed policy.
+type suiteRun struct {
+	repoRoot        string
+	opts            RunOptions
+	volumeStrategy  string
+	pendingVolumes  []string
+	preservedFailed []string
+}
+
 func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitCode) {
 	opts = normalizeRunOptions(opts)
 	if err := validateDebugPause(opts.DebugPause); err != nil {
@@ -154,69 +171,35 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		sink.Start(len(tests))
 	}
 
+	suite := &suiteRun{
+		repoRoot: repoRoot,
+		opts:     opts,
+		// Resolve the Docker volume strategy once for the whole suite run.
+		// "auto" detects whether the workspace path is on a native Linux
+		// filesystem (bind mounts) or a Windows-backed 9P path (named volumes).
+		volumeStrategy:  docker.ResolveVolumeStrategy(opts.DockerVolumeStrategy, opts.HostEnv),
+		preservedFailed: make([]string, 0, opts.KeepLastFailed),
+	}
+	defer suite.destroyPendingVolumes()
+
 	runStart := time.Now()
 	result := RunResult{Tests: make([]TestResult, 0, len(tests))}
-	preservedFailed := make([]string, 0, opts.KeepLastFailed)
 	dockerReady := !anyTestNeedsDocker(tests)
 
-	// Resolve the Docker volume strategy once for the whole suite run.
-	// "auto" detects whether the workspace path is on a native Linux
-	// filesystem (bind mounts) or a Windows-backed 9P path (named volumes).
-	effectiveVolumeStrategy := docker.ResolveVolumeStrategy(opts.DockerVolumeStrategy)
-
-	// Docker volumes are collected here and destroyed together at the end.
-	// Destroying them immediately after each test triggers overlay-FS cleanup
-	// in the daemon between tests, which is the main source of transient
-	// failures on Docker Desktop / WSL2. Bulk removal after all tests avoids
-	// this inter-test contention.
-	var pendingVolumeCleanup []string
-	defer func() {
-		for _, vol := range pendingVolumeCleanup {
-			_ = workspace.DestroyDockerVolume(vol)
-		}
-	}()
-
 	for _, testFile := range tests {
+		if ctx.Err() != nil {
+			break
+		}
+
 		if testNeedsDocker(&testFile) && !dockerReady {
-			remaining := opts.WaitTimeout - time.Since(runStart)
-			if remaining < 0 {
-				remaining = 0
+			if err := ensureDockerReady(ctx, opts, runStart); err != nil {
+				result.Error = err
+				break
 			}
-			if err := docker.Wait(ctx, opts.DockerWaitOutput, remaining); err != nil {
-				return RunResult{Error: fmt.Errorf("wait for Docker: %w", err)}, ExitRunnerError
-			}
-			// Prune orphaned volumes from previous GLUT runs before the first
-			// Docker test. Named volumes that are no longer referenced by any
-			// container accumulate across suite runs and keep the daemon busy
-			// with background cleanup work that can delay new container starts.
-			docker.PruneOrphanedVolumes()
 			dockerReady = true
 		}
 
-		testResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
-
-		// For Docker tests that fail at the infrastructure level (volume
-		// creation, daemon communication), retry once. InfraError covers
-		// failures explicitly tagged as infrastructure (e.g. volume create,
-		// populate). The fallback covers executor-level daemon failures that
-		// occur before any job starts and are therefore not wrapped as
-		// InfraError — those also produce error + no job outputs.
-		var infraErr *workspace.InfraError
-		executorFailedBeforeJobs := testResult.Error != nil && len(testResult.JobOutputs) == 0
-		if testNeedsDocker(&testFile) && !testResult.Passed &&
-			(errors.As(testResult.Error, &infraErr) || executorFailedBeforeJobs) {
-			for _, sink := range opts.Progress {
-				sink.TestRetry(testResult.TestName, testResult.Error)
-			}
-			select {
-			case <-time.After(dockerTestRetryPause):
-			case <-ctx.Done():
-			}
-			retryResult := runSingleTest(ctx, repoRoot, testFile, opts, effectiveVolumeStrategy, &pendingVolumeCleanup, &preservedFailed)
-			if retryResult.Passed || len(retryResult.Failures) > 0 {
-				testResult = retryResult
-			}
-		}
+		testResult := suite.runTestWithRetry(ctx, testFile)
 
 		result.Tests = append(result.Tests, testResult)
 		if testResult.Passed {
@@ -239,10 +222,98 @@ func Run(ctx context.Context, paths []string, opts RunOptions) (RunResult, ExitC
 		sink.Summary(result)
 	}
 
+	if result.Error != nil {
+		return result, ExitRunnerError
+	}
 	if result.Failed > 0 {
 		return result, ExitTestFailed
 	}
 	return result, ExitOK
+}
+
+// destroyPendingVolumes removes the Docker volumes collected across the whole
+// suite. Destroying volumes between sequential tests triggers overlay-FS
+// cleanup in the daemon, which keeps it busy and causes transient failures in
+// the next test's container start; bulk removal at the end avoids this
+// inter-test contention entirely.
+func (s *suiteRun) destroyPendingVolumes() {
+	for _, vol := range s.pendingVolumes {
+		_ = workspace.DestroyDockerVolume(vol)
+	}
+}
+
+// ensureDockerReady blocks until the Docker daemon responds (bounded by the
+// remaining wait budget) and prunes orphaned volumes from previous GLUT runs
+// before the suite's first Docker test. Unreferenced named volumes accumulate
+// across suite runs and keep the daemon busy with background cleanup work
+// that can delay new container starts.
+func ensureDockerReady(ctx context.Context, opts RunOptions, runStart time.Time) error {
+	remaining := opts.WaitTimeout - time.Since(runStart)
+	if remaining < 0 {
+		remaining = 0
+	}
+	if err := docker.Wait(ctx, opts.DockerWaitOutput, remaining, opts.HostEnv); err != nil {
+		return fmt.Errorf("wait for Docker: %w", err)
+	}
+	docker.PruneOrphanedVolumes(opts.HostEnv)
+	return nil
+}
+
+// runTestWithRetry runs one test and retries it once when a Docker test
+// failed at the infrastructure level (volume creation, daemon communication)
+// rather than on its own merits. The retry result replaces the original only
+// when it produced a real verdict (pass or assertion failures).
+func (s *suiteRun) runTestWithRetry(ctx context.Context, testFile parser.TestFile) TestResult {
+	testResult := s.runSingleTest(ctx, testFile)
+	if !shouldRetryInfraFailure(ctx, &testFile, testResult) {
+		return testResult
+	}
+
+	for _, sink := range s.opts.Progress {
+		sink.TestRetry(testResult.TestName, testResult.Error)
+	}
+	select {
+	case <-time.After(dockerTestRetryPause):
+	case <-ctx.Done():
+	}
+	if ctx.Err() != nil {
+		return testResult
+	}
+
+	retryResult := s.runSingleTest(ctx, testFile)
+	if retryResult.Passed || len(retryResult.Failures) > 0 {
+		return retryResult
+	}
+	return testResult
+}
+
+// shouldRetryInfraFailure reports whether a failed Docker test deserves one
+// retry. InfraError covers failures explicitly tagged as infrastructure
+// (e.g. volume create, populate). The fallback covers executor-level daemon
+// failures that occur before any job starts and are therefore not wrapped as
+// InfraError — those also produce an error and no executed job output.
+// JobOutputs alone cannot signal this: when the test has present:/when:
+// assertions, executor.ListJobs pre-populates JobOutputs before the pipeline
+// ever runs, so its length is non-zero even on a daemon-level failure. Only
+// entries actually produced by the pipeline run are marked Executed.
+func shouldRetryInfraFailure(ctx context.Context, testFile *parser.TestFile, result TestResult) bool {
+	if !testNeedsDocker(testFile) || result.Passed || ctx.Err() != nil {
+		return false
+	}
+
+	var infraErr *workspace.InfraError
+	if errors.As(result.Error, &infraErr) {
+		return true
+	}
+
+	executorRan := false
+	for _, output := range result.JobOutputs {
+		if output.Executed {
+			executorRan = true
+			break
+		}
+	}
+	return result.Error != nil && !executorRan
 }
 
 func List(ctx context.Context, paths []string, opts ListOptions) ([]ListedTest, error) {
@@ -291,6 +362,9 @@ func discoverTests(paths []string, pattern string) ([]parser.TestFile, error) {
 					return walkErr
 				}
 				if entry.IsDir() {
+					if parser.SkipDiscoveryDir(entry.Name()) {
+						return filepath.SkipDir
+					}
 					return nil
 				}
 				if !isYAMLPath(path) {
@@ -369,370 +443,6 @@ func loadTestFile(path string) (*parser.TestFile, error) {
 	}
 
 	return testFile, nil
-}
-
-func runSingleTest(
-	ctx context.Context,
-	repoRoot string,
-	testFile parser.TestFile,
-	opts RunOptions,
-	volumeStrategy string,
-	pendingVolumeCleanup *[]string,
-	preservedFailed *[]string,
-) (result TestResult) {
-	if testFile.ParseError != nil {
-		fp := relPath(repoRoot, testFile.FilePath)
-		return TestResult{
-			FilePath: fp,
-			TestName: fp,
-			Passed:   false,
-			Error:    testFile.ParseError,
-		}
-	}
-
-	result = TestResult{
-		FilePath:   relPath(repoRoot, testFile.FilePath),
-		TestName:   testFile.Glut.Name,
-		JobOutputs: map[string]executor.JobOutput{},
-	}
-
-	var (
-		work             *workspace.Workspace
-		server           *mockserver.Server
-		execResult       executor.RunResult
-		phaseTimings     = map[string]time.Duration{}
-		binaryLogs       = map[string][]mockwrapper.BinaryCall{}
-		apiCalls         []mockserver.APICall
-		cleanupErrors    []error
-		primaryErr       error
-		dockerVolumeName string
-	)
-
-	defer func() {
-		if server != nil {
-			if err := server.Stop(); err != nil {
-				cleanupErrors = append(cleanupErrors, fmt.Errorf("stop mock server: %w", err))
-			}
-			apiCalls = server.Recorder().Calls()
-		}
-
-		if dockerVolumeName != "" {
-			// Defer volume removal to after the whole test suite completes.
-			// Destroying volumes between sequential tests triggers overlay-FS
-			// cleanup in the Docker daemon, which keeps it busy and causes
-			// transient failures in the next test's container start. Bulk
-			// removal at the end avoids this inter-test contention entirely.
-			*pendingVolumeCleanup = append(*pendingVolumeCleanup, dockerVolumeName)
-		}
-
-		if work != nil {
-			result.WorkspacePath = work.Dir
-			preserved, err := applyWorkspacePolicy(work, result.Passed, opts, preservedFailed)
-			if err != nil {
-				cleanupErrors = append(cleanupErrors, err)
-			}
-			result.PreservedWorkspace = preserved
-		}
-
-		if primaryErr == nil && len(cleanupErrors) > 0 {
-			primaryErr = cleanupErrors[0]
-		}
-		result.Error = primaryErr
-
-		if opts.Debug && !result.Passed {
-			result.Debug = &DebugData{
-				RawStdout:       execResult.RawStdout,
-				RawStderr:       execResult.RawStderr,
-				BinaryLogs:      binaryLogs,
-				APICalls:        apiCalls,
-				WorkspaceGitLog: safeGitLog(work.WorkspaceDir),
-				OriginGitLog:    safeGitLog(work.WorkspaceDir, "--git-dir="+filepath.Join(work.WorkspaceDir, ".glut-origin.git")),
-				PhaseTimings:    copyPhaseTimings(phaseTimings),
-				CleanupErrors:   errorsToStrings(cleanupErrors),
-			}
-		}
-	}()
-
-	testStart := time.Now()
-	defer func() {
-		result.Duration = time.Since(testStart)
-	}()
-
-	phaseStart := time.Now()
-	work, primaryErr = workspace.New(testFile.Glut.Setup, false, repoRoot, workspace.Options{
-		CopyStrategy: opts.CopyStrategy,
-		Include:      opts.Include,
-		Verbose:      opts.Verbose,
-		HostEnv:      opts.HostEnv,
-	})
-	phaseTimings["workspace"] = time.Since(phaseStart)
-	if primaryErr != nil {
-		primaryErr = fmt.Errorf("create workspace: %w", primaryErr)
-		result.Passed = false
-		return
-	}
-
-	phaseStart = time.Now()
-	server, primaryErr = mockserver.New(apiConfig(testFile))
-	phaseTimings["mockserver-new"] = time.Since(phaseStart)
-	if primaryErr != nil {
-		primaryErr = fmt.Errorf("create mock server: %w", primaryErr)
-		result.Passed = false
-		return
-	}
-
-	phaseStart = time.Now()
-	primaryErr = server.Start()
-	phaseTimings["mockserver-start"] = time.Since(phaseStart)
-	if primaryErr != nil {
-		primaryErr = fmt.Errorf("start mock server: %w", primaryErr)
-		result.Passed = false
-		return
-	}
-	server.SetGitRepo(work.OriginRepo)
-
-	phaseStart = time.Now()
-	useDocker, forceShell := resolveDockerMode(testFile.Glut.Setup.Docker)
-	usePrivileged := testFile.Glut.Setup.Privileged != nil && *testFile.Glut.Setup.Privileged
-	// Snapshot gcl volumes before the pipeline so FetchArtifactsFromGCLVolumes
-	// can identify which ones belong to this run (volume strategy only, where
-	// bind mounts do not work and gitlab-ci-local uses its own named volumes).
-	needsGCLArtifacts := useDocker &&
-		volumeStrategy == docker.VolumeStrategyVolume &&
-		len(testFile.Glut.Assert.Artifacts) > 0
-	var preRunGCLVolumes []string
-	if needsGCLArtifacts {
-		preRunGCLVolumes = workspace.ListGCLVolumes()
-	}
-	if useDocker && volumeStrategy == docker.VolumeStrategyVolume {
-		// Named volume: populate from host and collect for deferred cleanup.
-		var mocks *parser.MocksConfig
-		if hasMockBinaries(testFile) {
-			mocks = testFile.Glut.Setup.Mocks
-		}
-		dockerVolumeName, primaryErr = workspace.CreateDockerVolume(work.Dir, work.OriginRepo, mocks)
-	}
-	// Bind mount strategy: the host workspace directory is already populated
-	// by workspace.New() and SetupMockBinaries. No extra Docker operation needed.
-	// Always inject mock binaries into shell PATH so jobs without image: can find
-	// them regardless of docker mode. For docker:true this runs alongside the volume;
-	// for docker:false this is the only setup path.
-	//
-	// Pass useDocker so that in Docker mode the wrapper binary is copied inside the
-	// workspace directory (which is the mount root inside the container) instead of
-	// being symlinked to a host path that is invisible to the job container.
-	if primaryErr == nil && hasMockBinaries(testFile) {
-		primaryErr = workspace.SetupMockBinaries(work.Dir, *testFile.Glut.Setup.Mocks, resolveGlutBinPath(opts.GlutBinPath), useDocker)
-	}
-	phaseTimings["mock-binaries"] = time.Since(phaseStart)
-	if primaryErr != nil {
-		primaryErr = fmt.Errorf("setup mock binaries: %w", primaryErr)
-		result.Passed = false
-		return
-	}
-
-	phaseStart = time.Now()
-	sha, shortSHA, err := gitHeads(work.WorkspaceDir)
-	phaseTimings["git-head"] = time.Since(phaseStart)
-	if err != nil {
-		primaryErr = err
-		result.Passed = false
-		return
-	}
-	commitMessage, commitTimestamp, err := gitHeadCommit(work.WorkspaceDir)
-	if err != nil {
-		primaryErr = err
-		result.Passed = false
-		return
-	}
-
-	var mockHostIP string
-	if useDocker {
-		mockHostIP = outboundIP()
-	}
-
-	envVars := work.EnvVars(testFile.Glut.Setup, server.Port(), sha, shortSHA, testFile.Glut.Name)
-	workspace.ApplyCommitEnv(envVars, commitMessage, commitTimestamp)
-	applyDockerCompatibilityEnv(envVars, useDocker)
-	if useDocker {
-		// BUG-3: Docker containers cannot reach 127.0.0.1. Use the bridge IP directly
-		// so the URL works for both Docker jobs (container on same bridge) and shell jobs
-		// (same host or container). glut-mock remains an alias via --extra-host.
-		workspace.ApplyServerBaseURL(envVars, mockHostIP, server.Port())
-	}
-
-	// Integration mode: resolve `include: component:` against a real GitLab using
-	// the real CI_JOB_TOKEN, so a composite component runs with its real
-	// sub-components. Only the component fetch becomes real (via a gcl-origin
-	// remote + an insteadOf credential rewrite injected into gitlab-ci-local's
-	// environment); the runtime GitLab API stays mocked, and origin/sandbox are
-	// untouched.
-	var gitConfigEnv map[string]string
-	if componentsRealFetch(testFile.Glut.Setup) {
-		fetch, err := workspace.RealComponentFetch(opts.HostEnv)
-		if err != nil {
-			primaryErr = fmt.Errorf("components.fetch real: %w", err)
-			result.Passed = false
-			return
-		}
-		if err := work.SetGCLOriginRemote(fetch.GCLOriginURL); err != nil {
-			primaryErr = fmt.Errorf("components.fetch real: %w", err)
-			result.Passed = false
-			return
-		}
-		// CI_PROJECT_NAMESPACE: the component address path segment.
-		// CI_SERVER_FQDN: the address domain — also used by GCL's `git ls-remote
-		// --tags` step that resolves numeric/~latest refs (e.g. @1), so it must
-		// point at the real server, not the mock. Set after ApplyServerBaseURL so
-		// it is not overwritten by the Docker bridge-IP value.
-		envVars["CI_PROJECT_NAMESPACE"] = fetch.Namespace
-		envVars["CI_SERVER_FQDN"] = fetch.ServerFQDN
-		gitConfigEnv = fetch.GitConfigEnv
-	}
-
-	execCfg := executor.ExecutorConfig{
-		WorkspacePath:       work.WorkspaceDir,
-		PipelineYAML:        testFile.PipelineYAML,
-		EnvVars:             envVars,
-		UnsetVars:           work.UnsetVars(testFile.Glut.Setup),
-		MockBinPath:         workspace.MockBinaryBinDir(work.Dir),
-		Timeout:             opts.Timeout,
-		Debug:               opts.Debug,
-		Verbose:             opts.Verbose,
-		UseDocker:           useDocker,
-		ForceShell:          forceShell,
-		Privileged:          usePrivileged,
-		DockerVolumes:       dockerVolumes(useDocker, work.Dir, dockerVolumeName, volumeStrategy),
-		DockerExtraHosts:    dockerExtraHosts(useDocker, mockHostIP),
-		HostEnv:             opts.HostEnv,
-		KeepDockerResources: needsGCLArtifacts,
-		GitConfigEnv:        gitConfigEnv,
-	}
-
-	if err := maybePause(opts.DebugPause, "before-pipeline", work.Dir); err != nil {
-		primaryErr = err
-		result.Passed = false
-		return
-	}
-
-	if needsJobList(testFile) {
-		phaseStart = time.Now()
-		jobEntries, err := executor.ListJobs(ctx, execCfg)
-		phaseTimings["list-jobs"] = time.Since(phaseStart)
-		if err != nil {
-			primaryErr = fmt.Errorf("list jobs: %w", err)
-			result.Passed = false
-			return
-		}
-		for _, entry := range jobEntries {
-			result.JobOutputs[entry.Name] = executor.JobOutput{Name: entry.Name, Present: true, When: entry.When}
-		}
-	}
-
-	phaseStart = time.Now()
-	execResult, err = executor.Run(ctx, execCfg)
-	phaseTimings["pipeline"] = time.Since(phaseStart)
-	for name, output := range execResult.Jobs {
-		output.Present = true
-		output.Executed = true
-		// Keep the evaluated `when` from the list phase — the run output does
-		// not carry it.
-		if existing, ok := result.JobOutputs[name]; ok {
-			output.When = existing.When
-		}
-		result.JobOutputs[name] = output
-	}
-	if err != nil {
-		primaryErr = fmt.Errorf("run pipeline: %w", err)
-	}
-
-	phaseStart = time.Now()
-	if hasMockBinaries(testFile) {
-		if dockerVolumeName != "" {
-			// Flush filesystem writes inside the volume before copying logs so
-			// that all wrapper writes are visible to the tar command.
-			if syncErr := workspace.SyncDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
-				primaryErr = fmt.Errorf("sync docker volume: %w", syncErr)
-			}
-			// Copy mock logs from the volume back to the host.
-			if syncErr := workspace.ReadLogsFromDockerVolume(dockerVolumeName, work.Dir); syncErr != nil && primaryErr == nil {
-				primaryErr = fmt.Errorf("sync mock logs from docker volume: %w", syncErr)
-			}
-		}
-		// Detect wrapper processes killed before completing their log write.
-		if barrierErr := mockwrapper.CheckMockLogBarriers(workspace.MockBinaryLogDir(work.Dir)); barrierErr != nil && primaryErr == nil {
-			primaryErr = fmt.Errorf("mock log write interrupted: %w", barrierErr)
-		}
-		// Read logs only for binaries that have assertions — a partially-written
-		// or missing log for an un-asserted binary must not fail the test.
-		assertedBinaries := make(map[string]struct{}, len(testFile.Glut.Assert.Binary))
-		for name := range testFile.Glut.Assert.Binary {
-			assertedBinaries[name] = struct{}{}
-		}
-		binaryLogs, err = mockwrapper.ReadBinaryLogs(workspace.MockBinaryLogDir(work.Dir), assertedBinaries)
-	}
-	phaseTimings["mock-logs"] = time.Since(phaseStart)
-	if err != nil && primaryErr == nil {
-		primaryErr = fmt.Errorf("read mock logs: %w", err)
-	}
-
-	// In volume strategy, gitlab-ci-local uses its own named volumes (gcl-*-build)
-	// for job workspaces. Bind mounts of host paths do not reach Docker Desktop
-	// from inside a devcontainer, so artifact files never land on the host
-	// filesystem. Instead, we ran with --cleanup=false to keep those volumes
-	// alive, extract all job-produced files into the workspace, then remove them.
-	if needsGCLArtifacts {
-		jobNames := make([]string, 0, len(result.JobOutputs))
-		for name := range result.JobOutputs {
-			jobNames = append(jobNames, name)
-		}
-		if fetchErr := workspace.FetchArtifactsFromGCLVolumes(preRunGCLVolumes, jobNames, work.WorkspaceDir); fetchErr != nil && primaryErr == nil {
-			primaryErr = fmt.Errorf("sync workspace artifacts from gcl volumes: %w", fetchErr)
-		}
-	}
-
-	// Build an origin source for assertions. Named volume: fetch from inside
-	// the volume because the pipeline may have pushed commits that changed it.
-	// Bind mount or no git.origin assertions: read directly from the host.
-	originSource := asserter.NewFSOrigin(work.OriginRepo)
-	if dockerVolumeName != "" && needsDockerOrigin(testFile) {
-		tarData, fetchErr := workspace.FetchGitOriginTar(dockerVolumeName, work.Dir)
-		if fetchErr != nil && primaryErr == nil {
-			primaryErr = fmt.Errorf("fetch git origin from docker volume: %w", fetchErr)
-		} else if fetchErr == nil {
-			lazyOrigin := workspace.NewLazyTarOrigin(tarData)
-			defer func() {
-				if closeErr := lazyOrigin.Close(); closeErr != nil && primaryErr == nil {
-					primaryErr = closeErr
-				}
-			}()
-			originSource = lazyOrigin
-		}
-	}
-
-	if err := maybePause(opts.DebugPause, "before-asserts", work.Dir); err != nil && primaryErr == nil {
-		primaryErr = err
-	}
-
-	phaseStart = time.Now()
-	apiCalls = server.Recorder().Calls()
-	assertResults := asserter.Run(testFile.Glut.Assert, asserter.AssertContext{
-		WorkspacePath: work.WorkspaceDir,
-		OriginRepo:    originSource,
-		JobOutputs:    result.JobOutputs,
-		APICalls:      apiCalls,
-		BinaryLogs:    binaryLogs,
-	})
-	phaseTimings["asserts"] = time.Since(phaseStart)
-	result.Failures = failedAssertions(assertResults)
-	result.Passed = primaryErr == nil && len(result.Failures) == 0
-
-	if err := maybePauseOnFail(opts.DebugPause, result.Passed, work.Dir); err != nil && primaryErr == nil {
-		primaryErr = err
-		result.Passed = false
-	}
-
-	return
 }
 
 func normalizeRunOptions(opts RunOptions) RunOptions {
@@ -820,293 +530,9 @@ func validateDebugPause(point string) error {
 	}
 }
 
-func maybePause(point string, current string, workspacePath string) error {
-	if point == "after-pipeline" {
-		point = "before-asserts"
-	}
-	if point != current {
-		return nil
-	}
-
-	fmt.Printf("Debug pause at %s\n", current)
-	fmt.Printf("Workspace: %s\n", workspacePath)
-	fmt.Print("Press Enter to continue...")
-	_, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && !errors.Is(err, os.ErrClosed) {
-		return fmt.Errorf("wait for debug pause input: %w", err)
-	}
-	return nil
-}
-
-func maybePauseOnFail(point string, passed bool, workspacePath string) error {
-	if passed || point != "on-fail" {
-		return nil
-	}
-	return maybePause(point, point, workspacePath)
-}
-
-func apiConfig(testFile parser.TestFile) parser.APISetupConfig {
-	if testFile.Glut.Setup.API == nil {
-		return parser.APISetupConfig{}
-	}
-	return *testFile.Glut.Setup.API
-}
-
-func hasMockBinaries(testFile parser.TestFile) bool {
-	return testFile.Glut.Setup.Mocks != nil && len(testFile.Glut.Setup.Mocks.Binaries) > 0
-}
-
-// componentsRealFetch reports whether the test opted into integration-mode
-// component resolution (setup.components.fetch: real).
-func componentsRealFetch(setup parser.SetupConfig) bool {
-	return setup.Components != nil && setup.Components.Fetch == config.ComponentsFetchReal
-}
-
-func resolveGlutBinPath(path string) string {
-	if path != "" {
-		return path
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return "glut"
-	}
-	return executable
-}
-
-func needsJobList(testFile parser.TestFile) bool {
-	for _, jobAssert := range testFile.Glut.Assert.Job {
-		if jobAssert.Present != nil || jobAssert.When != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func gitHeads(dir string) (string, string, error) {
-	sha, err := gitOutput(dir, "rev-parse", "HEAD")
-	if err != nil {
-		return "", "", fmt.Errorf("read workspace git HEAD: %w", err)
-	}
-	shortSHA, err := gitOutput(dir, "rev-parse", "--short", "HEAD")
-	if err != nil {
-		return "", "", fmt.Errorf("read workspace short git HEAD: %w", err)
-	}
-	return sha, shortSHA, nil
-}
-
-// gitHeadCommit returns the full commit message and committer timestamp
-// (strict ISO 8601) of the workspace HEAD commit.
-func gitHeadCommit(dir string) (string, string, error) {
-	message, err := gitOutput(dir, "log", "-1", "--format=%B")
-	if err != nil {
-		return "", "", fmt.Errorf("read workspace HEAD commit message: %w", err)
-	}
-	timestamp, err := gitOutput(dir, "log", "-1", "--format=%cI")
-	if err != nil {
-		return "", "", fmt.Errorf("read workspace HEAD commit timestamp: %w", err)
-	}
-	return message, timestamp, nil
-}
-
-func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func safeGitLog(dir string, extraArgs ...string) string {
-	if dir == "" {
-		return ""
-	}
-
-	args := append([]string{}, extraArgs...)
-	args = append(args, "log", "--oneline", "--decorate", "--graph", "--all")
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return strings.TrimSpace(string(output))
-	}
-	return strings.TrimSpace(string(output))
-}
-
-func failedAssertions(results []asserter.AssertResult) []asserter.AssertResult {
-	failures := make([]asserter.AssertResult, 0)
-	for _, result := range results {
-		if result.Passed {
-			continue
-		}
-		failures = append(failures, result)
-	}
-	return failures
-}
-
 func shouldStop(result RunResult, opts RunOptions) bool {
 	if opts.FailFast && result.Failed > 0 {
 		return true
 	}
 	return opts.MaxFail > 0 && result.Failed >= opts.MaxFail
-}
-
-func applyWorkspacePolicy(
-	work *workspace.Workspace,
-	passed bool,
-	opts RunOptions,
-	preservedFailed *[]string,
-) (bool, error) {
-	if work == nil {
-		return false, nil
-	}
-
-	if opts.KeepWorkspace {
-		return true, nil
-	}
-
-	if !passed && opts.KeepLastFailed > 0 {
-		*preservedFailed = append(*preservedFailed, work.Dir)
-		if len(*preservedFailed) > opts.KeepLastFailed {
-			oldest := (*preservedFailed)[0]
-			*preservedFailed = (*preservedFailed)[1:]
-			if err := os.RemoveAll(oldest); err != nil {
-				return true, fmt.Errorf("remove old preserved workspace %s: %w", oldest, err)
-			}
-		}
-		return true, nil
-	}
-
-	if err := os.RemoveAll(work.Dir); err != nil {
-		return false, fmt.Errorf("remove workspace %s: %w", work.Dir, err)
-	}
-	return false, nil
-}
-
-func copyPhaseTimings(values map[string]time.Duration) map[string]time.Duration {
-	out := make(map[string]time.Duration, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
-	return out
-}
-
-// dockerVolumes returns the --volume mounts needed for Docker executor jobs.
-//
-// Named volume strategy: mounts the pre-populated Docker volume at workDir so
-// the path is identical inside and outside the container. Required for Docker
-// Desktop / WSL2 where host bind-mounts are invisible to the daemon.
-//
-// Bind mount strategy: mounts the host workspace directory at the same path.
-// No volume creation is needed; the host filesystem is directly accessible
-// to the daemon on native Linux Docker.
-func dockerVolumes(useDocker bool, workDir string, volName string, strategy string) []string {
-	if !useDocker {
-		return nil
-	}
-	if strategy == docker.VolumeStrategyBind {
-		return []string{workDir + ":" + workDir}
-	}
-	if volName != "" {
-		return []string{volName + ":" + workDir}
-	}
-	return nil
-}
-
-// dockerExtraHosts returns the --extra-host entries needed for Docker executor jobs.
-// ip is the address of the GLUT process (mock server) reachable from inside containers.
-// Two entries are injected:
-//   - host.docker.internal — standard Docker Desktop alias; we set it explicitly so it
-//     works on Linux too (where Docker Desktop is absent).
-//   - glut-mock — GLUT's own stable hostname used in CI_API_V4_URL / CI_SERVER_URL,
-//     isolated from any unintended side-effects of the host.docker.internal alias.
-func dockerExtraHosts(useDocker bool, ip string) []string {
-	if !useDocker {
-		return nil
-	}
-	return []string{
-		"host.docker.internal:" + ip,
-		"glut-mock:" + ip,
-	}
-}
-
-// outboundIP returns the local IP address that would be used to reach an external
-// host. In DinD (Docker-in-Docker via socket) this is the GLUT container's bridge
-// IP, which is reachable from sibling job containers on the same bridge network.
-func outboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err == nil {
-		defer func() { _ = conn.Close() }()
-		return conn.LocalAddr().(*net.UDPAddr).IP.String()
-	}
-	// Fallback: scan network interfaces for the first non-loopback IPv4 address.
-	// host.docker.internal is intentionally avoided here: when GLUT runs as a
-	// container that hostname resolves to the Docker Desktop gateway, not to the
-	// GLUT container itself, making it unreachable from sibling job containers.
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "host.docker.internal"
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
-				return ip.String()
-			}
-		}
-	}
-	return "host.docker.internal"
-}
-
-// resolveDockerMode converts the three-state *bool Docker field into the two executor flags.
-// nil (absent) → full Docker mode, same as &true.
-// &true → full Docker mode with volume/extra-host support.
-// &false → force all jobs to shell, even those with image:.
-func applyDockerCompatibilityEnv(envVars map[string]string, useDocker bool) {
-	if !useDocker {
-		return
-	}
-	// Keep GitLab-like user behavior in Docker jobs. Do not force root via GCL.
-	// This lets rootless images run with their own user settings.
-	envVars["GCL_UMASK"] = "false"
-}
-
-func resolveDockerMode(docker *bool) (useDocker bool, forceShell bool) {
-	if docker == nil || *docker {
-		return true, false
-	}
-	return false, true
-}
-
-// needsDockerOrigin reports whether the test has assert.git.origin assertions
-// that require reading the git origin from inside the Docker volume. When a
-// pipeline pushes commits, the in-volume origin differs from the host copy.
-func needsDockerOrigin(testFile parser.TestFile) bool {
-	return testFile.Glut.Assert.Git != nil && testFile.Glut.Assert.Git.Origin != nil
-}
-
-func errorsToStrings(errs []error) []string {
-	if len(errs) == 0 {
-		return nil
-	}
-
-	values := make([]string, 0, len(errs))
-	for _, err := range errs {
-		values = append(values, err.Error())
-	}
-	return values
 }
